@@ -1,0 +1,124 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17202a;
+  background: #f6f7f9;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px;
+  color: #ffffff;
+  background: #1f2933;
+}
+
+.sidebar nav {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebar a {
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: #d8dee7;
+}
+
+.sidebar a.active {
+  color: #ffffff;
+  background: #3b4a5a;
+}
+
+.content {
+  padding: 32px;
+}
+
+section {
+  max-width: 960px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: #ffffff;
+  background: #2563eb;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.logout,
+.link-button {
+  color: #17202a;
+  background: #ffffff;
+}
+
+.login-panel {
+  display: grid;
+  gap: 16px;
+  max-width: 420px;
+  margin: 8vh auto;
+  padding: 24px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.login-panel label {
+  display: grid;
+  gap: 6px;
+}
+
+.login-panel input,
+.login-panel select {
+  width: 100%;
+  border: 1px solid #b9c2cf;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.otp-boxes {
+  display: grid;
+  grid-template-columns: repeat(4, 44px);
+  gap: 8px;
+}
+
+.otp-boxes input {
+  aspect-ratio: 1;
+  padding: 0;
+  text-align: center;
+}
+
+.error {
+  color: #b42318;
+}
+
+.hint {
+  color: #52616f;
+}

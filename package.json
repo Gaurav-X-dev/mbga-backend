@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "backend:test": "cd backend && python -m pytest -v",
+    "backend:check": "cd backend && python scripts/check_setup.py --all",
+    "frontend:dev": "cd frontend && npm run dev",
+    "frontend:build": "cd frontend && npm run build",
+    "frontend:test": "cd frontend && npm run test"
+  }
+}
