@@ -13,6 +13,16 @@ from app.modules.authentication.schemas import (
 
 pytestmark = pytest.mark.unit
 
+ADMIN_FIELDS = {
+    "user_id": "user-1",
+    "login_channel": LoginChannel.ADMIN,
+    "user_type": "ADMIN",
+    "session_type": "access",
+    "account_status": "ACTIVE",
+    "role": "super_admin",
+    "next_action": "OPEN_ADMIN_DASHBOARD",
+}
+
 
 class FakeAuthenticationService:
     async def request_otp(self, payload, *, purpose=None, channel=None):
@@ -25,21 +35,19 @@ class FakeAuthenticationService:
         assert purpose == "ADMIN_LOGIN"
         return OTPVerifyResponse(
             token=TokenPair(access_token="access-token", refresh_token="refresh-token", expires_in=900),
-            user_id="user-1",
-            login_channel=LoginChannel.ADMIN,
+            **ADMIN_FIELDS,
         )
 
-    async def me(self, access_token, *, channel):
+    async def me(self, access_token, *, channel, session_types):
         assert access_token == "access-token"
         assert channel == LoginChannel.ADMIN
         return CurrentUserResponse(
-            user_id="user-1",
             display_name="Admin User",
             mobile_number="+919876543210",
             active_roles=["super_admin"],
             effective_permissions=["dashboard.view"],
-            login_channel=LoginChannel.ADMIN,
             status="ACTIVE",
+            **ADMIN_FIELDS,
         )
 
 

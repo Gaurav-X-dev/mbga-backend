@@ -1,26 +1,34 @@
 # Customer Approval Workflow
 
-Customer applications must be scoped to an identifiable Merchant.
+Customer applications are scoped to the merchant whose code the applicant entered.
 
 ```mermaid
 sequenceDiagram
   participant Customer
   participant API
   participant Merchant
-  Customer->>API: Submit profile and mandatory documents
+  Customer->>API: POST /customer/registration/submit
   API-->>Customer: UNDER_REVIEW
-  Merchant->>API: Review application in Merchant scope
-  Merchant->>API: Approve or reject documents
-  Merchant->>API: Approve or reject customer
+  Merchant->>API: GET /merchant/customers?status=UNDER_REVIEW
+  Merchant->>API: POST /merchant/customers/{id}/approve
+  Merchant->>API: POST /merchant/customers/{id}/reject (reason)
 ```
 
-Approval permissions are dynamic:
+Implemented endpoints (Merchant channel):
 
-- `customers.review`
-- `customers.approve`
-- `customers.reject`
-- `customer_documents.review`
-- `customer_documents.approve`
-- `customer_documents.reject`
+| Endpoint | Permission |
+| --- | --- |
+| `GET /api/v1/merchant/customers` | `customers.view` |
+| `POST /api/v1/merchant/customers/{customer_id}/approve` | `customers.approve` |
+| `POST /api/v1/merchant/customers/{customer_id}/reject` | `customers.reject` |
 
-Scope checks must prevent cross-Merchant access.
+Permissions are assigned through roles. No seeded role grants these permissions yet; an administrator must
+add them to the intended roles (the SRS names Manager and Salesperson) before merchants can review.
+
+Scope checks: a reviewer only sees and changes applications whose `merchant_id` is the reviewer's own
+active merchant. Applications of other merchants are reported as `CUSTOMER_NOT_FOUND`.
+
+Approval and rejection are written to `audit_logs` (`customer.approved`, `customer.rejected`).
+
+Not implemented yet: document review endpoints (`customer_documents.review`, `.approve`, `.reject`) and
+customer suspension (`customers.suspend`).

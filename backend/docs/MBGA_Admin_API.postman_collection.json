@@ -1,0 +1,1314 @@
+{
+  "info": {
+    "name": "MBGA Admin API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": ""
+    },
+    {
+      "key": "mobile_number",
+      "value": ""
+    },
+    {
+      "key": "otp",
+      "value": ""
+    },
+    {
+      "key": "request_id",
+      "value": ""
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "onboarding_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "List Audit Logs",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/audit-logs",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "audit-logs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Audit Log",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/audit-logs/{audit_log_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "audit-logs",
+            "{audit_log_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/logout",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "logout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Logout All",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/logout-all",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "logout-all"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "me"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Request Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/otp/request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "otp",
+            "request"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Resend Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/otp/resend",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "otp",
+            "resend"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Verify Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/otp/verify",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "otp",
+            "verify"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Refresh Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/auth/token/refresh",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "auth",
+            "token",
+            "refresh"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Dashboard Summary",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/dashboard/summary",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "dashboard",
+            "summary"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Merchants",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Merchant",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Merchant",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Merchant",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Activate Merchant",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/activate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "activate"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Block Merchant",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/block",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "block"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Unblock Merchant",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/unblock",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "unblock"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Merchant Users",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Merchant User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Merchant User",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/users/{user_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "users",
+            "{user_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Merchant User",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/merchants/{merchant_id}/users/{user_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "merchants",
+            "{merchant_id}",
+            "users",
+            "{user_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Permissions",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/permissions",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "permissions"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Permissions Grouped",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/permissions/grouped",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "permissions",
+            "grouped"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Permission",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/permissions/{permission_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "permissions",
+            "{permission_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Roles",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Role",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Delete Role",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Role",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Role",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Activate Role",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/activate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "activate"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Role Channels",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/channels",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "channels"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Replace Role Channels",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/channels",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "channels"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Deactivate Role",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/deactivate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "deactivate"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Role Permissions",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/permissions",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "permissions"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Replace Role Permissions",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/permissions",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "permissions"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Remove Role Permission",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/permissions/{permission_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "permissions",
+            "{permission_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Add Role Permission",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/permissions/{permission_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "permissions",
+            "{permission_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Role Users",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/roles/{role_id}/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "roles",
+            "{role_id}",
+            "users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Users",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get User",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update User",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Activate User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/activate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "activate"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Allowed Channels",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/allowed-channels",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "allowed-channels"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Block User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/block",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "block"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Effective Permissions",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/effective-permissions",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "effective-permissions"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Logout User Sessions",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/logout-all",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "logout-all"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List User Roles",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/roles",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "roles"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Assign User Role",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/roles",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "roles"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Remove User Role Assignment",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/roles/{assignment_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "roles",
+            "{assignment_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update User Role Assignment",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/roles/{assignment_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "roles",
+            "{assignment_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Unblock User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/admin/users/{user_id}/unblock",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "admin",
+            "users",
+            "{user_id}",
+            "unblock"
+          ]
+        }
+      }
+    }
+  ]
+}

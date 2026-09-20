@@ -1,0 +1,452 @@
+{
+  "info": {
+    "name": "MBGA Merchant API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": ""
+    },
+    {
+      "key": "mobile_number",
+      "value": ""
+    },
+    {
+      "key": "otp",
+      "value": ""
+    },
+    {
+      "key": "request_id",
+      "value": ""
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "onboarding_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/logout",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "logout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Logout All",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/logout-all",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "logout-all"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "me"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Request Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/otp/request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "otp",
+            "request"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Resend Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/otp/resend",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "otp",
+            "resend"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Verify Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/otp/verify",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "otp",
+            "verify"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Refresh Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/auth/token/refresh",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "auth",
+            "token",
+            "refresh"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Customer Applications",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/customers",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "customers"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Approve Customer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/customers/{customer_id}/approve",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "customers",
+            "{customer_id}",
+            "approve"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Reject Customer",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/customers/{customer_id}/reject",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "customers",
+            "{customer_id}",
+            "reject"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Delivery Users",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Delivery User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Delivery User",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users/{delivery_user_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users",
+            "{delivery_user_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Delivery User",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users/{delivery_user_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users",
+            "{delivery_user_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Activate Delivery User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users/{delivery_user_id}/activate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users",
+            "{delivery_user_id}",
+            "activate"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Block Delivery User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users/{delivery_user_id}/block",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users",
+            "{delivery_user_id}",
+            "block"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Unblock Delivery User",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/merchant/delivery-users/{delivery_user_id}/unblock",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "merchant",
+            "delivery-users",
+            "{delivery_user_id}",
+            "unblock"
+          ]
+        }
+      }
+    }
+  ]
+}

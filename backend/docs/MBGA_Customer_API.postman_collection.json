@@ -1,0 +1,550 @@
+{
+  "info": {
+    "name": "MBGA Customer API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": ""
+    },
+    {
+      "key": "mobile_number",
+      "value": ""
+    },
+    {
+      "key": "otp",
+      "value": ""
+    },
+    {
+      "key": "request_id",
+      "value": ""
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    },
+    {
+      "key": "refresh_token",
+      "value": ""
+    },
+    {
+      "key": "onboarding_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Check Mobile",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/check-mobile",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "check-mobile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/logout",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "logout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Logout All",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/logout-all",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "logout-all"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "me"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Request Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/otp/request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "otp",
+            "request"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Resend Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/otp/resend",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "otp",
+            "resend"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Verify Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/otp/verify",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "otp",
+            "verify"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Refresh Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/auth/token/refresh",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "auth",
+            "token",
+            "refresh"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Registration Fields",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/fields",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "fields"
+          ]
+        }
+      }
+    },
+    {
+      "name": "End Onboarding Session",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/logout",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "logout"
+          ]
+        }
+      }
+    },
+    {
+      "name": "End All Onboarding Sessions",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/logout-all",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "logout-all"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Onboarding Registration Context",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/me",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "me"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Request Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/otp/request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "otp",
+            "request"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Resend Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/otp/resend",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "otp",
+            "resend"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Verify Otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/otp/verify",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "otp",
+            "verify"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Registration Profile",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/profile",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "profile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Update Registration Profile",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/profile",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "profile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Create Registration Profile",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/profile",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "profile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Registration Status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/status",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "status"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Submit Registration",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/submit",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "submit"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Refresh Onboarding Session",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/customer/registration/token/refresh",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "customer",
+            "registration",
+            "token",
+            "refresh"
+          ]
+        }
+      }
+    }
+  ]
+}

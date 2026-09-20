@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { RouterProvider } from "react-router-dom";
 
-import { router } from "./app/router";
+import { createAppRouter } from "./app/router";
 
 export function App() {
-  return <RouterProvider router={router} />;
+  const [router] = useState(createAppRouter);
+  return <RouterProvider router={router} future={{ v7_startTransition: true }} />;
 }

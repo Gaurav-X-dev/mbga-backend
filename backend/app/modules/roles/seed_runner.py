@@ -18,12 +18,16 @@ class RBACSeedRunner:
         permissions_created = await self._seed_permissions()
         channels_created = await self._seed_role_channels()
         super_admin_permissions_created = await self._seed_super_admin_permissions()
+        manager_permissions_created = await self._seed_manager_permissions()
+        delivery_role_permissions_created = await self._seed_delivery_role_permissions()
         await self.session.commit()
         return {
             "roles_created": roles_created,
             "permissions_created": permissions_created,
             "channels_created": channels_created,
             "super_admin_permissions_created": super_admin_permissions_created,
+            "manager_permissions_created": manager_permissions_created,
+            "delivery_role_permissions_created": delivery_role_permissions_created,
         }
 
     async def _seed_roles(self) -> int:
@@ -124,6 +128,74 @@ class RBACSeedRunner:
                 )
             )
             created += 1
+        return created
+
+    async def _seed_manager_permissions(self) -> int:
+        role = await self._get_role("manager")
+        if role is None:
+            return 0
+        await self.session.flush()
+        required_codes = {
+            "delivery_users.view",
+            "delivery_users.create",
+            "delivery_users.update",
+            "delivery_users.activate",
+            "delivery_users.block",
+            "delivery_users.assign_roles",
+        }
+        result = await self.session.execute(select(Permission).where(Permission.code.in_(required_codes)))
+        permissions = list(result.scalars().all())
+        created = 0
+        now = datetime.now(UTC)
+        for permission in permissions:
+            existing = await self.session.get(
+                RolePermission,
+                {"role_id": role.id, "permission_id": permission.id},
+            )
+            if existing:
+                continue
+            self.session.add(
+                RolePermission(
+                    role_id=role.id,
+                    permission_id=permission.id,
+                    granted_at=now,
+                    granted_by=None,
+                )
+            )
+            created += 1
+        return created
+
+    async def _seed_delivery_role_permissions(self) -> int:
+        await self.session.flush()
+        required_codes = {
+            "deliveries.view",
+            "deliveries.update_status",
+            "trips.view",
+        }
+        result = await self.session.execute(select(Permission).where(Permission.code.in_(required_codes)))
+        permissions = list(result.scalars().all())
+        created = 0
+        now = datetime.now(UTC)
+        for role_code in ("driver", "helper"):
+            role = await self._get_role(role_code)
+            if role is None:
+                continue
+            for permission in permissions:
+                existing = await self.session.get(
+                    RolePermission,
+                    {"role_id": role.id, "permission_id": permission.id},
+                )
+                if existing:
+                    continue
+                self.session.add(
+                    RolePermission(
+                        role_id=role.id,
+                        permission_id=permission.id,
+                        granted_at=now,
+                        granted_by=None,
+                    )
+                )
+                created += 1
         return created
 
     async def _get_role(self, code: str) -> Role | None:

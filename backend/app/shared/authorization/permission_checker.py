@@ -29,7 +29,7 @@ class EffectivePermissionService:
 
     async def get_effective_permissions(self, context: AuthContext) -> set[str]:
         if self.cache:
-            cached = await self.cache.get(context.user_id)
+            cached = await self.cache.get(context.user_id, channel=context.login_channel.value)
             if cached is not None:
                 return cached
         permissions = await self.repository.get_effective_permissions(
@@ -38,7 +38,7 @@ class EffectivePermissionService:
             now=datetime.now(UTC),
         )
         if self.cache:
-            await self.cache.set(context.user_id, permissions)
+            await self.cache.set(context.user_id, permissions, channel=context.login_channel.value)
         return permissions
 
     async def has_permission(self, context: AuthContext, permission: str) -> bool:

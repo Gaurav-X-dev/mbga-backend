@@ -106,6 +106,8 @@ def test_seed_runner_is_idempotent_against_mysql() -> None:
         "permissions_created": 0,
         "channels_created": 0,
         "super_admin_permissions_created": 0,
+        "manager_permissions_created": 0,
+        "delivery_role_permissions_created": 0,
     }
 
 

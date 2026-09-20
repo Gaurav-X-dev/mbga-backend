@@ -25,10 +25,10 @@ class FakePermissionCache:
         self.permissions = permissions
         self.invalidated: list[str] = []
 
-    async def get(self, user_id: str, version: int = 1) -> set[str] | None:
+    async def get(self, user_id: str, version: int = 1, channel: str | None = None) -> set[str] | None:
         return self.permissions
 
-    async def set(self, user_id: str, permissions: set[str], version: int = 1) -> None:
+    async def set(self, user_id: str, permissions: set[str], version: int = 1, channel: str | None = None) -> None:
         self.permissions = permissions
 
     async def invalidate_user(self, user_id: str, version: int = 1) -> None:
