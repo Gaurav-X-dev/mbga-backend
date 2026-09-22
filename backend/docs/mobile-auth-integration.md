@@ -493,6 +493,40 @@ Customer app flow:
 
 The onboarding session can be refreshed with `/customer/registration/token/refresh` and stays restricted after refreshing.
 
+Pending Customer registrations must keep using the onboarding session for registration status.
+The full Customer login flow intentionally returns `403 ACCOUNT_PENDING_APPROVAL` until a
+Merchant reviewer approves the application. Treat that response as expected: route the user
+back to the registration-status screen using their valid onboarding session. If the
+onboarding access token expires before review completes, refresh it with
+`/customer/registration/token/refresh`; if the refresh token is gone or expired, restart the
+existing `/customer/registration/otp/request` -> `/otp/verify` flow for the same mobile
+number to obtain a new onboarding session. Do not send onboarding tokens to full Customer
+APIs, and do not expect pending Customers to receive full Customer app sessions.
+
+Approval is strict for every Customer record, including old seed or migrated records. Retail
+approval requires business name, owner name, valid delivery address, Aadhaar document and
+number, PAN document and number, finalized uploads, acceptable scan status and no rejected
+mandatory document. Industrial approval requires business name, owner name, valid delivery
+address, FSSAI document and number, GST document and GSTIN, exactly one active primary site,
+finalized uploads, acceptable scan status and no rejected mandatory document. Incomplete
+legacy records remain pending until completed or formally migrated.
+
+KYC document metadata and list responses expose only masked identifiers such as
+`documents[].numberMasked`. Broad lists and errors must not echo full Aadhaar, PAN, FSSAI or
+GSTIN values. `customer.gstin` is reserved for authorized owner/full-profile contexts,
+authorized Merchant detail/review contexts for that Merchant, and future legal invoice
+generation. It is not a search/list field.
+
+Document scan policy is environment-gated. Staging and production approval require
+`scan_status=CLEAN`; `PENDING`, `FAILED`, `INFECTED`, `SKIPPED` or unknown states block with
+`DOCUMENT_SCAN_PENDING`. Local/test may accept `SKIPPED` only when
+`ALLOW_SKIPPED_KYC_SCAN_IN_LOCAL=true` is explicitly configured.
+
+Staged uploads that are never attached are cleaned by
+`python scripts/cleanup_orphaned_kyc_uploads.py --retention-hours <hours>`. The command is a
+dry-run by default; add `--execute` to delete expired unfinalized uploads and their storage
+objects. Production should schedule it daily after confirming dry-run output.
+
 ## 12. Delivery Partner sign-in flow
 
 Drivers and helpers are created by their merchant; there is no self-registration.

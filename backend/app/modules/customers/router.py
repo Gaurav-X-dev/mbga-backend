@@ -21,7 +21,15 @@ from app.modules.authentication.constants import LoginChannel
 from app.modules.authentication.dependencies import get_client_info
 from app.modules.authentication.mobile_number import normalize_mobile_number
 from app.modules.authentication.throttle import RequestThrottle
-from app.modules.customers.models import CustomerProfile
+from app.modules.customers.business_schemas import (
+    Address,
+    CustomerRegistrationRequest,
+    RegistrationProgressResponse,
+)
+from app.modules.customers.constants import CustomerType as BusinessCustomerType
+from app.modules.customers.constants import to_mobile_account_status
+from app.modules.customers.dependencies import OnboardingActorDep, RegistrationDep
+from app.modules.customers.models import CustomerProfile, KycApplication
 from app.modules.customers.schemas import (
     CheckMobileRequest,
     CheckMobileResponse,
@@ -125,6 +133,42 @@ async def registration_fields() -> RegistrationFieldsResponse:
     )
 
 
+
+# Spec fields are optional on the onboarding payload; when none are present the request is a
+# legacy draft save and the shared registration service is not involved at all.
+SPEC_FIELDS = ("owner_name", "email", "delivery_address", "documents", "sites", "business_name")
+
+
+def _has_spec_fields(updates: dict) -> bool:
+    return any(field in updates for field in SPEC_FIELDS)
+
+
+def _registration_request(payload, profile: CustomerProfile) -> CustomerRegistrationRequest:
+    """Build the shared registration body from an onboarding payload plus what is stored.
+
+    Merging with the stored row is what makes a partial save work: the app can send the
+    address on one call and the documents on the next without the first being wiped.
+    """
+    customer_type = payload.customer_type.value if payload.customer_type else profile.customer_type
+    address = payload.delivery_address or Address(
+        line1=profile.address_line1 or "",
+        line2=profile.address_line2,
+        city=profile.address_city or "",
+        state=profile.address_state or "",
+        pincode=profile.address_pincode or "",
+    )
+    return CustomerRegistrationRequest(
+        customer_type=BusinessCustomerType(customer_type or BusinessCustomerType.RETAIL.value),
+        business_name=payload.business_name or payload.name or profile.name or "",
+        owner_name=payload.owner_name or profile.owner_name or "",
+        mobile=payload.mobile,
+        email=payload.email if payload.email is not None else profile.email,
+        delivery_address=address,
+        documents=payload.documents or [],
+        sites=payload.sites or [],
+    )
+
+
 async def _onboarding_user(session: AsyncSession, context: AuthContext) -> User:
     user = await session.get(User, context.user_id)
     if user is None or not user.mobile_number:
@@ -166,6 +210,8 @@ async def create_registration_profile(
     payload: CustomerProfilePayload,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     context: Annotated[AuthContext, Depends(require_onboarding_user)],
+    actor: OnboardingActorDep,
+    service: RegistrationDep,
 ) -> CustomerProfileResponse:
     user = await _onboarding_user(session, context)
     if payload.mobile_number is not None and normalize_mobile_number(payload.mobile_number) != user.mobile_number:
@@ -193,6 +239,11 @@ async def create_registration_profile(
         updated_at=now,
     )
     session.add(profile)
+    if _has_spec_fields(payload.model_dump(exclude_unset=True)):
+        # The full API_SPEC contract was sent. It goes through the same service the merchant
+        # create path uses, so both actors get identical validation.
+        await session.flush()
+        await service.save_self_profile(profile, _registration_request(payload, profile), actor, verified_mobile=user.mobile_number)
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -218,8 +269,11 @@ async def update_registration_profile(
     payload: CustomerProfileUpdate,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     context: Annotated[AuthContext, Depends(require_onboarding_user)],
+    actor: OnboardingActorDep,
+    service: RegistrationDep,
 ) -> CustomerProfileResponse:
-    profile = await _own_profile(session, await _onboarding_user(session, context), lock=True)
+    user = await _onboarding_user(session, context)
+    profile = await _own_profile(session, user, lock=True)
     if profile is None:
         raise ApiError("REGISTRATION_PROFILE_NOT_FOUND", status.HTTP_404_NOT_FOUND)
     if profile.status not in EDITABLE_STATUSES:
@@ -233,6 +287,8 @@ async def update_registration_profile(
     for field in ("name", "gst_number"):
         if field in updates:
             setattr(profile, field, updates[field])
+    if _has_spec_fields(updates):
+        await service.save_self_profile(profile, _registration_request(payload, profile), actor, verified_mobile=user.mobile_number)
     profile.updated_at = datetime.now(UTC)
     await session.commit()
     return _response(profile)
@@ -242,48 +298,78 @@ async def update_registration_profile(
 async def submit_registration(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     context: Annotated[AuthContext, Depends(require_onboarding_user)],
+    actor: OnboardingActorDep,
+    service: RegistrationDep,
 ) -> RegistrationStatusResponse:
+    """Submit the saved registration for merchant review.
+
+    Idempotent: submitting again while the registration is already under review returns the
+    current status and does not open a second application.
+    """
     user = await _onboarding_user(session, context)
     profile = await _own_profile(session, user, lock=True)
     if profile is None:
         raise ApiError("REGISTRATION_PROFILE_NOT_FOUND", status.HTTP_404_NOT_FOUND)
-    if profile.status == CUSTOMER_UNDER_REVIEW:
-        return await _status_response(session, user)
-    if profile.status not in EDITABLE_STATUSES:
-        raise ApiError("INVALID_STATUS_TRANSITION", status.HTTP_409_CONFLICT)
-    missing = [
-        {"field": field, "code": "missing", "message": "This field is required before submitting."}
-        for field in ("name", "customer_type", "merchant_code")
-        if not getattr(profile, field)
-    ]
-    if missing:
-        raise ApiError("REGISTRATION_INCOMPLETE", status.HTTP_422_UNPROCESSABLE_CONTENT, fields=missing)
-    merchant = await _active_merchant(session, profile.merchant_code)
-    now = datetime.now(UTC)
-    profile.merchant_id = merchant.id
-    profile.status = CUSTOMER_UNDER_REVIEW
-    profile.rejection_reason = None
-    profile.submitted_at = now
-    profile.updated_at = now
+    # Re-resolve the merchant at submit time: a merchant deactivated since the draft was
+    # saved must not receive new applications.
+    if profile.merchant_code:
+        merchant = await _active_merchant(session, profile.merchant_code)
+        profile.merchant_id = merchant.id
+    await service.submit_self_registration(profile, actor)
     await session.commit()
-    return await _status_response(session, user)
+    return await _status_response(session, user, service)
 
 
 @router.get("/registration/status", response_model=RegistrationStatusResponse, responses=error_responses(401, 403))
 async def registration_status(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     context: Annotated[AuthContext, Depends(require_onboarding_user)],
+    service: RegistrationDep,
 ) -> RegistrationStatusResponse:
-    return await _status_response(session, await _onboarding_user(session, context))
+    return await _status_response(session, await _onboarding_user(session, context), service)
 
 
-async def _status_response(session: AsyncSession, user: User) -> RegistrationStatusResponse:
+async def _status_response(session: AsyncSession, user: User, service=None) -> RegistrationStatusResponse:
     state = await AccountStateResolver(session).resolve(user, LoginChannel.CUSTOMER)
-    profile = state.customer_profile
-    status_value = profile["status"] if profile else "NOT_STARTED"
+    profile_state = state.customer_profile
+    status_value = profile_state["status"] if profile_state else "NOT_STARTED"
     return RegistrationStatusResponse(
         status=status_value,
         message=STATUS_MESSAGES.get(status_value, "Registration status loaded."),
         next_action=state.next_action_for("onboarding"),
-        rejection_reason=profile["rejection_reason"] if profile else None,
+        rejection_reason=profile_state["rejection_reason"] if profile_state else None,
+        progress=await _progress(session, user, service),
+    )
+
+
+async def _progress(session: AsyncSession, user: User, service) -> RegistrationProgressResponse | None:
+    """The extra detail the Application Status screen renders.
+
+    Returned alongside the existing fields rather than replacing them, so the shipped app -
+    which reads `status`, `message`, `next_action` and `rejection_reason` - is unaffected.
+    """
+    profile = await _own_profile(session, user)
+    if profile is None or service is None:
+        return None
+    application = await session.scalar(
+        select(KycApplication)
+        .where(KycApplication.customer_id == profile.id)
+        .order_by(KycApplication.submitted_at.desc())
+        .limit(1)
+    )
+    missing_fields, missing_documents = await service.missing_for_submit(profile)
+    return RegistrationProgressResponse(
+        customer_id=profile.id,
+        code=profile.code,
+        customer_type=profile.customer_type,
+        account_status=to_mobile_account_status(profile.status),
+        kyc_status=profile.kyc_status,
+        profile_complete=not missing_fields and not missing_documents,
+        application_id=application.id if application else None,
+        application_status=application.status if application else None,
+        submitted_at=application.submitted_at if application else profile.submitted_at,
+        reviewed_at=application.reviewed_at if application else profile.reviewed_at,
+        rejection_reason=profile.rejection_reason,
+        missing_fields=missing_fields,
+        missing_documents=missing_documents,
     )

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Any
 
-from pydantic import AnyUrl, Field, computed_field, field_validator
+from pydantic import AnyUrl, Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOCAL_ENVIRONMENTS = {"local", "development", "dev", "test"}
@@ -77,6 +77,46 @@ class Settings(BaseSettings):
     sms_sender_id: str | None = None
     sms_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     sms_max_retries: int = Field(default=2, ge=0, le=5)
+
+    # --- HanuOTP (SMS_PROVIDER=hanuotp) ------------------------------------------------
+    # Selected through SMS_PROVIDER, which stays the one provider switch. The key is never
+    # defaulted: an unset key is a configuration error, not a silent fallback.
+    hanuotp_base_url: AnyUrl | None = None
+    hanuotp_api_key: str | None = None
+    hanuotp_template_id: str = "default"
+    hanuotp_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # The vendor is billed per message and the OTP flow already has its own resend throttle,
+    # so a failed send is reported rather than silently retried into a second charge.
+    hanuotp_max_retries: int = Field(default=0, ge=0, le=3)
+    # Separate budget for the bot-protection page. That failure happens before the vendor
+    # processes anything, so no message was sent and no charge was made - retrying it is free,
+    # which is not true of a vendor rejection.
+    hanuotp_edge_block_retries: int = Field(default=2, ge=0, le=5)
+    # Guards the one-off transport smoke script. Never true in a deployed environment.
+    hanuotp_live_smoke_test_enabled: bool = False
+    hanuotp_smoke_test_mobile: str | None = None
+    # --- KYC document storage --------------------------------------------------------------
+    # "local" keeps files on a private disk path. No vendor is hard-coded; a production
+    # provider binds to the same StorageProvider interface and changes no route.
+    document_storage_provider: str = "local"
+    # Must be outside any statically served directory. Relative paths resolve from the
+    # process working directory.
+    document_storage_root: str = "var/documents"
+    document_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
+    # Spec 17.2 asks for a 300-second window on a document view URL.
+    document_url_expires_seconds: int = Field(default=300, ge=30, le=3600)
+    # Encrypts stored KYC identifiers. Defaults to the JWT secret so local and test
+    # environments need no extra configuration; production should set its own value, and
+    # rotating it makes existing numbers unreadable (the masked display value survives).
+    document_encryption_secret: str | None = None
+    # Local storage in production is refused unless it has been explicitly approved, because
+    # a single-host disk gives no durability and no access log.
+    allow_local_document_storage_in_production: bool = False
+    # Local/test can explicitly accept unscanned uploads while no malware scanner is wired.
+    # Staging/production approval always requires CLEAN regardless of this value.
+    allow_skipped_kyc_scan_in_local: bool = False
+    staged_upload_retention_hours: int = Field(default=24, ge=1, le=24 * 30)
+
     rbac_bootstrap_super_admin_enabled: bool = False
     rbac_bootstrap_super_admin_user_id: str | None = None
     rbac_bootstrap_super_admin_email: str | None = None
@@ -111,6 +151,11 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @computed_field
+    @property
+    def document_cipher_secret(self) -> str:
+        return self.document_encryption_secret or self.jwt_signing_secret
+
     @field_validator("redis_enabled", mode="after")
     @classmethod
     def reject_disabled_redis_outside_local(cls, value: bool, info) -> bool:
@@ -144,12 +189,60 @@ class Settings(BaseSettings):
     @classmethod
     def validate_sms_provider(cls, value: str, info) -> str:
         value = value.strip().lower()
-        if value not in {"mock", "sms"}:
-            raise ValueError("SMS_PROVIDER must be 'mock' or 'sms'")
+        if value not in {"mock", "sms", "hanuotp"}:
+            raise ValueError("SMS_PROVIDER must be 'mock', 'sms' or 'hanuotp'")
         env = str(info.data.get("app_env", "local")).lower()
         if value == "mock" and env not in LOCAL_ENVIRONMENTS:
             raise ValueError("SMS_PROVIDER=mock is allowed only in local/development/test")
         return value
+
+    @field_validator("hanuotp_api_key", "hanuotp_template_id", mode="before")
+    @classmethod
+    def trim_hanuotp_text(cls, value: Any) -> Any:
+        """A key pasted with a trailing newline must not silently become a different key."""
+        if isinstance(value, str):
+            trimmed = value.strip()
+            return trimmed or None
+        return value
+
+    @field_validator("hanuotp_base_url", mode="before")
+    @classmethod
+    def parse_hanuotp_url(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+    @field_validator("hanuotp_live_smoke_test_enabled", mode="after")
+    @classmethod
+    def reject_live_smoke_outside_local(cls, value: bool, info) -> bool:
+        env = str(info.data.get("app_env", "local")).lower()
+        if value and env not in LOCAL_ENVIRONMENTS:
+            raise ValueError("HANUOTP_LIVE_SMOKE_TEST_ENABLED is allowed only in local/development/test")
+        return value
+
+    @model_validator(mode="after")
+    def validate_selected_sms_provider(self) -> "Settings":
+        """Fail at startup, not at the first sign-in, when the chosen provider is incomplete.
+
+        A missing key is reported by name only. The value is never echoed, and
+        `hide_input_in_errors` on the model config keeps pydantic from printing it either.
+        """
+        if self.sms_provider != "hanuotp":
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("HANUOTP_BASE_URL", self.hanuotp_base_url),
+                ("HANUOTP_API_KEY", self.hanuotp_api_key),
+                ("HANUOTP_TEMPLATE_ID", self.hanuotp_template_id),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"SMS_PROVIDER=hanuotp requires {', '.join(missing)}")
+        if str(self.hanuotp_base_url).lower().startswith("http://"):
+            # The key and the code both travel in the query string, so plain HTTP would put
+            # them in the clear on every hop.
+            raise ValueError("HANUOTP_BASE_URL must use https")
+        return self
 
     @field_validator("dev_fixed_otp_code", mode="after")
     @classmethod

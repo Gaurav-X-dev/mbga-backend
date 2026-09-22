@@ -1,11 +1,24 @@
+"""Merchant API channel."""
 from fastapi import APIRouter
 
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
+from app.modules.customers.document_router import build_document_router
+from app.modules.customers.kyc_router import router as kyc_router
+from app.modules.customers.merchant_router import router as merchant_customers_router
 from app.modules.customers.review_router import router as customer_review_router
 from app.modules.delivery_users.router import router as delivery_users_router
 
 router = APIRouter()
 router.include_router(build_channel_auth_router(LoginChannel.MERCHANT, "MERCHANT_LOGIN"))
 router.include_router(delivery_users_router)
+# Create / list / detail / eligibility, then the approve and reject routes that keep their
+# existing paths. Both mount under /customers; the paths do not overlap.
+router.include_router(merchant_customers_router)
 router.include_router(customer_review_router)
+router.include_router(kyc_router)
+# Reviewers open customer documents, so this channel's document routes require the document
+# review permission on top of the merchant session.
+router.include_router(
+    build_document_router(LoginChannel.MERCHANT, view_permissions=("customers.review", "customer_documents.review"))
+)

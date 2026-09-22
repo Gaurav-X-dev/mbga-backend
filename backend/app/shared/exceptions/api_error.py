@@ -56,6 +56,14 @@ ERROR_MESSAGES: dict[str, str] = {
     "MERCHANT_CODE_INVALID": "The merchant code is not valid.",
     "CUSTOMER_NOT_FOUND": "We could not find this customer.",
     "REJECTION_REASON_REQUIRED": "Enter a reason for the rejection.",
+    "APPLICATION_NOT_FOUND": "We could not find this application.",
+    # KYC documents
+    "DOCUMENT_NOT_FOUND": "We could not find this document.",
+    "DOCUMENT_URL_EXPIRED": "This link has expired. Open the document again.",
+    "DOCUMENT_SCAN_PENDING": "This document has not passed the security scan yet.",
+    "UNSUPPORTED_FILE_TYPE": "Upload a PDF, JPG or PNG.",
+    "FILE_TYPE_MISMATCH": "The file contents do not match its extension.",
+    "FILE_TOO_LARGE": "The file is too large. Choose a smaller file.",
     # Generic
     "VALIDATION_ERROR": "Some fields are missing or invalid.",
     "INVALID_MOBILE_NUMBER": "Enter a valid 10-digit Indian mobile number.",

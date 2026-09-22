@@ -1,0 +1,78 @@
+{
+  "info": {
+    "name": "MBGA Merchant Customer and KYC",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8000/api/v1"},
+    {"key": "merchant_access_token", "value": ""},
+    {"key": "customer_id", "value": ""},
+    {"key": "application_id", "value": ""},
+    {"key": "file_id", "value": ""}
+  ],
+  "item": [
+    {
+      "name": "Merchant Customer management",
+      "item": [
+        {
+          "name": "Create Retail Customer",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('customer_id', pm.response.json().id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "url": "{{baseUrl}}/merchant/customers",
+            "body": {"mode": "raw", "raw": "{\"mobile\":\"9000000001\",\"customerType\":\"RETAIL\",\"businessName\":\"Sharma Stores\",\"ownerName\":\"Ravi Sharma\",\"email\":\"ravi@example.invalid\",\"deliveryAddress\":{\"line1\":\"12 MG Road\",\"city\":\"Indore\",\"state\":\"Madhya Pradesh\",\"pincode\":\"452001\"},\"documents\":[{\"type\":\"AADHAAR\",\"number\":\"123412341234\",\"fileName\":\"{{file_id}}\"},{\"type\":\"PAN\",\"number\":\"ABCDE1234F\",\"fileName\":\"{{file_id}}\"}]}"}
+          }
+        },
+        {
+          "name": "List Customers",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/customers"}
+        },
+        {
+          "name": "Customer Detail",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/customers/{{customer_id}}"}
+        },
+        {
+          "name": "Eligibility",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/customers/{{customer_id}}/eligibility"}
+        }
+      ]
+    },
+    {
+      "name": "Merchant KYC review",
+      "item": [
+        {
+          "name": "List KYC Applications",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const items = pm.response.json().items || []; if (items[0]) pm.collectionVariables.set('application_id', items[0].id);"]}}],
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/kyc/applications?status=PENDING"}
+        },
+        {
+          "name": "KYC Detail",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/kyc/applications/{{application_id}}"}
+        },
+        {
+          "name": "Approve",
+          "request": {"method": "POST", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/customers/{{customer_id}}/approve"}
+        },
+        {
+          "name": "Reject",
+          "request": {"method": "POST", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}, {"key": "Content-Type", "value": "application/json"}], "url": "{{baseUrl}}/merchant/customers/{{customer_id}}/reject", "body": {"mode": "raw", "raw": "{\"reason\":\"The submitted document is unreadable\"}"}}
+        }
+      ]
+    },
+    {
+      "name": "Merchant documents",
+      "item": [
+        {
+          "name": "Upload Document",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('file_id', pm.response.json().fileId);"]}}],
+          "request": {"method": "POST", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/documents", "body": {"mode": "formdata", "formdata": [{"key": "type", "value": "AADHAAR", "type": "text"}, {"key": "file", "type": "file", "src": ""}]}}
+        },
+        {
+          "name": "Document URL",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{merchant_access_token}}"}], "url": "{{baseUrl}}/merchant/documents/{{file_id}}/url"}
+        }
+      ]
+    }
+  ]
+}

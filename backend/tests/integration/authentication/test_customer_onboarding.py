@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import update
 
 from app.modules.authentication.account_state import CUSTOMER_UNDER_REVIEW
+from app.modules.customers.models import CustomerDocument
 from app.modules.users.models import User
 from tests.integration.authentication.conftest import code_of, random_mobile
 
@@ -15,6 +16,7 @@ REG = "/api/v1/customer/registration"
 CUSTOMER = "/api/v1/customer/auth"
 MERCHANT = "/api/v1/merchant/auth"
 REVIEWER_ROLE = "test_customer_reviewer"
+PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
 
 
 async def _register(env, mobile: str | None = None) -> tuple[str, dict]:
@@ -32,11 +34,38 @@ async def _reviewer(env, merchant=None):
 async def _submitted_customer(env, merchant) -> tuple[str, dict, str]:
     mobile, registration = await _register(env)
     token = registration["token"]["access_token"]
-    created = await env.post(f"{REG}/profile", token, json={"merchant_code": merchant.code, "customer_type": "retail", "name": "Sharma Stores"})
+    documents = []
+    for document_type, number in (("AADHAAR", "123412341234"), ("PAN", "ABCDE1234F")):
+        uploaded = await env.client.post(
+            "/api/v1/customer/documents",
+            files={"file": ("scan.pdf", PDF_BYTES, "application/pdf")},
+            data={"type": document_type},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert uploaded.status_code == 201, uploaded.text
+        documents.append({"type": document_type, "number": number, "fileName": uploaded.json()["fileId"]})
+    created = await env.post(
+        f"{REG}/profile",
+        token,
+        json={
+            "merchant_code": merchant.code,
+            "customerType": "RETAIL",
+            "businessName": "Sharma Stores",
+            "ownerName": "Ravi Sharma",
+            "deliveryAddress": {
+                "line1": "12 MG Road",
+                "city": "Indore",
+                "state": "Madhya Pradesh",
+                "pincode": "452001",
+            },
+            "documents": documents,
+        },
+    )
     assert created.status_code == 201, created.text
     submitted = await env.post(f"{REG}/submit", token)
     assert submitted.status_code == 200, submitted.text
     assert submitted.json()["status"] == CUSTOMER_UNDER_REVIEW
+    await env.execute(update(CustomerDocument).where(CustomerDocument.customer_id == created.json()["id"]).values(scan_status="CLEAN"))
     return mobile, registration, created.json()["id"]
 
 

@@ -1,9 +1,15 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.authentication.account_state import NextAction
+from app.modules.customers.business_schemas import (
+    Address,
+    DocumentSubmission,
+    RegistrationProgressResponse,
+    SiteSubmission,
+)
 
 
 class CustomerType(StrEnum):
@@ -46,9 +52,28 @@ class CustomerProfilePayload(BaseModel):
         description="Optional. The number always comes from the onboarding session; a different number is rejected.",
     )
     merchant_code: str = Field(min_length=1, max_length=80)
-    customer_type: CustomerType | None = None
+    # Accepts both spellings: the shipped app posts `customer_type`, API_SPEC posts
+    # `customerType`. One field, so the two can never hold different values.
+    customer_type: CustomerType | None = Field(
+        default=None, validation_alias=AliasChoices("customer_type", "customerType")
+    )
     name: str | None = Field(default=None, min_length=2, max_length=160)
     gst_number: str | None = Field(default=None, max_length=30)
+
+    # --- API_SPEC 1.md registration fields --------------------------------------------------
+    # Optional and aliased, so the shipped app keeps posting exactly what it posts today
+    # while the full contract can be sent on the same route. Supplying any of them puts the
+    # registration on the strict path: full validation and mandatory documents at submit.
+    owner_name: str | None = Field(default=None, alias="ownerName", max_length=160)
+    email: str | None = Field(default=None, max_length=255)
+    delivery_address: Address | None = Field(default=None, alias="deliveryAddress")
+    documents: list[DocumentSubmission] | None = None
+    sites: list[SiteSubmission] | None = None
+    business_name: str | None = Field(default=None, alias="businessName", max_length=160)
+    # Never trusted. It is only ever compared against the session's verified number.
+    mobile: str | None = Field(default=None, max_length=20)
+
+    model_config = ConfigDict(populate_by_name=True)
 
     _normalize_type = field_validator("customer_type", mode="before")(_upper)
     _normalize_code = field_validator("merchant_code", mode="before")(_upper)
@@ -56,9 +81,26 @@ class CustomerProfilePayload(BaseModel):
 
 class CustomerProfileUpdate(BaseModel):
     merchant_code: str | None = Field(default=None, min_length=1, max_length=80)
-    customer_type: CustomerType | None = None
+    customer_type: CustomerType | None = Field(
+        default=None, validation_alias=AliasChoices("customer_type", "customerType")
+    )
     name: str | None = Field(default=None, min_length=2, max_length=160)
     gst_number: str | None = Field(default=None, max_length=30)
+
+    # --- API_SPEC 1.md registration fields --------------------------------------------------
+    # Optional and aliased, so the shipped app keeps posting exactly what it posts today
+    # while the full contract can be sent on the same route. Supplying any of them puts the
+    # registration on the strict path: full validation and mandatory documents at submit.
+    owner_name: str | None = Field(default=None, alias="ownerName", max_length=160)
+    email: str | None = Field(default=None, max_length=255)
+    delivery_address: Address | None = Field(default=None, alias="deliveryAddress")
+    documents: list[DocumentSubmission] | None = None
+    sites: list[SiteSubmission] | None = None
+    business_name: str | None = Field(default=None, alias="businessName", max_length=160)
+    # Never trusted. It is only ever compared against the session's verified number.
+    mobile: str | None = Field(default=None, max_length=20)
+
+    model_config = ConfigDict(populate_by_name=True)
 
     _normalize_type = field_validator("customer_type", mode="before")(_upper)
     _normalize_code = field_validator("merchant_code", mode="before")(_upper)
@@ -84,6 +126,9 @@ class RegistrationStatusResponse(BaseModel):
     message: str
     next_action: NextAction | None = None
     rejection_reason: str | None = None
+    # Added for the Application Status screen. Absent fields stay absent for callers that
+    # do not read them, so the existing response is unchanged for the shipped app.
+    progress: RegistrationProgressResponse | None = None
 
 
 class CustomerRejectRequest(BaseModel):

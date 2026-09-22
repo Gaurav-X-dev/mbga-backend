@@ -21,8 +21,10 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Health"
     if path.startswith("/api/v1/customer/auth/"):
         return "Customer Authentication"
-    if path.startswith("/api/v1/customer/registration/documents"):
+    if path.startswith(("/api/v1/customer/registration/documents", "/api/v1/customer/documents")):
         return "Customer Documents"
+    if path.startswith(("/api/v1/customer/customers", "/api/v1/customer/profile")):
+        return "Customer Profile"
     if path == "/api/v1/customer/registration/status":
         return "Customer Status"
     if path in {"/api/v1/customer/registration/profile", "/api/v1/customer/registration/fields", "/api/v1/customer/registration/submit"}:
@@ -47,6 +49,10 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Merchant Authentication"
     if path.startswith("/api/v1/merchant/delivery-users"):
         return "Merchant Delivery Users"
+    if path.startswith("/api/v1/merchant/kyc"):
+        return "Merchant KYC Review"
+    if path.startswith("/api/v1/merchant/documents"):
+        return "Merchant Documents"
     if path.startswith("/api/v1/merchant/customers"):
         return "Merchant Customer Review"
     if path.startswith("/api/v1/merchant/"):

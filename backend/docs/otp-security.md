@@ -36,13 +36,95 @@
 ## Delivery
 
 - `SMS_PROVIDER=mock` is accepted only in local, development and test environments and never sends or logs codes.
-- `SMS_PROVIDER=sms` requires `SMS_API_BASE_URL`, `SMS_API_KEY` and `SMS_SENDER_ID`, applies
-  `SMS_TIMEOUT_SECONDS` and retries retryable failures up to `SMS_MAX_RETRIES` times.
-  **The vendor call itself is not implemented (blocked by SMS vendor selection)**, so every send currently
-  fails with `503 OTP_DELIVERY_FAILED` and nothing is stored.
+- `SMS_PROVIDER=hanuotp` delivers through HanuOTP and is the integrated production provider.
+  See [HanuOTP delivery](#hanuotp-delivery) below.
+- `SMS_PROVIDER=sms` is a generic vendor stub whose call is **not implemented**, so every send fails
+  with `503 OTP_DELIVERY_FAILED` and nothing is stored. It is kept only so an additional vendor can be
+  added later without changing the switch.
 - The fixed development code (`DEV_FIXED_OTP_ENABLED`, `DEV_FIXED_OTP_CODE`) is accepted only in local,
   development and test environments and must have `OTP_LENGTH` digits. Its value must never appear in source,
   documentation or frontend configuration.
+
+
+## HanuOTP delivery
+
+One provider implementation serves **every** login channel — Customer, Customer registration,
+Merchant, Delivery and Admin. All five resolve the same object through
+`app.modules.authentication.dependencies.get_otp_provider`, so there is no per-app SMS client.
+
+The backend generates and stores the code; HanuOTP only carries it. The provider never generates a
+code, never changes an expiry and never touches a challenge.
+
+### Configuration
+
+| Variable | Meaning |
+|---|---|
+| `SMS_PROVIDER=hanuotp` | Selects the provider. One switch, no second configuration system. |
+| `HANUOTP_BASE_URL` | Vendor endpoint. Must be `https`. |
+| `HANUOTP_API_KEY` | Secret. Never defaulted, never committed, never logged. |
+| `HANUOTP_TEMPLATE_ID` | DLT template id, currently `default`. |
+| `HANUOTP_TIMEOUT_SECONDS` | Per-request timeout, default 10. |
+| `HANUOTP_MAX_RETRIES` | Default **0** — see below. |
+| `HANUOTP_LIVE_SMOKE_TEST_ENABLED` | Guards the one-off smoke script. Local/dev only. |
+| `HANUOTP_SMOKE_TEST_MOBILE` | Destination for that single test message. |
+
+Selecting `hanuotp` without the first three **fails at startup**, not at the first sign-in. A plain
+`http://` base URL is refused, because the key and the code both travel as query parameters.
+
+### Local, staging and production
+
+- Local and test keep `SMS_PROVIDER=mock`: nothing is sent, and `DEV_FIXED_OTP_CODE` is used to sign in.
+- `mock` is refused outside local/development/test, so a deployed environment cannot silently stop
+  sending messages.
+- Staging and production set `hanuotp` with a real key held in the environment, never in the repository.
+
+### Retries
+
+`HANUOTP_MAX_RETRIES` defaults to **0**. The vendor bills per message and the OTP flow already has its
+own resend throttle, so a failed send is reported rather than silently retried into a second charge.
+A vendor-declared rejection (bad key, no balance) is never retried at all; only timeouts and transport
+failures are eligible when retries are deliberately enabled.
+
+### Failure behaviour
+
+The existing flow is unchanged: the challenge is created, delivery is attempted, and on failure the
+transaction is rolled back and the caller receives the existing `503 OTP_DELIVERY_FAILED` with
+`Retry-After: 30`. No challenge survives a failed send, so a failure cannot be verified against later.
+
+A `2xx` response is **not** assumed to be a success. Several Indian gateways answer `200` with a
+plain-text failure, so the body is inspected for an explicit verdict. A body that declares neither
+success nor failure is treated as a failure — reporting a delivery we cannot see would leave the user
+waiting for an SMS that never arrives, with no error and no retry.
+
+### Log redaction
+
+The request URL carries the API key *and* the code, so it is never logged, never attached to an
+exception and never stored. Logs carry a masked number (`******8867`) and a short reason code such as
+`HANUOTP_REJECTED`. Any vendor response that echoes the key, the code or the number is redacted before
+it is stored as `delivery_reference` or printed by the smoke script.
+
+### The one controlled smoke test
+
+`scripts/smoke_test_hanuotp.py` sends exactly one real SMS to verify transport. It refuses to run
+unless `HANUOTP_LIVE_SMOKE_TEST_ENABLED=true`, refuses outside local/development, requires the operator
+to type `SEND`, makes one request with zero retries and exits. It prints only a masked destination, the
+HTTP status, a sanitised body and a verdict.
+
+Automated tests never reach the vendor: unit tests mock the HTTP transport and integration tests use a
+capturing fake provider.
+
+### Rotating or disabling the key
+
+- **Rotate**: replace `HANUOTP_API_KEY` in the environment and restart. Nothing is cached and no stored
+  data depends on the key.
+- **Disable**: set `SMS_PROVIDER=sms` to fail every send loudly with `OTP_DELIVERY_FAILED`, or
+  `SMS_PROVIDER=mock` in a local environment to stop sending entirely. There is no configuration in
+  which HanuOTP is selected but silently skipped.
+
+### Scope
+
+This covers **OTP authentication SMS only**. Push notifications (FCM/APNs), order and payment alerts,
+merchant dashboard alerts and general transactional SMS are not implemented by this integration.
 
 ## Sessions and tokens
 

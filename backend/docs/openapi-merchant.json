@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "MBGA Merchant API",
+    "title": "MBGA Backend - Merchant",
     "version": "0.1.0"
   },
   "paths": {
@@ -29,6 +29,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OTPRequestResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -106,6 +116,16 @@
           },
           "403": {
             "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
             "content": {
               "application/json": {
                 "schema": {
@@ -802,12 +822,87 @@
       }
     },
     "/api/v1/merchant/customers": {
+      "post": {
+        "tags": [
+          "Merchant Customer Review"
+        ],
+        "summary": "Add a customer",
+        "description": "Create a customer, its login identity, documents, sites and pending application.\n\nThe merchant and the creating staff member both come from the session. The body cannot\nset merchant id, customer code, pricing tier, status or any review field.",
+        "operationId": "create_customer_api_v1_merchant_customers_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerRegistrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with existing data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error. `detail.fields` lists the invalid fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "Merchant Customer Review"
         ],
-        "summary": "List Customer Applications",
-        "operationId": "list_customer_applications_api_v1_merchant_customers_get",
+        "summary": "List customers",
+        "operationId": "list_customers_api_v1_merchant_customers_get",
         "security": [
           {
             "HTTPBearer": []
@@ -815,14 +910,86 @@
         ],
         "parameters": [
           {
-            "name": "status",
+            "name": "search",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "default": "UNDER_REVIEW",
-              "title": "Status"
-            }
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Business name, owner name, mobile or code.",
+              "title": "Search"
+            },
+            "description": "Business name, owner name, mobile or code."
+          },
+          {
+            "name": "customerType",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "RETAIL, INDUSTRIAL or ALL.",
+              "title": "Customertype"
+            },
+            "description": "RETAIL, INDUSTRIAL or ALL."
+          },
+          {
+            "name": "accountStatus",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A CustomerAccountStatus or ALL.",
+              "title": "Accountstatus"
+            },
+            "description": "A CustomerAccountStatus or ALL."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Rows per page.",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Rows per page."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Rows to skip.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Rows to skip."
           }
         ],
         "responses": {
@@ -831,7 +998,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CustomerReviewListResponse"
+                  "$ref": "#/components/schemas/CustomerListResponse"
                 }
               }
             }
@@ -869,12 +1036,168 @@
         }
       }
     },
+    "/api/v1/merchant/customers/{customer_id}": {
+      "get": {
+        "tags": [
+          "Merchant Customer Review"
+        ],
+        "summary": "Customer detail",
+        "operationId": "customer_detail_api_v1_merchant_customers__customer_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/customers/{customer_id}/eligibility": {
+      "get": {
+        "tags": [
+          "Merchant Customer Review"
+        ],
+        "summary": "Order eligibility",
+        "description": "Whether an order may be placed for this customer, and why not.\n\nThe same policy object will be called by order creation, so the Create Order screen and\nthe backend can never disagree about who may order.",
+        "operationId": "customer_eligibility_api_v1_merchant_customers__customer_id__eligibility_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/merchant/customers/{customer_id}/approve": {
       "post": {
         "tags": [
           "Merchant Customer Review"
         ],
-        "summary": "Approve Customer",
+        "summary": "Approve a customer registration",
+        "description": "Approve the customer's pending application.\n\nA second approval returns `409 INVALID_STATUS_TRANSITION`, and so does an approval racing\na rejection - the row lock means exactly one of the two decisions is recorded.",
         "operationId": "approve_customer_api_v1_merchant_customers__customer_id__approve_post",
         "security": [
           {
@@ -961,7 +1284,7 @@
         "tags": [
           "Merchant Customer Review"
         ],
-        "summary": "Reject Customer",
+        "summary": "Reject a customer registration",
         "operationId": "reject_customer_api_v1_merchant_customers__customer_id__reject_post",
         "security": [
           {
@@ -1052,10 +1375,480 @@
           }
         }
       }
+    },
+    "/api/v1/merchant/kyc/applications": {
+      "get": {
+        "tags": [
+          "Merchant KYC Review"
+        ],
+        "summary": "List KYC applications",
+        "operationId": "list_applications_api_v1_merchant_kyc_applications_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "PENDING (default), APPROVED, REJECTED or ALL.",
+              "default": "PENDING",
+              "title": "Status"
+            },
+            "description": "PENDING (default), APPROVED, REJECTED or ALL."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Rows per page.",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Rows per page."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Rows to skip.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Rows to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KycApplicationListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error. `detail.fields` lists the invalid fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/kyc/applications/{application_id}": {
+      "get": {
+        "tags": [
+          "Merchant KYC Review"
+        ],
+        "summary": "KYC application detail",
+        "description": "Load one application by its own id.\n\nAddressed by application id, not customer id, because a customer who was rejected and\nresubmitted has more than one \u2014 and the review screen opens the specific one the\nreviewer picked from the list.\n\nDocument metadata is included here, which is why this route also requires\n`customer_documents.review`: a reviewer without it can see the queue but not the\ndocuments. Opening a document file itself goes through `/merchant/documents/{id}/url`.",
+        "operationId": "application_detail_api_v1_merchant_kyc_applications__application_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KycApplicationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/documents": {
+      "post": {
+        "tags": [
+          "Merchant Documents"
+        ],
+        "summary": "Upload a KYC document",
+        "operationId": "upload_document_api_v1_merchant_documents_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_document_api_v1_merchant_documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentUploadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The uploaded file is larger than the allowed size.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported file type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error. `detail.fields` lists the invalid fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/merchant/documents/{file_id}/url": {
+      "get": {
+        "tags": [
+          "Merchant Documents"
+        ],
+        "summary": "Get a short-lived document URL",
+        "operationId": "document_url_api_v1_merchant_documents__file_id__url_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentUrlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/merchant/documents/{file_id}/content": {
+      "get": {
+        "tags": [
+          "Merchant Documents"
+        ],
+        "summary": "Stream a document",
+        "operationId": "document_content_api_v1_merchant_documents__file_id__content_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The account may not perform this action or use this app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The link has expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "Address": {
+        "properties": {
+          "line1": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Line1",
+            "default": ""
+          },
+          "line2": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line2"
+          },
+          "city": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "City",
+            "default": ""
+          },
+          "state": {
+            "type": "string",
+            "maxLength": 120,
+            "title": "State",
+            "default": ""
+          },
+          "pincode": {
+            "type": "string",
+            "maxLength": 12,
+            "title": "Pincode",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "Address",
+        "description": "Spec \u00a73.1. Validated in `validators.validate_address`, not here.\n\nPydantic would reject the whole body on the first bad field; the registration form needs\nevery invalid field reported at once, so the real checks run in the service."
+      },
       "AllowedChannelsResponse": {
         "properties": {
           "user_id": {
@@ -1076,6 +1869,15 @@
           "channels"
         ],
         "title": "AllowedChannelsResponse"
+      },
+      "ApplicationStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "REJECTED"
+        ],
+        "title": "ApplicationStatus"
       },
       "AuditLogListResponse": {
         "properties": {
@@ -1180,6 +1982,46 @@
           "created_at"
         ],
         "title": "AuditLogResponse"
+      },
+      "Body_upload_document_api_v1_customer_documents_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "PDF, JPG or PNG, at most 5 MB."
+          },
+          "type": {
+            "$ref": "#/components/schemas/KycDocumentType",
+            "description": "AADHAAR, PAN, FSSAI or GST."
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "type"
+        ],
+        "title": "Body_upload_document_api_v1_customer_documents_post"
+      },
+      "Body_upload_document_api_v1_merchant_documents_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "PDF, JPG or PNG, at most 5 MB."
+          },
+          "type": {
+            "$ref": "#/components/schemas/KycDocumentType",
+            "description": "AADHAAR, PAN, FSSAI or GST."
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "type"
+        ],
+        "title": "Body_upload_document_api_v1_merchant_documents_post"
       },
       "CheckMobileRequest": {
         "properties": {
@@ -1402,6 +2244,37 @@
         ],
         "title": "CurrentUserResponse"
       },
+      "CustomerListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "CustomerListResponse"
+      },
       "CustomerProfilePayload": {
         "properties": {
           "mobile_number": {
@@ -1456,6 +2329,92 @@
               }
             ],
             "title": "Gst Number"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "deliveryAddress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Address"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DocumentSubmission"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents"
+          },
+          "sites": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SiteSubmission"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sites"
+          },
+          "businessName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Businessname"
+          },
+          "mobile": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mobile"
           }
         },
         "type": "object",
@@ -1700,10 +2659,174 @@
               }
             ],
             "title": "Gst Number"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "deliveryAddress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Address"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DocumentSubmission"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents"
+          },
+          "sites": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SiteSubmission"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sites"
+          },
+          "businessName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Businessname"
+          },
+          "mobile": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mobile"
           }
         },
         "type": "object",
         "title": "CustomerProfileUpdate"
+      },
+      "CustomerRegistrationRequest": {
+        "properties": {
+          "customerType": {
+            "$ref": "#/components/schemas/CustomerType"
+          },
+          "businessName": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Businessname",
+            "default": ""
+          },
+          "ownerName": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Ownername",
+            "default": ""
+          },
+          "mobile": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mobile"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "deliveryAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSubmission"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/SiteSubmission"
+            },
+            "type": "array",
+            "title": "Sites"
+          },
+          "merchantCode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merchantcode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "customerType"
+        ],
+        "title": "CustomerRegistrationRequest",
+        "description": "Spec \u00a75.1 / \u00a77.1. The same body for both registration paths.\n\n`mobile` is present for the staff path, where the customer's number is typed in. On the\nself-registration path it is ignored unless it matches the verified number of the\nonboarding session \u2014 a customer can never register a number they did not verify."
       },
       "CustomerRejectRequest": {
         "properties": {
@@ -1720,21 +2843,185 @@
         ],
         "title": "CustomerRejectRequest"
       },
-      "CustomerReviewListResponse": {
+      "CustomerResponse": {
         "properties": {
-          "items": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "customerType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customertype"
+          },
+          "businessName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Businessname"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "mobile": {
+            "type": "string",
+            "title": "Mobile"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "accountStatus": {
+            "type": "string",
+            "title": "Accountstatus"
+          },
+          "kycStatus": {
+            "type": "string",
+            "title": "Kycstatus"
+          },
+          "pricingTier": {
+            "$ref": "#/components/schemas/PricingTier"
+          },
+          "deliveryAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "sites": {
             "items": {
-              "$ref": "#/components/schemas/CustomerProfileResponse"
+              "$ref": "#/components/schemas/DeliverySiteResponse"
             },
             "type": "array",
-            "title": "Items"
+            "title": "Sites"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/KycDocumentResponse"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "gstin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gstin"
+          },
+          "registeredAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registeredat"
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvedat"
+          },
+          "rejectionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectionreason"
+          },
+          "runningBalance": {
+            "type": "integer",
+            "title": "Runningbalance",
+            "default": 0
+          },
+          "lastOrderAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastorderat"
+          },
+          "applicationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicationid"
           }
         },
         "type": "object",
         "required": [
-          "items"
+          "id",
+          "mobile",
+          "accountStatus",
+          "kycStatus",
+          "pricingTier",
+          "deliveryAddress"
         ],
-        "title": "CustomerReviewListResponse"
+        "title": "CustomerResponse",
+        "description": "Spec \u00a73.6, the shape both apps render a customer with."
       },
       "CustomerType": {
         "type": "string",
@@ -1782,6 +3069,55 @@
           "approval_status"
         ],
         "title": "DeliveryProfileSummary"
+      },
+      "DeliverySiteResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "contactName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contactname"
+          },
+          "contactMobile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contactmobile"
+          },
+          "isPrimary": {
+            "type": "boolean",
+            "title": "Isprimary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "address",
+          "isPrimary"
+        ],
+        "title": "DeliverySiteResponse"
       },
       "DeliveryUserCreate": {
         "properties": {
@@ -2184,6 +3520,107 @@
         "type": "object",
         "title": "DeviceInfo"
       },
+      "DocumentStatus": {
+        "type": "string",
+        "enum": [
+          "UPLOADED",
+          "VERIFIED",
+          "REJECTED"
+        ],
+        "title": "DocumentStatus",
+        "description": "The mobile contract's document vocabulary (spec 3.4)."
+      },
+      "DocumentSubmission": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/KycDocumentType"
+          },
+          "number": {
+            "type": "string",
+            "maxLength": 40,
+            "title": "Number"
+          },
+          "fileName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "fileId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fileid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "number"
+        ],
+        "title": "DocumentSubmission",
+        "description": "One `{ type, number, fileName }` entry from the registration body (spec \u00a75.1).\n\n`fileName` carries the `fileId` returned by the upload endpoint. The app reuses the\nfield name it had when uploads were mocked, so the backend accepts either spelling."
+      },
+      "DocumentUploadResponse": {
+        "properties": {
+          "fileId": {
+            "type": "string",
+            "title": "Fileid"
+          },
+          "fileName": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "contentType": {
+            "type": "string",
+            "title": "Contenttype"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fileId",
+          "fileName",
+          "contentType",
+          "size"
+        ],
+        "title": "DocumentUploadResponse",
+        "description": "Spec \u00a717.1. Deliberately excludes the storage key and any physical path."
+      },
+      "DocumentUrlResponse": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "expiresInSeconds": {
+            "type": "integer",
+            "title": "Expiresinseconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url",
+          "expiresInSeconds"
+        ],
+        "title": "DocumentUrlResponse",
+        "description": "Spec \u00a717.2."
+      },
       "EffectivePermissionsResponse": {
         "properties": {
           "user_id": {
@@ -2204,6 +3641,27 @@
           "permissions"
         ],
         "title": "EffectivePermissionsResponse"
+      },
+      "EligibilityResponse": {
+        "properties": {
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          }
+        },
+        "type": "object",
+        "required": [
+          "eligible"
+        ],
+        "title": "EligibilityResponse",
+        "description": "Spec \u00a77.4. `reasons` is empty when `eligible` is true."
       },
       "ErrorDetail": {
         "properties": {
@@ -2299,6 +3757,222 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "KycApplicationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KycApplicationResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "KycApplicationListResponse"
+      },
+      "KycApplicationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "customerId": {
+            "type": "string",
+            "title": "Customerid"
+          },
+          "customerType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customertype"
+          },
+          "businessName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Businessname"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "mobile": {
+            "type": "string",
+            "title": "Mobile"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/KycDocumentResponse"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "deliveryAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "sites": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySiteResponse"
+            },
+            "type": "array",
+            "title": "Sites"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApplicationStatus"
+          },
+          "submittedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Submittedat"
+          },
+          "reviewedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedat"
+          },
+          "reviewedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedby"
+          },
+          "rejectionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectionreason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "customerId",
+          "mobile",
+          "deliveryAddress",
+          "status",
+          "submittedAt"
+        ],
+        "title": "KycApplicationResponse",
+        "description": "Spec \u00a73.7."
+      },
+      "KycDocumentResponse": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "numberMasked": {
+            "type": "string",
+            "title": "Numbermasked"
+          },
+          "fileName": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "fileId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fileid"
+          },
+          "uploadedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Uploadedat"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DocumentStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "numberMasked",
+          "fileName",
+          "uploadedAt",
+          "status"
+        ],
+        "title": "KycDocumentResponse",
+        "description": "Spec \u00a73.4. `numberMasked` is the only form of the identifier that ever leaves here."
+      },
+      "KycDocumentType": {
+        "type": "string",
+        "enum": [
+          "AADHAAR",
+          "PAN",
+          "FSSAI",
+          "GST"
+        ],
+        "title": "KycDocumentType"
       },
       "LoginChannel": {
         "type": "string",
@@ -3015,7 +4689,7 @@
           },
           "login_channel": {
             "$ref": "#/components/schemas/LoginChannel",
-            "description": "Ignored: the app channel is taken from the URL.",
+            "description": "Ignored: the app channel is taken from the URL. Accepts the name or the numeric code (1 CUSTOMER, 2 DELIVERY, 3 MERCHANT, 4 ADMIN).",
             "default": "CUSTOMER",
             "deprecated": true
           },
@@ -3059,6 +4733,18 @@
             "type": "string",
             "title": "Code",
             "default": "OTP_REQUEST_ACCEPTED"
+          },
+          "dev_otp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dev Otp",
+            "description": "The plaintext code, for app development only. Present only while DEV_EXPOSE_OTP_IN_RESPONSE is on, which the settings validator refuses outside local/development/test. Always null in staging and production."
           }
         },
         "type": "object",
@@ -3128,7 +4814,7 @@
           },
           "login_channel": {
             "$ref": "#/components/schemas/LoginChannel",
-            "description": "Ignored.",
+            "description": "Ignored. Accepts the name or the numeric code (1 CUSTOMER, 2 DELIVERY, 3 MERCHANT, 4 ADMIN).",
             "default": "CUSTOMER",
             "deprecated": true
           },
@@ -3423,6 +5109,15 @@
         ],
         "title": "PermissionResponse"
       },
+      "PricingTier": {
+        "type": "string",
+        "enum": [
+          "STANDARD",
+          "BULK",
+          "KEY_ACCOUNT"
+        ],
+        "title": "PricingTier"
+      },
       "RefreshTokenRequest": {
         "properties": {
           "refresh_token": {
@@ -3531,6 +5226,134 @@
         ],
         "title": "RegistrationFieldsResponse"
       },
+      "RegistrationProgressResponse": {
+        "properties": {
+          "customerId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customerid"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "customerType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customertype"
+          },
+          "accountStatus": {
+            "type": "string",
+            "title": "Accountstatus"
+          },
+          "kycStatus": {
+            "type": "string",
+            "title": "Kycstatus"
+          },
+          "profileComplete": {
+            "type": "boolean",
+            "title": "Profilecomplete"
+          },
+          "applicationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicationid"
+          },
+          "applicationStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicationstatus"
+          },
+          "submittedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submittedat"
+          },
+          "reviewedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewedat"
+          },
+          "rejectionReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectionreason"
+          },
+          "missingFields": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missingfields"
+          },
+          "missingDocumentTypes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missingdocumenttypes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "accountStatus",
+          "kycStatus",
+          "profileComplete"
+        ],
+        "title": "RegistrationProgressResponse",
+        "description": "What the Application Status screen needs, beyond the frozen onboarding status fields."
+      },
       "RegistrationStatusResponse": {
         "properties": {
           "status": {
@@ -3562,6 +5385,16 @@
               }
             ],
             "title": "Rejection Reason"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistrationProgressResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -3774,6 +5607,56 @@
         "additionalProperties": false,
         "type": "object",
         "title": "RoleUpdate"
+      },
+      "SiteSubmission": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 160,
+            "title": "Name",
+            "default": ""
+          },
+          "address": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "contactName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contactname"
+          },
+          "contactMobile": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contactmobile"
+          },
+          "isPrimary": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isprimary"
+          }
+        },
+        "type": "object",
+        "title": "SiteSubmission"
       },
       "TokenPair": {
         "properties": {

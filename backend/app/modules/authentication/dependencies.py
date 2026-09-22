@@ -10,13 +10,21 @@ from app.modules.authentication.repository import AuthenticationRepository
 from app.modules.authentication.service import AuthenticationService
 from app.shared.database.session import get_db_session
 from app.shared.middleware.client_ip import client_ip
+from app.shared.otp.hanuotp_provider import HanuOTPProvider
 from app.shared.otp.mock_provider import MockOTPProvider
 from app.shared.otp.provider import OTPDeliveryProvider
 from app.shared.otp.sms_provider import SMSOTPProvider
 
 
 def get_otp_provider(settings: Annotated[Settings, Depends(get_settings)]) -> OTPDeliveryProvider:
+    """The single delivery provider, shared by every login channel.
+
+    Customer, Customer registration, Merchant, Delivery and Admin all resolve the same object
+    through this one dependency, so a provider change reaches every channel at once.
+    """
     # Settings validation guarantees the mock provider is never selected outside local/development/test.
+    if settings.sms_provider == "hanuotp":
+        return HanuOTPProvider(settings)
     if settings.sms_provider == "sms":
         return SMSOTPProvider(settings)
     return MockOTPProvider()
