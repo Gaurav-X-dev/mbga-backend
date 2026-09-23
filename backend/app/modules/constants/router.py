@@ -1,25 +1,16 @@
 """Reference data the apps fill their dropdowns from.
 
-One public endpoint returning one flat list of `{key, value}` options, so the Customer and
-Merchant apps stop shipping hard-coded lists. A merchant added in the database appears in the
-app immediately, with no new release.
-
-**Why some options come from the database and some from code.** Whatever answers here has to
-be the same thing the write endpoints validate against, or the app will offer a choice the
-backend then rejects. So each option is served from wherever its truth already lives:
-merchants from the `merchants` table, and the fixed vocabularies from the enums the validators
-themselves use. Moving those enums into a table would not make them more correct - it would
-only create a second copy that can disagree with the code.
+One public endpoint over the `constants` table. Operators can reword a label in the database
+and both apps pick it up with no release.
 
 Public on purpose: a customer chooses their merchant *before* they have an account, so there
-is no token to check. Only a display code and a name leave this endpoint - never an internal
-id, a status, a count, or anything about another customer.
+is no token to check. Nothing here is private - only a key and the label shown beside it.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,73 +18,54 @@ from app.config.app import Settings, get_settings
 from app.modules.authentication.audit import ClientInfo
 from app.modules.authentication.dependencies import get_client_info
 from app.modules.authentication.throttle import RequestThrottle
-from app.modules.customers.constants import CustomerType, KycDocumentType, PricingTier
+from app.modules.constants.models import Constant
 from app.modules.merchants.models import Merchant
 from app.shared.database.session import get_db_session
-from app.shared.exceptions.api_error import ApiError
 from app.shared.exceptions.openapi import error_responses
 
 router = APIRouter(tags=["Constants"])
 
-# The states the business currently delivers in. Not a database table because nothing in the
-# system is keyed by state; it is a spelling aid for the address form.
-DELIVERY_STATES = ("Madhya Pradesh", "Maharashtra", "Rajasthan", "Gujarat", "Uttar Pradesh", "Chhattisgarh")
-
-# Human labels for the fixed vocabularies. The key is what the app sends back to the API.
-CUSTOMER_TYPE_LABELS = {CustomerType.RETAIL: "Retail", CustomerType.INDUSTRIAL: "Industrial"}
-DOCUMENT_TYPE_LABELS = {
-    KycDocumentType.AADHAAR: "Aadhaar Card",
-    KycDocumentType.PAN: "PAN Card",
-    KycDocumentType.FSSAI: "FSSAI Licence",
-    KycDocumentType.GST: "GST Certificate",
-}
-PRICING_TIER_LABELS = {
-    PricingTier.STANDARD: "Standard",
-    PricingTier.BULK: "Bulk",
-    PricingTier.KEY_ACCOUNT: "Key Account",
-}
-
-# What `?type=` accepts. Everything is returned when it is omitted.
-MERCHANTS = "merchants"
-CUSTOMER_TYPES = "customerTypes"
-DOCUMENT_TYPES = "documentTypes"
-PRICING_TIERS = "pricingTiers"
-STATES = "states"
-TYPES = (MERCHANTS, CUSTOMER_TYPES, DOCUMENT_TYPES, PRICING_TIERS, STATES)
+# Merchants are not rows in `constants`: they are live business data with their own table,
+# their own lifecycle and their own status rules. Copying them in would mean every new
+# merchant had to be written twice and could disappear from the app if the second write was
+# missed. They are read from `merchants` and presented in the same key/value shape.
+MERCHANTS_GROUP = "merchants"
 
 
-class Option(BaseModel):
-    """One option. `key` is what the app sends back to the API, `value` is what it shows."""
+class ConstantOption(BaseModel):
+    """One row as the apps see it.
 
-    key: str
-    value: str
+    `constKey` is what the app sends back to the API; `constValue` is what it shows the user.
+    """
 
+    id: str
+    const_key: str = Field(alias="constKey")
+    const_value: str = Field(alias="constValue")
+    const_group: str = Field(alias="constGroup")
 
-def _options(labels: dict) -> list[Option]:
-    return [Option(key=str(key), value=label) for key, label in labels.items()]
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 @router.get(
     "/constants",
-    response_model=list[Option],
-    responses=error_responses(422, 429),
-    summary="Key/value options for both apps",
+    response_model=list[ConstantOption],
+    responses=error_responses(429),
+    summary="Key/value constants for both apps",
 )
 async def constants(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     client: Annotated[ClientInfo, Depends(get_client_info)],
-    type: Annotated[
+    group: Annotated[
         str | None,
-        Query(description="Return one set only: merchants, customerTypes, documentTypes, pricingTiers or states."),
+        Query(description="Return one group only, e.g. merchants, customerTypes, documentTypes, pricingTiers, states."),
     ] = None,
-) -> list[Option]:
-    """One flat list of `{key, value}`, ready to drop into any picker.
+) -> list[ConstantOption]:
+    """Every constant, or one group of them.
 
-    Fetch it once at startup and cache it for the session. Pass `?type=merchants` when a
-    screen needs a single set rather than the whole list - without it the app has no way to
-    tell a merchant option from a customer-type option, because a flat list carries no
-    grouping.
+    An unknown group returns an empty list rather than an error: the app asks for a group it
+    knows, and a typo that silently yields nothing is easier to see in the response than a
+    validation error buried in a dropdown that never opened.
     """
     # Unauthenticated, so it is limited per client IP like the other public endpoints.
     try:
@@ -103,32 +75,36 @@ async def constants(
     finally:
         await session.commit()
 
-    wanted = (type or "").strip()
-    if wanted and wanted not in TYPES:
-        raise ApiError(
-            "VALIDATION_ERROR",
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            fields=[{"field": "type", "code": "invalid", "message": f"Use one of: {', '.join(TYPES)}."}],
-        )
+    wanted = (group or "").strip()
+    options: list[ConstantOption] = []
 
-    options: list[Option] = []
-    if not wanted or wanted == MERCHANTS:
+    if not wanted or wanted == MERCHANTS_GROUP:
         # Only merchants a customer could actually register under. A blocked or unapproved
-        # merchant is absent rather than shown-and-rejected.
+        # merchant is absent rather than shown-and-rejected. The display code is the key;
+        # Merchant.id never leaves the backend.
         merchants = await session.scalars(
             select(Merchant)
             .where(Merchant.status == "ACTIVE", Merchant.approval_status == "APPROVED")
             .order_by(Merchant.name)
         )
-        # The display code, never Merchant.id: the code is what registration accepts, and the
-        # internal id has no business leaving the backend.
-        options += [Option(key=m.code, value=m.name) for m in merchants]
-    if not wanted or wanted == CUSTOMER_TYPES:
-        options += _options(CUSTOMER_TYPE_LABELS)
-    if not wanted or wanted == DOCUMENT_TYPES:
-        options += _options(DOCUMENT_TYPE_LABELS)
-    if not wanted or wanted == PRICING_TIERS:
-        options += _options(PRICING_TIER_LABELS)
-    if not wanted or wanted == STATES:
-        options += [Option(key=name, value=name) for name in DELIVERY_STATES]
+        # `id` carries the code as well: a merchant has no row in `constants`, and the
+        # internal UUID has no business reaching a public caller.
+        options += [
+            ConstantOption(id=m.code, const_key=m.code, const_value=m.name, const_group=MERCHANTS_GROUP)
+            for m in merchants
+        ]
+
+    if wanted != MERCHANTS_GROUP:
+        statement = select(Constant).order_by(Constant.const_group, Constant.sort_order, Constant.const_key)
+        if wanted:
+            statement = statement.where(Constant.const_group == wanted)
+        options += [
+            ConstantOption(
+                id=row.id,
+                const_key=row.const_key,
+                const_value=row.const_value,
+                const_group=row.const_group,
+            )
+            for row in await session.scalars(statement)
+        ]
     return options

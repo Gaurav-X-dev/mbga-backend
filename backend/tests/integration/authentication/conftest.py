@@ -27,6 +27,7 @@ from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.merchants.models import Merchant, MerchantUser
 from app.modules.permissions.models import Permission
 from app.modules.roles.models import Role, RoleLoginChannel, RolePermission
+from app.modules.constants.seeds import ConstantsSeedRunner
 from app.modules.roles.seed_runner import RBACSeedRunner
 from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
@@ -310,6 +311,7 @@ def _prepared_database(database_url: str) -> str:
         sessions = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
         async with sessions() as db:
             await RBACSeedRunner(db).run()
+            await ConstantsSeedRunner(db).run()
         await engine.dispose()
 
     asyncio.run(prepare())
