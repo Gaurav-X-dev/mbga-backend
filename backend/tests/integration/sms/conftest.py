@@ -16,10 +16,19 @@ from tests.integration.authentication.conftest import (  # noqa: F401
     database_url,
     env,
     random_mobile,
-    settings_overrides,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.mysql]
+
+
+@pytest.fixture
+def settings_overrides(request) -> dict:
+    """Lets a test pin a setting with `@pytest.mark.parametrize(..., indirect=True)`.
+
+    The authentication suite's version takes no parameter, so re-exporting it would make an
+    indirect override silently do nothing.
+    """
+    return dict(getattr(request, "param", {}) or {})
 
 CUSTOMER = "/api/v1/customer/auth"
 REGISTRATION = "/api/v1/customer/registration"

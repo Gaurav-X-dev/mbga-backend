@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
+from app.modules.constants.router import router as constants_router
 from app.modules.customers.document_router import build_document_router
 from app.modules.customers.kyc_router import router as kyc_router
 from app.modules.customers.merchant_router import router as merchant_customers_router
@@ -22,3 +23,5 @@ router.include_router(kyc_router)
 router.include_router(
     build_document_router(LoginChannel.MERCHANT, view_permissions=("customers.review", "customer_documents.review"))
 )
+# Public dropdown data. Mounted on both channels so each app calls its own base URL.
+router.include_router(constants_router)

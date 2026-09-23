@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     otp_request_limit_per_device: int = Field(default=10, ge=1)
     otp_verify_limit_per_ip: int = Field(default=60, ge=1)
     check_mobile_limit_per_ip: int = Field(default=30, ge=1)
+    # The constants endpoint is public and read-only; the apps fetch it once at startup,
+    # so a generous limit still stops a script from hammering it.
+    constants_limit_per_ip: int = Field(default=120, ge=1)
     # Wrong codes per number per hour, across all codes, before new codes are refused.
     otp_max_failed_attempts_per_hour: int = Field(default=10, ge=1)
     auth_audit_store_ip: bool = True

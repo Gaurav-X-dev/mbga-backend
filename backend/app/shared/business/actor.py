@@ -71,8 +71,13 @@ class BusinessActorResolver:
         if user is None:
             # The session validated but the account is gone; treat as signed out.
             raise ApiError("SESSION_REVOKED", status.HTTP_401_UNAUTHORIZED)
-        if user.status != "ACTIVE":
+        # Customers may hold a session while their application is still pending - the auth
+        # layer decides that, and re-deciding it here would lock them out of the very screen
+        # that shows them their status. Staff channels stay strict.
+        if user.status != "ACTIVE" and context.login_channel != LoginChannel.CUSTOMER:
             raise ApiError("ACCOUNT_INACTIVE", status.HTTP_403_FORBIDDEN)
+        if user.status == "BLOCKED":
+            raise ApiError("ACCOUNT_BLOCKED", status.HTTP_403_FORBIDDEN)
 
         actor = BusinessActor(
             user_id=user.id,
@@ -85,6 +90,35 @@ class BusinessActorResolver:
         if context.login_channel == LoginChannel.CUSTOMER:
             return await self._with_customer(actor, user)
         return actor
+
+    async def resolve_viewer(self, user_id: str, channel: LoginChannel) -> BusinessActor:
+        """Rebuild an actor from a user id alone, for a signed document link.
+
+        A signed link carries its viewer instead of an Authorization header, so there is no
+        session to resolve.
+
+        This does **not** require an ACTIVE account, and that is deliberate: a customer still
+        in onboarding is PENDING by design, and they must be able to see the document they
+        just uploaded. What it does still enforce is the check that matters for a link that
+        outlives the request that minted it — a merchant viewer must still have a live link
+        to their merchant, so a reviewer removed from the business loses the file at once
+        rather than when the link expires. The caller then runs the ownership check on top.
+        """
+        user = await self.session.get(User, user_id)
+        if user is None:
+            raise ApiError("SESSION_REVOKED", status.HTTP_401_UNAUTHORIZED)
+        if user.status == "BLOCKED":
+            raise ApiError("ACCOUNT_BLOCKED", status.HTTP_403_FORBIDDEN)
+
+        actor = BusinessActor(
+            user_id=user.id,
+            login_channel=channel,
+            display_name=_display_name(user),
+            session_id=None,
+        )
+        if channel == LoginChannel.MERCHANT:
+            return await self._with_merchant(actor, user.id)
+        return await self._with_customer(actor, user)
 
     async def _with_merchant(self, actor: BusinessActor, user_id: str) -> BusinessActor:
         row = (

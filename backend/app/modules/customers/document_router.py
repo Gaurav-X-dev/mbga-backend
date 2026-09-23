@@ -11,8 +11,9 @@ token and would undo the channel isolation the auth layer provides.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.business_schemas import DocumentUploadResponse, DocumentUrlResponse
@@ -26,6 +27,7 @@ from app.modules.customers.dependencies import (
     get_auditor,
 )
 from app.shared.authorization.dependencies import require_login_channel, require_permission
+from app.shared.business.actor import BusinessActorResolver
 from app.shared.business.audit import BusinessAuditor
 from app.shared.database.session import get_db_session
 from app.shared.exceptions.api_error import ApiError
@@ -94,6 +96,7 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         storage: StorageDep,
         auditor: Annotated[BusinessAuditor, Depends(get_auditor)],
         session: Annotated[object, Depends(get_db_session)],
+        request: Request,
         response: Response,
     ) -> DocumentUrlResponse:
         document = await access.readable(actor, file_id)
@@ -113,7 +116,10 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         # streaming route instead. The path below is still authenticated; the token binds the
         # grant to this file and this viewer, and expires with the same window.
         token, expires_in = access.grant(actor, document)
-        prefix = f"/api/v1/{channel.value.lower()}"
+        # Absolute, built from the request's own host, so the app can hand it straight to an
+        # image view. A relative path would resolve against the app bundle, not the API.
+        base = str(request.base_url).rstrip("/")
+        prefix = f"{base}/api/v1/{channel.value.lower()}"
         return DocumentUrlResponse(
             url=f"{prefix}/documents/{file_id}/content?token={token}",
             expires_in_seconds=expires_in,
@@ -121,7 +127,6 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
 
     @router.get(
         "/{file_id}/content",
-        dependencies=view_guards,
         responses=error_responses(401, 403, 404, 410),
         summary="Stream a document",
         response_class=StreamingResponse,
@@ -129,16 +134,22 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
     async def document_content(
         file_id: str,
         token: str,
-        actor: actor_dependency,
         access: AccessDep,
         storage: StorageDep,
+        session: Annotated[AsyncSession, Depends(get_db_session)],
     ) -> StreamingResponse:
-        # Three independent checks, all required: the token is genuine and unexpired, it was
-        # issued to this caller, and the caller still has access to the document right now -
-        # so revoking a reviewer takes effect immediately, not when the token expires.
-        granted_file_id = access.verify(actor, token)
+        """Serve the bytes to whoever holds a valid, unexpired signed link.
+
+        Deliberately not behind the session dependency: a link that still needs an
+        Authorization header cannot be handed to an image view, which is the whole point of
+        §17.2. The link is not a weaker check, it is a different one - it is signed, expires
+        in five minutes, names one file and one viewer, and access is re-verified below
+        against live data, so a reviewer removed from the merchant loses the file at once.
+        """
+        granted_file_id, viewer_id = access.verify(token)
         if granted_file_id != file_id:
             raise ApiError("DOCUMENT_NOT_FOUND", status.HTTP_404_NOT_FOUND)
+        actor = await BusinessActorResolver(session).resolve_viewer(viewer_id, channel)
         document = await access.readable(actor, file_id)
         try:
             stream = storage.open(document.storage_key)

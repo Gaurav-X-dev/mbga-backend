@@ -117,38 +117,45 @@ async def test_the_view_url_is_short_lived_and_not_cacheable(env):
     assert body["expiresInSeconds"] == 300
     assert response.headers["cache-control"] == "no-store"
     assert "token=" in body["url"]
-    assert body["url"].startswith("/api/v1/customer/documents/")
+    # Absolute, so the app can hand it straight to an image view. A relative path would
+    # resolve against the app bundle rather than the API.
+    assert body["url"].startswith("http")
+    assert "/api/v1/customer/documents/" in body["url"]
 
 
-async def test_a_view_token_only_works_for_the_viewer_it_was_issued_to(env):
+async def test_the_signed_link_opens_with_no_authorization_header(env):
+    """Spec 17.2: the app hands this straight to an image view, which sends no headers."""
     _, first = await onboarding(env)
-    _, second = await onboarding(env)
     file_id = await upload_file_id(env, CUSTOMER, first, "AADHAAR")
     url = (await env.get(f"{CUSTOMER}/documents/{file_id}/url", first)).json()["url"]
 
-    served = await env.get(url, first)
+    served = await env.get(url)  # deliberately no token argument
     assert served.status_code == 200, served.text
     assert served.content == PDF_BYTES
     assert served.headers["cache-control"] == "no-store"
     assert served.headers["x-content-type-options"] == "nosniff"
 
-    # The same signed link forwarded to somebody else is inert.
-    stolen = await env.get(url, second)
-    assert stolen.status_code == 404
 
-
-async def test_a_tampered_or_reassigned_token_is_refused(env):
+async def test_a_link_signed_for_one_file_cannot_serve_another(env):
     _, token = await onboarding(env)
     first = await upload_file_id(env, CUSTOMER, token, "AADHAAR")
     second = await upload_file_id(env, CUSTOMER, token, "PAN")
-    grant = (await env.get(f"{CUSTOMER}/documents/{first}/url", token)).json()["url"]
-    signed = grant.split("token=")[1]
+    signed = (await env.get(f"{CUSTOMER}/documents/{first}/url", token)).json()["url"].split("token=")[1]
 
-    # A valid token for one file cannot be pointed at another.
-    swapped = await env.get(f"{CUSTOMER}/documents/{second}/content?token={signed}", token)
+    swapped = await env.get(f"{CUSTOMER}/documents/{second}/content?token={signed}")
     assert swapped.status_code == 404
-    garbled = await env.get(f"{CUSTOMER}/documents/{first}/content?token={signed[:-4]}zzzz", token)
+
+
+async def test_a_tampered_token_is_refused(env):
+    """The signature is what authorises the fetch, so forging it must fail."""
+    _, token = await onboarding(env)
+    file_id = await upload_file_id(env, CUSTOMER, token, "AADHAAR")
+    signed = (await env.get(f"{CUSTOMER}/documents/{file_id}/url", token)).json()["url"].split("token=")[1]
+
+    garbled = await env.get(f"{CUSTOMER}/documents/{file_id}/content?token={signed[:-4]}zzzz")
     assert garbled.status_code == 404
+    missing = await env.get(f"{CUSTOMER}/documents/{file_id}/content?token=")
+    assert missing.status_code in {404, 422}
 
 
 async def test_a_reviewer_without_the_document_permission_cannot_open_documents(env):

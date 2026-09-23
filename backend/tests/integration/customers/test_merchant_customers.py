@@ -10,7 +10,6 @@ from tests.integration.authentication.conftest import code_of, random_mobile
 from tests.integration.customers.conftest import (
     CUSTOMER,
     MERCHANT,
-    REG,
     registration_body,
     reviewer,
     site,
@@ -62,28 +61,24 @@ async def test_staff_can_add_an_industrial_customer_with_sites(env):
     assert "12345678901234" not in response.text
 
 
-async def test_the_customer_can_see_verification_pending(env):
-    """A staff-created customer reaches their status through the onboarding session.
+async def test_the_customer_can_sign_in_and_see_verification_pending(env):
+    """Spec 7.1: a staff-created customer signs in immediately and sees Verification Pending.
 
-    Spec 7.1 says the customer "can immediately sign in to the Customer app and sees
-    Verification Pending". The shipped authentication refuses a *full* customer sign-in
-    while the account is under review - `403 ACCOUNT_PENDING_APPROVAL`, asserted by the
-    frozen authentication suite - so the status screen is reached through the onboarding
-    session instead. That difference is recorded as an authentication-contract dependency
-    rather than worked around here.
+    This used to be refused with `403 ACCOUNT_PENDING_APPROVAL`. That gate was removed on
+    22 Sep 2026 so the app can route on `next_action` instead of turning the customer away
+    with an error they cannot act on.
     """
     token, _, _ = await reviewer(env)
     mobile, response = await create_customer(env, token)
     assert response.status_code == 201, response.text
 
-    refused = await env.request_code(f"{CUSTOMER}/auth", mobile)
-    assert (refused.status_code, code_of(refused)) == (403, "ACCOUNT_PENDING_APPROVAL")
+    login = await env.sign_in(f"{CUSTOMER}/auth", mobile)
+    assert login["next_action"] == "WAIT_FOR_APPROVAL"
+    assert login["customer_profile"]["status"] == "UNDER_REVIEW"
 
-    session = await env.sign_in(REG, mobile)
-    status_response = await env.get(f"{REG}/status", session["token"]["access_token"])
-    assert status_response.status_code == 200, status_response.text
-    assert status_response.json()["progress"]["accountStatus"] == "PENDING"
-    assert status_response.json()["next_action"] == "WAIT_FOR_APPROVAL"
+    profile = await env.get(f"{CUSTOMER}/profile", login["token"]["access_token"])
+    assert profile.status_code == 200, profile.text
+    assert profile.json()["accountStatus"] == "PENDING"
 
 
 async def test_a_staff_mobile_number_cannot_become_a_customer(env):

@@ -194,10 +194,14 @@ async def test_customer_registration_to_login_journey(env):
 
     status_response = await env.get(f"{REG}/status", registration["token"]["access_token"])
     assert status_response.json()["next_action"] == "WAIT_FOR_APPROVAL"
-    # Not yet approved: the sign-in request is refused directly and no code is sent.
-    pending_request = await env.request_code(CUSTOMER, mobile)
-    assert (pending_request.status_code, code_of(pending_request)) == (403, "ACCOUNT_PENDING_APPROVAL")
-    assert env.sent_to(mobile) == 1  # only the registration code
+    # CONTRACT CHANGE (approved by the product owner, 22 Sep 2026): a customer whose
+    # application is still being decided may sign in. The app routes on next_action, so they
+    # land on the verification-status screen instead of being refused with an error they
+    # cannot act on. Suspension still blocks; see test_a_suspended_customer_cannot_sign_in.
+    pending_login = await env.sign_in(CUSTOMER, mobile)
+    assert pending_login["next_action"] == "WAIT_FOR_APPROVAL"
+    assert pending_login["customer_profile"]["status"] == CUSTOMER_UNDER_REVIEW
+    assert env.sent_to(mobile) == 2  # the registration code and this sign-in code
 
     queue = await env.get("/api/v1/merchant/customers", reviewer_token)
     assert customer_id in [item["id"] for item in queue.json()["items"]]
@@ -245,10 +249,11 @@ async def test_rejected_customer_can_correct_and_resubmit(env):
     assert status_response["status"] == "REJECTED"
     assert status_response["rejection_reason"] == "GST number does not match"
     assert status_response["next_action"] == "COMPLETE_PROFILE"
-    sent_before = env.sent_to(mobile)
-    login = await env.request_code(CUSTOMER, mobile)
-    assert (login.status_code, code_of(login)) == (403, "ACCOUNT_REJECTED")
-    assert env.sent_to(mobile) == sent_before
+    # A rejected customer signs in too, so the app can show them the reason and let them fix
+    # it. next_action sends them back to the registration form rather than the home screen.
+    rejected_login = await env.sign_in(CUSTOMER, mobile)
+    assert rejected_login["next_action"] == "COMPLETE_PROFILE"
+    assert rejected_login["customer_profile"]["rejection_reason"] == "GST number does not match"
 
     updated = await env.client.patch(f"{REG}/profile", json={"gst_number": "27ABCDE1234F1Z5"}, headers={"Authorization": f"Bearer {token}"})
     assert updated.status_code == 200

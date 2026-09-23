@@ -230,12 +230,22 @@ class AccountStateResolver:
         state.next_action = self._customer_next_action(state, profile)
 
     async def _customer_denial(self, state: AccountState, profile: CustomerProfile) -> tuple[str, int] | None:
-        if profile.status == CUSTOMER_REJECTED:
-            return ("ACCOUNT_REJECTED", FORBIDDEN)
+        """Whether a registered customer may sign in to the Customer app.
+
+        A customer whose application is still being decided **is allowed in**. The app then
+        routes on `next_action` and `customer_profile.status`: approved customers reach the
+        home screen, everyone else lands on the verification-status screen. This is what
+        spec §3.2 describes when it says `customerStatus` drives routing, and it is what lets
+        a customer see a rejection reason instead of being turned away with an error they
+        cannot act on.
+
+        Suspension is different and still blocks: it is a deliberate administrative action,
+        and its screen is "contact support", not "wait".
+        """
         if profile.status == CUSTOMER_SUSPENDED:
             return ("ACCOUNT_SUSPENDED", FORBIDDEN)
         if profile.status != CUSTOMER_APPROVED:
-            return ("ACCOUNT_PENDING_APPROVAL", FORBIDDEN)
+            return None
         if state.user.status != "ACTIVE":
             return ("ACCOUNT_INACTIVE", FORBIDDEN)
         if CUSTOMER_ROLE_CODE not in state.active_roles:

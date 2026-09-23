@@ -248,8 +248,15 @@ class DocumentAccessService:
         token = urlsafe_b64encode(f"{payload}:{signature}".encode()).decode("ascii").rstrip("=")
         return token, self.expires_in
 
-    def verify(self, actor: BusinessActor, token: str, *, now: datetime | None = None) -> str:
-        """Return the file id a valid token grants, or raise 404."""
+    def verify(self, token: str, *, now: datetime | None = None) -> tuple[str, str]:
+        """Return `(file_id, user_id)` for a valid token, or raise.
+
+        The viewer is read *out of* the token rather than compared against a session, so the
+        link works in a plain image view with no Authorization header — which is what spec
+        §17.2 asks a signed URL to be. The caller still re-checks that the named user may
+        read the file, so a reviewer removed from the merchant loses access immediately even
+        while their token is unexpired.
+        """
         try:
             padded = token + "=" * (-len(token) % 4)
             file_id, user_id, expires_at, signature = urlsafe_b64decode(padded).decode("utf-8").rsplit(":", 3)
@@ -257,12 +264,14 @@ class DocumentAccessService:
             raise not_found() from exc
         if not hmac.compare_digest(self._sign(f"{file_id}:{user_id}:{expires_at}"), signature):
             raise not_found()
-        if user_id != actor.user_id:
-            raise not_found()
         moment = now or datetime.now(UTC)
-        if int(expires_at) < int(moment.timestamp()):
+        try:
+            expiry = int(expires_at)
+        except ValueError as exc:
+            raise not_found() from exc
+        if expiry < int(moment.timestamp()):
             raise ApiError("DOCUMENT_URL_EXPIRED", status.HTTP_410_GONE, "This link has expired. Open the document again.")
-        return file_id
+        return file_id, user_id
 
     def _sign(self, payload: str) -> str:
         return hmac.new(self.secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
