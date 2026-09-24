@@ -280,6 +280,8 @@ def test_customer_schema_uses_exact_customer_tags_and_has_no_cross_channel_leaka
         "Customer Profile",
         "Customer Documents",
         "Customer Status",
+        # The customer app places and tracks its own orders (spec §6).
+        "Customer Orders",
         "Health",
     }
     for path, method, operation in _operation_items(schema):

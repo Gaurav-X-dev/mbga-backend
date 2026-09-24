@@ -30,6 +30,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Customer Registration"
     if path.startswith(("/api/v1/customer/customers", "/api/v1/customer/profile")):
         return "Customer Profile"
+    if path.startswith("/api/v1/customer/orders"):
+        return "Customer Orders"
     if path == "/api/v1/customer/registration/status":
         return "Customer Status"
     if path in {"/api/v1/customer/registration/profile", "/api/v1/customer/registration/fields", "/api/v1/customer/registration/submit"}:
@@ -56,6 +58,14 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Merchant Delivery Users"
     if path == "/api/v1/merchant/constants":
         return "Merchant APIs"
+    # Both pricing families, before the /merchant/customers rule below: the Price Setting
+    # tab sits on a customer path but belongs with pricing, not with customer review.
+    if path.startswith("/api/v1/merchant/pricing") or path.endswith("/pricing") or "/pricing/" in path:
+        return "Merchant Pricing"
+    if path.startswith("/api/v1/merchant/orders"):
+        return "Merchant Orders"
+    if path.startswith("/api/v1/merchant/expenses"):
+        return "Merchant Expenses"
     if path.startswith("/api/v1/merchant/kyc"):
         return "Merchant KYC Review"
     if path.startswith("/api/v1/merchant/documents"):

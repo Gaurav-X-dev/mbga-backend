@@ -4,6 +4,7 @@ List screens differ by filter, not by route: the same ``GET /orders`` serves "to
 "this month" and "cancelled" through these parameters rather than three endpoints.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -14,6 +15,9 @@ from app.shared.exceptions.api_error import ApiError
 # A single list request may not sweep more than a year, which keeps report and list
 # queries bounded without the caller having to page through silently truncated results.
 MAX_RANGE_DAYS = 366
+
+#: A four-digit year and a two-digit month, and nothing else.
+_MONTH_PATTERN = re.compile(r"^\d{4}-\d{2}$")
 
 
 def _invalid(field: str, code: str, message: str) -> ApiError:
@@ -63,9 +67,16 @@ def validate_date_range(
 
 
 def validate_month(value: str | None, *, field: str = "month") -> str | None:
-    """Validate a ``YYYY-MM`` period (spec §1: ``reportPeriod`` / ``month``)."""
+    """Validate a ``YYYY-MM`` period (spec §1: ``reportPeriod`` / ``month``).
+
+    The shape is checked before the parse. Parsing alone is not enough: ``26-09`` is a
+    perfectly good ``date(26, 9, 1)``, so a two-digit year would be accepted and then match
+    no stored period, returning an empty list that reads as "no activity this month".
+    """
     if value is None:
         return None
+    if not _MONTH_PATTERN.match(value):
+        raise _invalid(field, "month_invalid", "Use the format YYYY-MM.")
     try:
         # A calendar month label, not an instant, so it is parsed to a date deliberately.
         _parse_month(value)

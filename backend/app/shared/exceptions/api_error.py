@@ -64,6 +64,16 @@ ERROR_MESSAGES: dict[str, str] = {
     "UNSUPPORTED_FILE_TYPE": "Upload a PDF, JPG or PNG.",
     "FILE_TYPE_MISMATCH": "The file contents do not match its extension.",
     "FILE_TOO_LARGE": "The file is too large. Choose a smaller file.",
+    # Orders
+    "ORDER_NOT_FOUND": "We could not find this order.",
+    "ORDER_NOT_CANCELLABLE": "This order can no longer be cancelled.",
+    "NO_PREVIOUS_ORDER": "There is no earlier order to repeat yet.",
+    "REORDER_NOT_POSSIBLE": "This order cannot be repeated as it is. Edit the items and try again.",
+    "CYLINDER_NOT_PRICED": "This cylinder has no price set for the current month.",
+    "ORDER_NOT_ALLOWED": "An order cannot be placed for this customer yet.",
+    # Expenses
+    "EXPENSE_NOT_FOUND": "We could not find this expense.",
+    "EXPENSE_CATEGORY_NOT_FOUND": "We could not find this expense category.",
     # Generic
     "VALIDATION_ERROR": "Some fields are missing or invalid.",
     "INVALID_MOBILE_NUMBER": "Enter a valid 10-digit Indian mobile number.",
