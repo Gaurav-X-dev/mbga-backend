@@ -10,6 +10,7 @@ from app.modules.customers.merchant_router import router as merchant_customers_r
 from app.modules.customers.review_router import router as customer_review_router
 from app.modules.delivery_users.router import router as delivery_users_router
 from app.modules.expenses.router import router as expenses_router
+from app.modules.notifications.router import build_notification_router
 from app.modules.orders.router import build_order_router
 from app.modules.pricing.router import customer_pricing_router, pricing_router
 
@@ -34,6 +35,8 @@ router.include_router(customer_pricing_router)
 # Orders. The same handlers are mounted on the customer channel; only the actor and the
 # required permissions differ (spec §6).
 router.include_router(build_order_router(LoginChannel.MERCHANT))
+# The bell: the in-app list behind the push notifications (spec §15).
+router.include_router(build_notification_router(LoginChannel.MERCHANT))
 # Expenses: the operational spend screens, with their own dynamic category list.
 router.include_router(expenses_router)
 # Public dropdown data. Mounted on both channels so each app calls its own base URL.

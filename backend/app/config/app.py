@@ -98,6 +98,16 @@ class Settings(BaseSettings):
     # Guards the one-off transport smoke script. Never true in a deployed environment.
     hanuotp_live_smoke_test_enabled: bool = False
     hanuotp_smoke_test_mobile: str | None = None
+    # --- Push notifications (FCM) ----------------------------------------------------------
+    # Off by default: a deployment with no Firebase project still queues notification rows
+    # and serves the in-app list, it just sends no push. Turning this on later delivers the
+    # backlog rather than losing it.
+    fcm_enabled: bool = False
+    # Path to the Firebase service-account JSON. A file, not an env var: a PEM private key
+    # does not survive being pasted into `.env`, and a file can carry its own permissions.
+    fcm_credentials_file: str = "secrets/fcm-service-account.json"
+    # How many outbox rows one dispatcher pass takes.
+    fcm_batch_size: int = Field(default=100, ge=1, le=1000)
     # --- KYC document storage --------------------------------------------------------------
     # "local" keeps files on a private disk path. No vendor is hard-coded; a production
     # provider binds to the same StorageProvider interface and changes no route.

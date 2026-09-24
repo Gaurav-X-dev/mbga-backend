@@ -17,3 +17,6 @@ htmlcov/
 # Locally stored KYC document files. Never committed: these are customer documents, and the
 # storage root is private by design.
 var/
+
+# Firebase service-account key. A server credential: never committed.
+secrets/

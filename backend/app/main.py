@@ -30,6 +30,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Customer Registration"
     if path.startswith(("/api/v1/customer/customers", "/api/v1/customer/profile")):
         return "Customer Profile"
+    if path.startswith("/api/v1/customer/notifications"):
+        return "Customer Notifications"
     if path.startswith("/api/v1/customer/orders"):
         return "Customer Orders"
     if path == "/api/v1/customer/registration/status":
@@ -62,6 +64,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
     # tab sits on a customer path but belongs with pricing, not with customer review.
     if path.startswith("/api/v1/merchant/pricing") or path.endswith("/pricing") or "/pricing/" in path:
         return "Merchant Pricing"
+    if path.startswith("/api/v1/merchant/notifications"):
+        return "Merchant Notifications"
     if path.startswith("/api/v1/merchant/orders"):
         return "Merchant Orders"
     if path.startswith("/api/v1/merchant/expenses"):

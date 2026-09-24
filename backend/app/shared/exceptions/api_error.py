@@ -64,6 +64,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "UNSUPPORTED_FILE_TYPE": "Upload a PDF, JPG or PNG.",
     "FILE_TYPE_MISMATCH": "The file contents do not match its extension.",
     "FILE_TOO_LARGE": "The file is too large. Choose a smaller file.",
+    # Notifications
+    "NOTIFICATION_NOT_FOUND": "We could not find this notification.",
     # Orders
     "ORDER_NOT_FOUND": "We could not find this order.",
     "ORDER_NOT_CANCELLABLE": "This order can no longer be cancelled.",

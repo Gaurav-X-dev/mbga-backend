@@ -49,6 +49,7 @@ DATA_TABLES = [
     "orders",
     "order_number_sequences",
     "idempotency_keys",
+    "notification_reads",
     "notification_outbox",
     "expenses",
     "expense_categories",
