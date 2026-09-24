@@ -18,5 +18,8 @@ class DeliveryProfile(Base):
     delivery_user_type: Mapped[str] = mapped_column(String(30), index=True)
     status: Mapped[str] = mapped_column(String(30), index=True)
     approval_status: Mapped[str] = mapped_column(String(30), index=True)
+    vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    on_duty: Mapped[bool] = mapped_column(default=False)
+    language_code: Mapped[str | None] = mapped_column(String(10), default="en", nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

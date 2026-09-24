@@ -94,7 +94,8 @@ class AuthenticationService:
             raise self._safe_error("CHANNEL_NOT_ALLOWED", status.HTTP_403_FORBIDDEN)
         if challenge.consumed_at is not None:
             raise self._safe_error("OTP_ALREADY_USED", status.HTTP_400_BAD_REQUEST)
-        if challenge.expires_at <= now:
+        expires_at = challenge.expires_at if challenge.expires_at.tzinfo else challenge.expires_at.replace(tzinfo=UTC)
+        if expires_at <= now:
             raise self._safe_error("OTP_EXPIRED", status.HTTP_400_BAD_REQUEST)
         if challenge.attempts >= challenge.max_attempts:
             raise self._safe_error("OTP_ATTEMPTS_EXCEEDED", status.HTTP_400_BAD_REQUEST)

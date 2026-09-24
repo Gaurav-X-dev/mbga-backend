@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     otp_expires_seconds: int = 300
     otp_expiry_seconds: int = 300
     otp_max_attempts: int = 5
-    otp_resend_cooldown_seconds: int = 60
-    otp_max_requests_per_hour: int = 5
+    otp_resend_cooldown_seconds: int = 30
+    otp_max_requests_per_hour: int = 100
     otp_provider: str = "development"
     dev_fixed_otp_enabled: bool = False
     dev_fixed_otp_code: str | None = None

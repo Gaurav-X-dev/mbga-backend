@@ -21,6 +21,9 @@ def create_app() -> FastAPI:
     )
     app.include_router(api_router, prefix=settings.api_prefix)
 
+    from app.shared.middleware.response_envelope import install_envelope_handlers
+    install_envelope_handlers(app)
+
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:
         return {"status": "ok"}
