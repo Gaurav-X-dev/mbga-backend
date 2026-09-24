@@ -1,11 +1,13 @@
-from fastapi import HTTPException, status
+from fastapi import status
+
+from app.shared.exceptions.api_error import ApiError
 
 
-class AuthorizationDeniedError(HTTPException):
-    def __init__(self, detail: str = "Permission denied") -> None:
-        super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+class AuthorizationDeniedError(ApiError):
+    def __init__(self, code: str = "PERMISSION_DENIED") -> None:
+        super().__init__(code, status.HTTP_403_FORBIDDEN)
 
 
-class UnauthenticatedError(HTTPException):
-    def __init__(self) -> None:
-        super().__init__(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+class UnauthenticatedError(ApiError):
+    def __init__(self, code: str = "AUTH_REQUIRED") -> None:
+        super().__init__(code, status.HTTP_401_UNAUTHORIZED)

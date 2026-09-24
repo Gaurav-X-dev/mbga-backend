@@ -6,7 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.permissions.models import Permission
 from app.modules.roles.models import Role, RoleLoginChannel, RolePermission, RoleType
-from app.modules.roles.seeds import SEED_PERMISSIONS, SEED_ROLES
+from app.modules.roles.seeds import (
+    DELIVERY_ROLE_CODES,
+    MERCHANT_ROLE_CODES,
+    SEED_PERMISSIONS,
+    SEED_ROLE_PERMISSIONS,
+    SEED_ROLES,
+)
 
 
 class RBACSeedRunner:
@@ -18,12 +24,16 @@ class RBACSeedRunner:
         permissions_created = await self._seed_permissions()
         channels_created = await self._seed_role_channels()
         super_admin_permissions_created = await self._seed_super_admin_permissions()
+        manager_permissions_created = await self._seed_manager_permissions()
+        delivery_role_permissions_created = await self._seed_delivery_role_permissions()
         await self.session.commit()
         return {
             "roles_created": roles_created,
             "permissions_created": permissions_created,
             "channels_created": channels_created,
             "super_admin_permissions_created": super_admin_permissions_created,
+            "manager_permissions_created": manager_permissions_created,
+            "delivery_role_permissions_created": delivery_role_permissions_created,
         }
 
     async def _seed_roles(self) -> int:
@@ -124,6 +134,48 @@ class RBACSeedRunner:
                 )
             )
             created += 1
+        return created
+
+    async def _seed_manager_permissions(self) -> int:
+        """Grants for the merchant-channel roles.
+
+        The dictionary key this feeds keeps its original name so the seed-idempotency test's
+        contract is unchanged; the grants themselves now come from SEED_ROLE_PERMISSIONS.
+        """
+        return await self._grant(MERCHANT_ROLE_CODES)
+
+    async def _seed_delivery_role_permissions(self) -> int:
+        return await self._grant(DELIVERY_ROLE_CODES)
+
+    async def _grant(self, role_codes: frozenset[str]) -> int:
+        """Apply SEED_ROLE_PERMISSIONS for the named roles. Idempotent."""
+        await self.session.flush()
+        created = 0
+        now = datetime.now(UTC)
+        for role_code in sorted(role_codes):
+            wanted = SEED_ROLE_PERMISSIONS.get(role_code)
+            if not wanted:
+                continue
+            role = await self._get_role(role_code)
+            if role is None:
+                continue
+            result = await self.session.execute(select(Permission).where(Permission.code.in_(wanted)))
+            for permission in result.scalars():
+                existing = await self.session.get(
+                    RolePermission,
+                    {"role_id": role.id, "permission_id": permission.id},
+                )
+                if existing:
+                    continue
+                self.session.add(
+                    RolePermission(
+                        role_id=role.id,
+                        permission_id=permission.id,
+                        granted_at=now,
+                        granted_by=None,
+                    )
+                )
+                created += 1
         return created
 
     async def _get_role(self, code: str) -> Role | None:

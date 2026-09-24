@@ -15,13 +15,18 @@ dependencies = [
   "pyjwt>=2.9.0",
   "passlib[bcrypt]>=1.7.4",
   "python-multipart>=0.0.9",
+  # Encrypts stored KYC identifiers (app/shared/crypto). Declared explicitly: it arrives
+  # locally only as an optional extra of another package, so a clean install would not get it.
+  "cryptography>=43.0.0",
+  # Async HTTP client for the SMS provider (app/shared/otp/hanuotp_provider.py). Runtime, not
+  # test-only: the OTP path calls it on every send.
+  "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.23.8",
-  "httpx>=0.27.0",
   "ruff>=0.6.0",
 ]
 

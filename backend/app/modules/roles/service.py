@@ -1,4 +1,8 @@
-from app.modules.roles.exceptions import LastSuperAdminError, ProtectedSystemRoleError, RoleAlreadyExistsError
+from app.modules.roles.exceptions import (
+    LastSuperAdminError,
+    ProtectedSystemRoleError,
+    RoleAlreadyExistsError,
+)
 from app.modules.roles.models import Role
 from app.modules.roles.repository import RoleRepository
 from app.modules.roles.schemas import RoleCreate, RoleUpdate

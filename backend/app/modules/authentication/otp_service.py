@@ -1,5 +1,5 @@
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +8,8 @@ from app.config.app import Settings
 from app.modules.authentication.constants import LoginChannel
 from app.modules.authentication.otp_models import OtpChallenge
 from app.modules.authentication.password_hasher import hash_secret
-from app.modules.authentication.schemas import OTPRequest
+from app.modules.authentication.schemas import OTPRequest, OTPResendRequest
+from app.modules.authentication.session_service import utc_now_naive
 
 
 class OTPService:
@@ -23,14 +24,14 @@ class OTPService:
     async def store_hashed_otp(
         self,
         *,
-        payload: OTPRequest,
+        payload: OTPRequest | OTPResendRequest,
         mobile_number: str,
         purpose: str,
         login_channel: LoginChannel,
         otp: str,
         ip_address: str | None = None,
     ) -> OtpChallenge:
-        now = datetime.now(UTC)
+        now = utc_now_naive()
         challenge = OtpChallenge(
             id=str(uuid4()),
             mobile_number=mobile_number,

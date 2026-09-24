@@ -244,7 +244,15 @@ async def check_database(reporter: Reporter, db_url: str | None, deep: bool) -> 
         await engine.dispose()
 
 
-def check_redis(reporter: Reporter, redis_url: str | None) -> None:
+def check_redis(reporter: Reporter, redis_url: str | None, redis_enabled: str | None = None) -> None:
+    if (redis_enabled or "true").strip().lower() in {"false", "0", "no", "off"}:
+        reporter.add(
+            "Redis",
+            "availability",
+            "PASS",
+            "disabled for local development (REDIS_ENABLED=false); permission checks use the database",
+        )
+        return
     parsed = urlparse(redis_url or "")
     host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 6379
@@ -252,7 +260,13 @@ def check_redis(reporter: Reporter, redis_url: str | None) -> None:
         with socket.create_connection((host, port), timeout=2):
             reporter.add("Redis", "TCP port reachable", "PASS", f"{host}:{port}")
     except OSError:
-        reporter.add("Redis", "availability", "WARNING", "Redis is optional until OTP work begins")
+        reporter.add(
+            "Redis",
+            "availability",
+            "WARNING",
+            "Redis is enabled but not reachable; the permission cache falls back to the database. "
+            "Start Redis or set REDIS_ENABLED=false for local development",
+        )
 
 
 def run_tests(reporter: Reporter) -> None:
@@ -298,7 +312,7 @@ def main() -> int:
     except Exception as exc:
         reporter.add("Application", "FastAPI app import", "FAILED", str(exc))
 
-    check_redis(reporter, env_value("REDIS_URL", env_file))
+    check_redis(reporter, env_value("REDIS_URL", env_file), env_value("REDIS_ENABLED", env_file))
     if args.database or args.all:
         asyncio.run(check_database(reporter, db_url, deep=args.all))
     else:

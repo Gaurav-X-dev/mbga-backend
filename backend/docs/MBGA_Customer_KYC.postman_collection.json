@@ -1,0 +1,80 @@
+{
+  "info": {
+    "name": "MBGA Customer Registration and KYC",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8000/api/v1"},
+    {"key": "customer_onboarding_token", "value": ""},
+    {"key": "customer_access_token", "value": ""},
+    {"key": "aadhaar_file_id", "value": ""},
+    {"key": "pan_file_id", "value": ""},
+    {"key": "merchant_code", "value": "T-EXAMPLE"}
+  ],
+  "item": [
+    {
+      "name": "Customer registration",
+      "item": [
+        {
+          "name": "Save Retail Profile",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}, {"key": "Content-Type", "value": "application/json"}],
+            "url": "{{baseUrl}}/customer/registration/profile",
+            "body": {"mode": "raw", "raw": "{\"merchant_code\":\"{{merchant_code}}\",\"customerType\":\"RETAIL\",\"businessName\":\"Sharma Stores\",\"ownerName\":\"Ravi Sharma\",\"email\":\"ravi@example.invalid\",\"deliveryAddress\":{\"line1\":\"12 MG Road\",\"city\":\"Indore\",\"state\":\"Madhya Pradesh\",\"pincode\":\"452001\"},\"documents\":[{\"type\":\"AADHAAR\",\"number\":\"123412341234\",\"fileName\":\"{{aadhaar_file_id}}\"},{\"type\":\"PAN\",\"number\":\"ABCDE1234F\",\"fileName\":\"{{pan_file_id}}\"}]}"}
+          }
+        },
+        {
+          "name": "Read Registration Profile",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}], "url": "{{baseUrl}}/customer/registration/profile"}
+        },
+        {
+          "name": "Submit Registration",
+          "request": {"method": "POST", "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}], "url": "{{baseUrl}}/customer/registration/submit"}
+        }
+      ]
+    },
+    {
+      "name": "Customer documents",
+      "item": [
+        {
+          "name": "Upload Aadhaar",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('aadhaar_file_id', pm.response.json().fileId);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}],
+            "url": "{{baseUrl}}/customer/documents",
+            "body": {"mode": "formdata", "formdata": [{"key": "type", "value": "AADHAAR", "type": "text"}, {"key": "file", "type": "file", "src": ""}]}
+          }
+        },
+        {
+          "name": "Upload PAN",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["if (pm.response.code === 201) pm.collectionVariables.set('pan_file_id', pm.response.json().fileId);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}],
+            "url": "{{baseUrl}}/customer/documents",
+            "body": {"mode": "formdata", "formdata": [{"key": "type", "value": "PAN", "type": "text"}, {"key": "file", "type": "file", "src": ""}]}
+          }
+        },
+        {
+          "name": "Document URL",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}], "url": "{{baseUrl}}/customer/documents/{{aadhaar_file_id}}/url"}
+        }
+      ]
+    },
+    {
+      "name": "Customer status/profile",
+      "item": [
+        {
+          "name": "Registration Status",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{customer_onboarding_token}}"}], "url": "{{baseUrl}}/customer/registration/status"}
+        },
+        {
+          "name": "Approved Business Profile",
+          "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{customer_access_token}}"}], "url": "{{baseUrl}}/customer/profile"}
+        }
+      ]
+    }
+  ]
+}

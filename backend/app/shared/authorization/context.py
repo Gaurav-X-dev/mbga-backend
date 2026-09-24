@@ -8,3 +8,4 @@ class AuthContext:
     user_id: str
     login_channel: LoginChannel
     session_id: str | None = None
+    token_type: str = "access"

@@ -13,3 +13,7 @@ build/
 *.egg-info/
 .coverage
 htmlcov/
+
+# Locally stored KYC document files. Never committed: these are customer documents, and the
+# storage root is private by design.
+var/

@@ -83,13 +83,19 @@ SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
     SeedPermission("merchants.activate", "Activate merchant records", "merchants", "activate"),
     SeedPermission("merchants.block", "Block merchant records", "merchants", "block"),
     SeedPermission("merchants.manage", "Manage merchant records", "merchants", "manage"),
+    SeedPermission("merchant_users.view", "View merchant users", "merchant_users", "view"),
+    SeedPermission("merchant_users.create", "Create merchant users", "merchant_users", "create"),
+    SeedPermission("merchant_users.update", "Update merchant users", "merchant_users", "update"),
+    SeedPermission("merchant_users.assign_roles", "Assign merchant user roles", "merchant_users", "assign_roles"),
     SeedPermission("drivers.view", "View drivers", "drivers", "view"),
     SeedPermission("drivers.manage", "Manage drivers", "drivers", "manage"),
     SeedPermission("delivery_users.create", "Create delivery users", "delivery_users", "create"),
     SeedPermission("delivery_users.view", "View delivery users", "delivery_users", "view"),
     SeedPermission("delivery_users.update", "Update delivery users", "delivery_users", "update"),
+    SeedPermission("delivery_users.activate", "Activate delivery users", "delivery_users", "activate"),
     SeedPermission("delivery_users.approve", "Approve delivery users", "delivery_users", "approve"),
     SeedPermission("delivery_users.block", "Block delivery users", "delivery_users", "block"),
+    SeedPermission("delivery_users.assign_roles", "Assign delivery user roles", "delivery_users", "assign_roles"),
     SeedPermission("trips.view", "View trips", "trips", "view"),
     SeedPermission("trips.manage", "Manage trips", "trips", "manage"),
     SeedPermission("cylinder_exchange.view", "View cylinder exchange", "cylinder_exchange", "view"),
@@ -110,8 +116,39 @@ SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
 )
 
 
+
+# Which permissions each role starts with.
+#
+# `super_admin` is not listed: it receives every permission, which the seeder does separately.
+# Customer, KYC, order, pricing, inventory and payment permissions are unmapped on purpose -
+# see the note on "manager" below and UNRESOLVED_ROLE_PERMISSION_MAPPING at the bottom.
+SEED_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    # Deliberately NOT extended with customer or KYC permissions. The suite asserts that a
+    # plain Manager cannot approve a customer, which encodes a real decision: authority over
+    # customer records is granted explicitly per deployment, not implied by a job title.
+    # Use scripts/grant_merchant_kyc_role.py to grant it to named staff.
+    "manager": frozenset(
+        {
+            "delivery_users.view",
+            "delivery_users.create",
+            "delivery_users.update",
+            "delivery_users.activate",
+            "delivery_users.block",
+            "delivery_users.assign_roles",
+        }
+    ),
+    "driver": frozenset({"deliveries.view", "deliveries.update_status", "trips.view"}),
+    "helper": frozenset({"deliveries.view", "deliveries.update_status", "trips.view"}),
+}
+
+# Roles that sign in through the Merchant app. Used only to split the seeding counters.
+MERCHANT_ROLE_CODES = frozenset({"manager", "salesperson", "godown_stock_manager", "accountant"})
+DELIVERY_ROLE_CODES = frozenset({"driver", "helper"})
+
 UNRESOLVED_ROLE_PERMISSION_MAPPING = {
     "customer": "Own order/payment/profile permissions need scoped policies before broad grants.",
+    # Customer and KYC permissions are now seeded above (SEED_ROLE_PERMISSIONS). What is still
+    # unresolved is the Manager's reach into order, pricing, inventory and payment modules.
     "manager": "Manager has broad business access in documents, but exact admin-channel boundary needs confirmation.",
     "super_admin": "Bootstrap is environment-controlled; never auto-assign from public registration.",
 }

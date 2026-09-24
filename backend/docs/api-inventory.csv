@@ -1,0 +1,99 @@
+Method,Path,Channel,Client,Router file,Service method,Repository method,Permission,Auth required,Status
+GET,/api/v1/admin/audit-logs,ADMIN,ADMIN_WEB,app/modules/audit_logs/router.py,inline router logic,AsyncSession,audit_logs.view,yes,IMPLEMENTED
+GET,/api/v1/admin/audit-logs/{audit_log_id},ADMIN,ADMIN_WEB,app/modules/audit_logs/router.py,inline router logic,AsyncSession,audit_logs.view,yes,IMPLEMENTED
+POST,/api/v1/admin/auth/logout,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.logout,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/admin/auth/logout-all,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.logout_all + me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/admin/auth/me,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/admin/auth/otp/request,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/admin/auth/otp/resend,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/admin/auth/otp/verify,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.verify_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/admin/auth/token/refresh,ADMIN,ADMIN_WEB,app/modules/authentication/channel_router.py,AuthenticationService.refresh_token,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/admin/dashboard/summary,ADMIN,ADMIN_WEB,app/modules/dashboard/router.py,inline router logic,AsyncSession,dashboard.view,yes,IMPLEMENTED
+GET,/api/v1/admin/merchants,ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/admin/merchants,ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+GET,/api/v1/admin/merchants/{merchant_id},ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+PATCH,/api/v1/admin/merchants/{merchant_id},ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/admin/merchants/{merchant_id}/activate,ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/admin/merchants/{merchant_id}/block,ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/admin/merchants/{merchant_id}/unblock,ADMIN,ADMIN_WEB,app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+GET,/api/v1/admin/merchants/{merchant_id}/users,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/merchants/{merchant_id}/users,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/merchants/{merchant_id}/users/{user_id},ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+PATCH,/api/v1/admin/merchants/{merchant_id}/users/{user_id},ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/permissions,ADMIN,ADMIN_WEB,app/modules/permissions/router.py,PermissionService/inline router logic,PermissionRepository,permissions.*,yes,IMPLEMENTED
+GET,/api/v1/admin/permissions/grouped,ADMIN,ADMIN_WEB,app/modules/permissions/router.py,PermissionService/inline router logic,PermissionRepository,permissions.*,yes,IMPLEMENTED
+GET,/api/v1/admin/permissions/{permission_id},ADMIN,ADMIN_WEB,app/modules/permissions/router.py,PermissionService/inline router logic,PermissionRepository,permissions.*,yes,IMPLEMENTED
+GET,/api/v1/admin/roles,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+POST,/api/v1/admin/roles,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+DELETE,/api/v1/admin/roles/{role_id},ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+GET,/api/v1/admin/roles/{role_id},ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+PATCH,/api/v1/admin/roles/{role_id},ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+POST,/api/v1/admin/roles/{role_id}/activate,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+GET,/api/v1/admin/roles/{role_id}/channels,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+PUT,/api/v1/admin/roles/{role_id}/channels,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+POST,/api/v1/admin/roles/{role_id}/deactivate,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+GET,/api/v1/admin/roles/{role_id}/permissions,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+PUT,/api/v1/admin/roles/{role_id}/permissions,ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+DELETE,/api/v1/admin/roles/{role_id}/permissions/{permission_id},ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+POST,/api/v1/admin/roles/{role_id}/permissions/{permission_id},ADMIN,ADMIN_WEB,app/modules/roles/router.py,RoleService/inline router logic,RoleRepository,roles.*,yes,IMPLEMENTED
+GET,/api/v1/admin/roles/{role_id}/users,ADMIN,ADMIN_WEB,app/modules/users/router.py,RoleService/inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/users,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/users,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/users/{user_id},ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+PATCH,/api/v1/admin/users/{user_id},ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/users/{user_id}/activate,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/users/{user_id}/allowed-channels,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/users/{user_id}/block,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/users/{user_id}/effective-permissions,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/users/{user_id}/logout-all,ADMIN,ADMIN_WEB,app/modules/users/router.py,AuthenticationService.logout_all + me,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+GET,/api/v1/admin/users/{user_id}/roles,ADMIN,ADMIN_WEB,app/modules/users/router.py,RoleService/inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/users/{user_id}/roles,ADMIN,ADMIN_WEB,app/modules/users/router.py,RoleService/inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+DELETE,/api/v1/admin/users/{user_id}/roles/{assignment_id},ADMIN,ADMIN_WEB,app/modules/users/router.py,RoleService/inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+PATCH,/api/v1/admin/users/{user_id}/roles/{assignment_id},ADMIN,ADMIN_WEB,app/modules/users/router.py,RoleService/inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/admin/users/{user_id}/unblock,ADMIN,ADMIN_WEB,app/modules/users/router.py,inline router logic,"AsyncSession, UserRoleRepository",users.*,yes,IMPLEMENTED
+POST,/api/v1/customer/auth/check-mobile,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,inline router logic,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/customer/auth/logout,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.logout,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/customer/auth/logout-all,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.logout_all + me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/customer/auth/me,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/customer/auth/otp/request,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/customer/auth/otp/resend,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/customer/auth/otp/verify,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.verify_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/customer/auth/token/refresh,CUSTOMER,CUSTOMER_APP,app/modules/authentication/channel_router.py,AuthenticationService.refresh_token,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/customer/registration/fields,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,inline router logic,AsyncSession,none,no,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/logout,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.logout,AsyncSession,none,unclear,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/logout-all,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.logout_all + me,AsyncSession,none,yes,"PARTIAL,UNTESTED"
+GET,/api/v1/customer/registration/me,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.me,AsyncSession,none,yes,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/otp/request,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.request_otp,AsyncSession,none,no,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/otp/resend,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.request_otp,AsyncSession,none,no,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/otp/verify,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.verify_otp,AsyncSession,none,no,"PARTIAL,UNTESTED"
+GET,/api/v1/customer/registration/profile,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,inline router logic,AsyncSession,none,no,"PARTIAL,UNTESTED"
+PATCH,/api/v1/customer/registration/profile,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,inline router logic,AsyncSession,none,no,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/profile,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,inline router logic,AsyncSession,none,no,"PARTIAL,UNTESTED"
+GET,/api/v1/customer/registration/status,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,inline router logic,AsyncSession,none,no,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/submit,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,inline router logic,AsyncSession,none,yes,"PARTIAL,UNTESTED"
+POST,/api/v1/customer/registration/token/refresh,CUSTOMER_REGISTRATION,CUSTOMER_APP,app/modules/customers/router.py,AuthenticationService.refresh_token,AsyncSession,none,unclear,"PARTIAL,UNTESTED"
+POST,/api/v1/delivery/auth/logout,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.logout,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/delivery/auth/logout-all,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.logout_all + me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/delivery/auth/me,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/delivery/auth/otp/request,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/delivery/auth/otp/resend,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/delivery/auth/otp/verify,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.verify_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/delivery/auth/token/refresh,DELIVERY,DELIVERY_APP,app/modules/authentication/channel_router.py,AuthenticationService.refresh_token,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/merchant/auth/logout,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.logout,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/merchant/auth/logout-all,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.logout_all + me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/merchant/auth/me,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.me,"AuthenticationRepository, OTPService, UserRoleRepository",none,yes,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/merchant/auth/otp/request,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/merchant/auth/otp/resend,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.request_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/merchant/auth/otp/verify,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.verify_otp,"AuthenticationRepository, OTPService, UserRoleRepository",none,no,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+POST,/api/v1/merchant/auth/token/refresh,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/modules/authentication/channel_router.py,AuthenticationService.refresh_token,"AuthenticationRepository, OTPService, UserRoleRepository",none,unclear,"IMPLEMENTED,INTENTIONAL_CHANNEL_ROUTE"
+GET,/api/v1/merchant/customers,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/merchant/customers/{customer_id}/approve,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/merchant/customers/{customer_id}/reject,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+GET,/api/v1/merchant/delivery-users,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/merchant/delivery-users,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+GET,/api/v1/merchant/delivery-users/{delivery_user_id},MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+PATCH,/api/v1/merchant/delivery-users/{delivery_user_id},MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/merchant/delivery-users/{delivery_user_id}/activate,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/merchant/delivery-users/{delivery_user_id}/block,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+POST,/api/v1/merchant/delivery-users/{delivery_user_id}/unblock,MERCHANT,"MERCHANT_WEB,MERCHANT_APP",app/main.py,inline router logic,AsyncSession,none,yes,IMPLEMENTED
+GET,/health,INTERNAL,INTERNAL,app/main.py,inline router logic,AsyncSession,none,unclear,"IMPLEMENTED,UNTESTED"

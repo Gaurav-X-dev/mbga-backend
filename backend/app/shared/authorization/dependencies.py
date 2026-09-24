@@ -3,48 +3,83 @@ from typing import Annotated
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings, get_settings
-from app.modules.authentication.constants import LoginChannel
+from app.modules.authentication.constants import LoginChannel, SessionType
+from app.modules.authentication.session_service import SessionService
 from app.modules.users.role_repository import UserRoleRepository
 from app.shared.authorization.context import AuthContext
-from app.shared.authorization.exceptions import UnauthenticatedError
+from app.shared.authorization.exceptions import AuthorizationDeniedError
 from app.shared.authorization.permission_cache import PermissionCache
 from app.shared.authorization.permission_checker import EffectivePermissionService
 from app.shared.database.session import get_db_session
 from app.shared.redis.client import get_redis
 
 bearer_scheme = HTTPBearer(auto_error=False)
+FULL_SESSION_TYPES = frozenset({SessionType.ACCESS.value})
+ONBOARDING_SESSION_TYPES = frozenset({SessionType.ONBOARDING.value})
+
+
+async def _validated_context(
+    credentials: HTTPAuthorizationCredentials | None,
+    settings: Settings,
+    session: AsyncSession,
+    *,
+    allowed_types: frozenset[str],
+    channel: LoginChannel | None = None,
+) -> AuthContext:
+    validated = await SessionService(session, settings).validate_access_token(
+        credentials.credentials if credentials else None,
+        allowed_types=allowed_types,
+        channel=channel,
+    )
+    return AuthContext(
+        user_id=validated.user.id,
+        login_channel=validated.channel,
+        session_id=validated.session.id,
+        token_type=validated.token_type,
+    )
+
 
 async def require_authenticated_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
     settings: Annotated[Settings, Depends(get_settings)] = None,
+    session: Annotated[AsyncSession, Depends(get_db_session)] = None,
 ) -> AuthContext:
-    if credentials is None:
-        raise UnauthenticatedError()
-    try:
-        payload = jwt.decode(credentials.credentials, settings.jwt_signing_secret, algorithms=[settings.jwt_algorithm])
-        if payload.get("token_type") not in {"access", "onboarding"}:
-            raise ValueError("not an access token")
-        channel = LoginChannel(payload.get("login_channel"))
-        return AuthContext(
-            user_id=payload["sub"],
-            login_channel=channel,
-            session_id=payload.get("session_id"),
-        )
-    except Exception as exc:
-        raise UnauthenticatedError() from exc
+    """Full app session: a live access-token session whose account may use its app.
+
+    Onboarding (customer registration) tokens are rejected here with TOKEN_TYPE_NOT_ALLOWED.
+    """
+    return await _validated_context(credentials, settings, session, allowed_types=FULL_SESSION_TYPES)
+
+
+async def require_onboarding_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)] = None,
+    settings: Annotated[Settings, Depends(get_settings)] = None,
+    session: Annotated[AsyncSession, Depends(get_db_session)] = None,
+) -> AuthContext:
+    """Restricted customer-registration session. Only /customer/registration routes use this."""
+    return await _validated_context(
+        credentials,
+        settings,
+        session,
+        allowed_types=ONBOARDING_SESSION_TYPES,
+        channel=LoginChannel.CUSTOMER,
+    )
 
 
 def get_effective_permission_service(
     session: Annotated[AsyncSession, Depends(get_db_session)],
-    redis: Annotated[Redis, Depends(get_redis)],
+    redis: Annotated[Redis | None, Depends(get_redis)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> EffectivePermissionService:
-    cache = PermissionCache(redis, settings.permission_cache_ttl_seconds)
+    cache = PermissionCache(
+        redis,
+        settings.permission_cache_ttl_seconds,
+        failure_backoff_seconds=settings.redis_failure_backoff_seconds,
+    )
     return EffectivePermissionService(UserRoleRepository(session), cache)
 
 
@@ -85,8 +120,6 @@ def require_role(role_code: str) -> Callable:
 def require_login_channel(login_channel: LoginChannel) -> Callable:
     async def dependency(context: Annotated[AuthContext, Depends(require_authenticated_user)]) -> None:
         if context.login_channel != login_channel:
-            from app.shared.authorization.exceptions import AuthorizationDeniedError
-
-            raise AuthorizationDeniedError()
+            raise AuthorizationDeniedError("CHANNEL_NOT_ALLOWED")
 
     return dependency
