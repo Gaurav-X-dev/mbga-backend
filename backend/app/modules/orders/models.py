@@ -85,9 +85,10 @@ class Order(Base):
     # The cut-off exactly as it was evaluated at placement (spec §3.10 `cutoff`).
     cutoff_time: Mapped[str] = mapped_column(String(5))
     within_cutoff: Mapped[bool] = mapped_column(Boolean)
-    scheduled_delivery_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # A calendar day, not an instant: a delivery has no time of day now that the slot is gone,
+    # and storing one is what made it renderable five and a half hours out.
+    scheduled_delivery_date: Mapped[date] = mapped_column(Date)
     cutoff_message: Mapped[str] = mapped_column(String(255))
-    delivery_slot: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # Staff display name when placed from the merchant app; null for a customer's own order.
     created_by: Mapped[str | None] = mapped_column(String(160), nullable=True)

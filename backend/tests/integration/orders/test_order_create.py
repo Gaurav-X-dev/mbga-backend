@@ -37,7 +37,11 @@ async def test_an_order_is_placed_with_everything_the_screen_renders(env):
     assert order["source"] == "MERCHANT_APP"
     assert order["createdBy"] == user.full_name
     assert order["placedAt"].endswith("Z")
-    assert order["deliverySlot"] in {"09:00 AM – 01:00 PM", "02:00 PM – 06:00 PM"}
+    # A plain calendar day, inside the cut-off it came from. There is no delivery slot: the
+    # godown never scheduled against one, so a morning or afternoon window was a promise that
+    # got broken.
+    assert len(order["cutoff"]["scheduledDeliveryDate"]) == 10, "an ISO date, not a timestamp"
+    assert "deliverySlot" not in order
 
 
 async def test_the_status_history_starts_with_the_placement(env):

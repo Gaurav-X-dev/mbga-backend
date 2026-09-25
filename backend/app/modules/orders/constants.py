@@ -19,7 +19,9 @@ from app.modules.pricing.constants import CylinderType
 class OrderStatus(StrEnum):
     PLACED = "PLACED"
     CONFIRMED = "CONFIRMED"
-    PREPARING = "PREPARING"
+    # There is no PREPARING. It meant "cylinders are being allocated at the godown", which is a
+    # step nobody worked in: allocating the cylinders *is* dispatching the van. A confirmed order
+    # goes straight out for delivery when its slip is dispatched.
     OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY"
     DELIVERED = "DELIVERED"
     CANCELLED = "CANCELLED"
@@ -64,10 +66,9 @@ class StatusMeta:
 # so this table - not the app - is what a new status has to be added to.
 STATUS_CATALOGUE: tuple[StatusMeta, ...] = (
     StatusMeta(OrderStatus.PLACED, "Order Placed", 1, StatusTone.INFO, "We have received your order.", False),
-    StatusMeta(OrderStatus.CONFIRMED, "Confirmed", 2, StatusTone.INFO, "Order confirmed and scheduled for delivery.", False),
-    StatusMeta(OrderStatus.PREPARING, "Preparing / Dispatch", 3, StatusTone.PENDING, "Cylinders are being allocated at the godown.", False),
-    StatusMeta(OrderStatus.OUT_FOR_DELIVERY, "Out for Delivery", 4, StatusTone.WARNING, "Your cylinders are on the way.", False),
-    StatusMeta(OrderStatus.DELIVERED, "Delivered", 5, StatusTone.SUCCESS, "Delivered and confirmed.", True),
+    StatusMeta(OrderStatus.CONFIRMED, "Confirmed", 2, StatusTone.INFO, "Confirmed and scheduled for delivery.", False),
+    StatusMeta(OrderStatus.OUT_FOR_DELIVERY, "Out for Delivery", 3, StatusTone.WARNING, "Your cylinders are on the way.", False),
+    StatusMeta(OrderStatus.DELIVERED, "Delivered", 4, StatusTone.SUCCESS, "Delivered and confirmed.", True),
     # 99 keeps terminal failure states out of the timeline's numbered progression.
     StatusMeta(OrderStatus.CANCELLED, "Cancelled", 99, StatusTone.ERROR, "This order was cancelled.", True),
 )
@@ -87,8 +88,11 @@ ACTIVE_FILTER = "ACTIVE"
 # testable on its own.
 STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     OrderStatus.PLACED.value: frozenset({OrderStatus.CONFIRMED.value, OrderStatus.CANCELLED.value}),
-    OrderStatus.CONFIRMED.value: frozenset({OrderStatus.PREPARING.value, OrderStatus.CANCELLED.value}),
-    OrderStatus.PREPARING.value: frozenset({OrderStatus.OUT_FOR_DELIVERY.value, OrderStatus.CANCELLED.value}),
+    # Straight onto the van: dispatching the slip is the only thing that moves it, and that
+    # happens the moment the cylinders are loaded.
+    OrderStatus.CONFIRMED.value: frozenset(
+        {OrderStatus.OUT_FOR_DELIVERY.value, OrderStatus.CANCELLED.value}
+    ),
     # Once it is on the van, cancelling is a delivery failure, not an order cancellation.
     OrderStatus.OUT_FOR_DELIVERY.value: frozenset({OrderStatus.DELIVERED.value}),
     OrderStatus.DELIVERED.value: frozenset(),

@@ -15,7 +15,7 @@ a transition the catalogue allows.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from fastapi import status
@@ -28,8 +28,9 @@ from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import Address
 from app.modules.customers.constants import CustomerType, KycStatus
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.notifications.events.orders import order_confirmed
 from app.modules.orders import reorder as reorder_rules
-from app.modules.orders import validation
+from app.modules.orders import transitions, validation
 from app.modules.orders.constants import (
     ACTIVE_FILTER,
     ACTIVE_STATUSES,
@@ -45,7 +46,8 @@ from app.modules.orders.constants import (
 from app.modules.orders.cutoff import Cutoff, evaluate
 from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
 from app.modules.orders.notifications import (
-    order_cancelled,
+    order_cancelled_customer,
+    order_cancelled_merchant,
     order_placed_customer,
     order_placed_merchant,
 )
@@ -283,7 +285,6 @@ class OrderService:
             within_cutoff=moment.within_cutoff,
             scheduled_delivery_date=moment.scheduled_delivery_date,
             cutoff_message=moment.message,
-            delivery_slot=moment.delivery_slot,
             # Only a staff placement names an actor; a customer ordering for themselves
             # leaves it null, and the app shows no "created by" line.
             created_by=self.actor.display_name if staff_placed else None,
@@ -526,6 +527,42 @@ class OrderService:
     async def get(self, order_id: str) -> OrderResponse:
         return await self._view(await self._owned(order_id))
 
+    async def confirm(self, order_id: str) -> OrderResponse:
+        """Accept a placed order (`PLACED` -> `CONFIRMED`).
+
+        **Not one of the spec's six order endpoints**, and its absence was a hole rather than a
+        simplification: §6.1 defines a `CONFIRMED` status, the apps render it on the tracking
+        timeline, and a delivery slip may only be raised against a confirmed order. With no route
+        to reach it every order stayed `PLACED` for ever and no van could be scheduled.
+
+        Staff only - the route is not mounted on the customer channel. A customer confirming
+        their own order would mean nothing: the point of the step is the merchant saying they
+        have the stock and will deliver it.
+        """
+        order = await self._owned(order_id)
+        moved = transitions.advance(
+            self.session,
+            order,
+            OrderStatus.CONFIRMED,
+            by_name=self.actor.display_name,
+            by_user_id=self.actor.user_id,
+            note=_confirmation_note(order.scheduled_delivery_date),
+        )
+        if moved:
+            # The customer is told, because "confirmed" is the first thing that happens after
+            # they place an order and the only signal that a human has looked at it. Only on a
+            # real move: confirming an already-confirmed order must not notify them twice.
+            NotificationOutboxWriter(self.session).queue(
+                order_confirmed(
+                    order.customer_id,
+                    order.id,
+                    order.order_number,
+                    order.scheduled_delivery_date.isoformat(),
+                )
+            )
+        await self.session.commit()
+        return await self._view(order)
+
     async def cancel(self, order_id: str, reason: str | None) -> OrderResponse:
         """Cancel an order that has not left the godown.
 
@@ -553,8 +590,14 @@ class OrderService:
                 changed_at=now,
             )
         )
-        NotificationOutboxWriter(self.session).queue(
-            order_cancelled(order.customer_id, order.id, order.order_number)
+        # Both sides hear it. Staff need it as much as the customer does: without it the
+        # godown keeps a cancelled order on the loading list and the cylinders go out.
+        outbox = NotificationOutboxWriter(self.session)
+        outbox.queue(order_cancelled_customer(order.customer_id, order.id, order.order_number))
+        outbox.queue(
+            order_cancelled_merchant(
+                self.merchant_id, order.id, order.order_number, order.customer_name, reason
+            )
         )
         await self.session.commit()
         return await self._view(order)
@@ -743,6 +786,16 @@ def _line_view(line) -> OrderItemResponse:
     )
 
 
+def _confirmation_note(delivery_date: date | None) -> str | None:
+    """What the tracking timeline shows under "Confirmed".
+
+    The delivery day. It is the single most useful thing a customer reads on that line, and it
+    saves them ringing up to ask when the van comes. There is no slot any more - the godown never
+    scheduled against one, so promising a window was a promise that got broken.
+    """
+    return f"Expected delivery: {delivery_date:%d %b %Y}" if delivery_date else None
+
+
 def _cutoff_view(moment: Cutoff) -> CutoffResponse:
     return CutoffResponse(
         cutoff_time=moment.cutoff_time,
@@ -824,7 +877,6 @@ def _order_view(
             scheduled_delivery_date=order.scheduled_delivery_date,
             message=order.cutoff_message,
         ),
-        delivery_slot=order.delivery_slot,
         created_by=order.created_by,
         delivery_slip_id=order.delivery_slip_id,
         invoice_id=order.invoice_id,
