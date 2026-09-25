@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.notifications.autodispatch import mark_queued
 from app.shared.notifications.models import NotificationOutbox
 
 
@@ -48,7 +50,13 @@ class NotificationOutboxWriter:
 
         Not awaited and not flushed on purpose: a notification must never be the thing that
         decides whether a business write succeeds.
+
+        Marking the request means the middleware kicks off a delivery pass once the response
+        has gone out, so a notification does not wait for the worker's next sweep. Nothing
+        about that is load-bearing: if the dispatch never happens the row simply stays
+        queued, which is what the worker is for.
         """
+        mark_queued()
         self.session.add(
             NotificationOutbox(
                 id=str(uuid4()),
@@ -65,67 +73,67 @@ class NotificationOutboxWriter:
             )
         )
 
+    async def queue_repeatable(self, event: NotificationEvent) -> None:
+        """Queue an event that can legitimately happen to the same entity again.
 
-# --- Customer and KYC events (spec §18.8) ---------------------------------------------------
+        The outbox is unique on `(event_type, entity_type, entity_id, recipient_kind,
+        recipient_id)`, which is what stops a retried business write from notifying twice. Most
+        modules satisfy that by keying `entity_id` on the thing that changed - the stock movement,
+        the price change log - so each occurrence is naturally its own row.
+
+        Some events cannot. A task notification has to carry the **task** id, because tapping it
+        opens the task; so "Task updated" for the same task is the same key every time, and a
+        plain insert would be a duplicate-key error on the second update.
+
+        This refreshes the pending row instead: new wording, new timestamp, and `delivered_at`
+        cleared so it is pushed again and sorts back to the top of the bell. A task updated five
+        times is then one unread row saying so, which is what a person actually wants - five
+        identical rows is how a notification list stops being read.
+
+        Awaited and flushed, unlike `queue()`: an upsert is a statement rather than a pending
+        object. It still runs inside the caller's transaction, so a business write that rolls
+        back takes the notification with it.
+        """
+        mark_queued()
+        now = datetime.now(UTC)
+        statement = mysql_insert(NotificationOutbox).values(
+            id=str(uuid4()),
+            event_type=event.event_type,
+            recipient_kind=event.recipient_kind,
+            recipient_id=event.recipient_id,
+            entity_type=event.entity_type,
+            entity_id=event.entity_id,
+            title=event.title,
+            body=event.body,
+            severity=event.severity,
+            delivered_at=None,
+            attempts=0,
+            created_at=now,
+        )
+        await self.session.execute(
+            statement.on_duplicate_key_update(
+                title=statement.inserted.title,
+                body=statement.inserted.body,
+                severity=statement.inserted.severity,
+                created_at=statement.inserted.created_at,
+                # Re-opened for delivery: the event happened again, so the device hears again.
+                delivered_at=None,
+                attempts=0,
+                next_attempt_at=None,
+                last_error=None,
+            )
+        )
+
+
+# --- Where the events live ------------------------------------------------------------------
 #
-# Every event below is keyed on the **application** id, not the customer id. A customer who
-# was rejected and resubmitted legitimately generates a second "Application received" and a
-# second decision, and keying on the customer would make the outbox's uniqueness constraint
-# swallow them. Keying on the application still collapses retries of the *same* submit,
-# which is what that constraint is for.
-
-APPLICATION = "kyc_application"
-
-
-def application_received(customer_id: str, business_name: str, application_id: str) -> NotificationEvent:
-    return NotificationEvent(
-        event_type="customer.application_received",
-        recipient_kind="customer",
-        recipient_id=customer_id,
-        entity_type=APPLICATION,
-        entity_id=application_id,
-        title="Application received",
-        body=f"We have received the registration for {business_name} and it is now under review.",
-    )
-
-
-def new_kyc_application(
-    merchant_id: str, application_id: str, business_name: str, added_by: str | None = None
-) -> NotificationEvent:
-    body = f"{business_name} is awaiting KYC review."
-    if added_by:
-        body = f"{business_name} was added by {added_by} and is awaiting KYC review."
-    return NotificationEvent(
-        event_type="kyc.application_submitted",
-        recipient_kind="merchant",
-        recipient_id=merchant_id,
-        entity_type=APPLICATION,
-        entity_id=application_id,
-        title="New KYC application",
-        body=body,
-    )
-
-
-def account_approved(customer_id: str, business_name: str, application_id: str) -> NotificationEvent:
-    return NotificationEvent(
-        event_type="customer.approved",
-        recipient_kind="customer",
-        recipient_id=customer_id,
-        entity_type=APPLICATION,
-        entity_id=application_id,
-        title="Account approved",
-        body=f"{business_name} is approved. You can now sign in and place orders.",
-    )
-
-
-def application_rejected(customer_id: str, business_name: str, reason: str, application_id: str) -> NotificationEvent:
-    return NotificationEvent(
-        event_type="customer.rejected",
-        recipient_kind="customer",
-        recipient_id=customer_id,
-        entity_type=APPLICATION,
-        entity_id=application_id,
-        title="Application rejected",
-        body=f"The registration for {business_name} was not approved. Reason: {reason}",
-        severity=Severity.CRITICAL,
-    )
+# Deliberately nothing below this line. This module is the **transport**: it defines what an
+# event is and writes it to the outbox inside the caller's transaction. The events
+# themselves - every title, body, audience and severity the platform can send - are the
+# catalogue in `app.modules.notifications.events`, organised by domain.
+#
+# Keeping them apart is not tidiness. Re-exporting the builders from here made this module
+# import the catalogue while the catalogue imported this module for `NotificationEvent`, so
+# whichever side was touched first at startup got a half-built module. The package
+# `__init__` still re-exports the moved builders, lazily, for callers that used to get them
+# from there.

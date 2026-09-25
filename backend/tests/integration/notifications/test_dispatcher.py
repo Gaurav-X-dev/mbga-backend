@@ -20,13 +20,24 @@ from tests.integration.notifications.conftest import customer, queue, staff
 pytestmark = [pytest.mark.integration, pytest.mark.mysql]
 
 
-class StubFcm:
-    """Records what would have been sent, and answers however the test needs."""
+class StubCredentials:
+    def __init__(self, project_id: str) -> None:
+        self.project_id = project_id
+        self.client_email = f"stub@{project_id}.iam.gserviceaccount.com"
 
-    def __init__(self, result: SendResult | None = None) -> None:
+
+class StubFcm:
+    """Records what would have been sent, and answers however the test needs.
+
+    Stands in for one Firebase project. `StubProjects` below hands one of these out per
+    app, which is what the dispatcher now routes on.
+    """
+
+    def __init__(self, result: SendResult | None = None, project_id: str = "stub-project") -> None:
         self.result = result or SendResult(ok=True)
         self.sent: list[tuple[str, PushMessage]] = []
         self.results_by_token: dict[str, SendResult] = {}
+        self.credentials = StubCredentials(project_id)
 
     async def send(self, token: str, message: PushMessage) -> SendResult:
         self.sent.append((token, message))
@@ -37,9 +48,37 @@ class StubFcm:
         return [token for token, _ in self.sent]
 
 
+class StubProjects:
+    """One stub client for every app, unless the test says otherwise."""
+
+    def __init__(self, default: StubFcm | None = None, by_channel: dict[str, StubFcm | None] | None = None) -> None:
+        self.default = default if default is not None else StubFcm()
+        self.by_channel = by_channel or {}
+
+    def client_for(self, channel: str):
+        key = (channel or "").upper()
+        return self.by_channel.get(key, self.default)
+
+    # The dispatcher only ever reads through `client_for`; these exist so a test can assert
+    # on what the single default stub saw without knowing the routing.
+    @property
+    def sent(self):
+        return self.default.sent
+
+    @property
+    def tokens(self):
+        return self.default.tokens
+
+    @property
+    def results_by_token(self):
+        return self.default.results_by_token
+
+
 async def _dispatch(env, client, *, now: datetime | None = None):
+    """Run one pass. A bare stub client is wrapped so every app routes to it."""
+    projects = client if isinstance(client, StubProjects) or client is None else StubProjects(client)
     async with env.sessions() as session:
-        return await NotificationDispatcher(session, client).run(now=now)
+        return await NotificationDispatcher(session, projects).run(now=now)
 
 
 async def _row(env, notification_id: str) -> NotificationOutbox:

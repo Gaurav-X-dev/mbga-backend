@@ -31,7 +31,13 @@ SEND_TIMEOUT_SECONDS = 10
 #: FCM's way of saying "this device is gone". The token is deleted rather than retried -
 #: retrying a dead token forever is how an outbox stops draining.
 DEAD_TOKEN_STATUSES = frozenset({404})
-DEAD_TOKEN_ERRORS = frozenset({"UNREGISTERED", "INVALID_ARGUMENT", "SENDER_ID_MISMATCH"})
+DEAD_TOKEN_ERRORS = frozenset({"UNREGISTERED", "INVALID_ARGUMENT"})
+
+#: "This token belongs to a different Firebase project." Deliberately **not** a dead token:
+#: the device is fine, the routing is wrong, and deleting a working token because the wrong
+#: project was configured would sign the user out of push until they reinstalled. It is
+#: reported and retried instead, so fixing the configuration delivers the backlog.
+MISROUTED_ERRORS = frozenset({"SENDER_ID_MISMATCH", "THIRD_PARTY_AUTH_ERROR"})
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,9 @@ class SendResult:
     ok: bool
     #: True when the token itself is invalid and should be removed rather than retried.
     token_dead: bool = False
+    #: True when the token is valid but was sent through the wrong Firebase project. A
+    #: configuration problem, never the device's fault - so the token is kept.
+    misrouted: bool = False
     error: str | None = None
 
 
@@ -154,9 +163,11 @@ class FcmClient:
 
         if response.is_success:
             return SendResult(ok=True)
+        status_name = _error_status(response)
         return SendResult(
             ok=False,
-            token_dead=_is_dead_token(response),
+            token_dead=_is_dead_token(response, status_name),
+            misrouted=status_name in MISROUTED_ERRORS,
             error=f"{response.status_code}: {response.text[:160]}",
         )
 
@@ -165,23 +176,33 @@ class FcmClient:
             await self._client.aclose()
 
 
-def _is_dead_token(response: httpx.Response) -> bool:
+def _error_status(response: httpx.Response) -> str | None:
+    """The machine-readable error name FCM put in the body, if there is one."""
+    try:
+        detail = response.json().get("error", {})
+    except ValueError:
+        return None
+    if not isinstance(detail, dict):
+        return None
+    named = detail.get("status")
+    if named:
+        return named
+    for item in detail.get("details", []):
+        if isinstance(item, dict) and item.get("errorCode"):
+            return item["errorCode"]
+    return None
+
+
+def _is_dead_token(response: httpx.Response, status_name: str | None) -> bool:
     """Whether FCM is saying this device is gone for good.
 
-    A 404 means the token is unknown. A 400 can be either a bad token or a bad message, so
-    the error status inside the body is what decides - treating every 400 as a dead token
-    would quietly delete working tokens the day a payload field is wrong.
+    A 404 means the token is unknown. A 400 can be a bad token, a bad message, or a token
+    from another project, so the error name inside the body is what decides - treating
+    every 400 as a dead token would quietly delete working tokens the day a payload field
+    is wrong or a credential is misconfigured.
     """
     if response.status_code in DEAD_TOKEN_STATUSES:
         return True
     if response.status_code != 400:
         return False
-    try:
-        detail = response.json().get("error", {})
-    except ValueError:
-        return False
-    if detail.get("status") in DEAD_TOKEN_ERRORS:
-        return True
-    return any(
-        item.get("errorCode") in DEAD_TOKEN_ERRORS for item in detail.get("details", []) if isinstance(item, dict)
-    )
+    return status_name in DEAD_TOKEN_ERRORS

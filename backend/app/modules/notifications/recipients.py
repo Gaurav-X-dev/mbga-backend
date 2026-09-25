@@ -21,10 +21,15 @@ from app.modules.notifications.constants import RecipientKind
 
 @dataclass(frozen=True)
 class Device:
-    """One phone to notify."""
+    """One phone to notify.
+
+    `channel` is which app registered the token, and it is what decides the Firebase
+    project the push goes through - a token is only valid in the project that minted it.
+    """
 
     user_id: str
     token: str
+    channel: str
 
 
 class RecipientResolver:
@@ -37,7 +42,7 @@ class RecipientResolver:
         if not user_ids:
             return []
         rows = await self.session.execute(
-            select(LoginSession.user_id, LoginSession.push_token)
+            select(LoginSession.user_id, LoginSession.push_token, LoginSession.login_channel)
             .where(
                 LoginSession.user_id.in_(user_ids),
                 LoginSession.push_token.is_not(None),
@@ -48,8 +53,8 @@ class RecipientResolver:
         # One device can hold several live sessions (a refresh leaves the old row behind for
         # a while); sending twice to the same token would show the user two notifications.
         seen: dict[str, Device] = {}
-        for user_id, token in rows:
-            seen.setdefault(token, Device(user_id=user_id, token=token))
+        for user_id, token, channel in rows:
+            seen.setdefault(token, Device(user_id=user_id, token=token, channel=channel or ""))
         return list(seen.values())
 
     async def _user_ids(self, recipient_kind: str, recipient_id: str) -> list[str]:

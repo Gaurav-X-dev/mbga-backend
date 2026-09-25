@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.models import CustomerProfile
+from app.modules.notifications.events import pricing as pricing_events
 from app.modules.pricing import calendar as cal
 from app.modules.pricing import validation
 from app.modules.pricing.constants import (
@@ -55,6 +56,7 @@ from app.modules.roles.models import Role, RoleLoginChannel
 from app.modules.users.role_models import UserRole
 from app.shared.business.actor import BusinessActor
 from app.shared.exceptions.api_error import ApiError
+from app.shared.notifications.outbox import NotificationOutboxWriter
 
 #: How a log row's id is presented, per the spec's `PRCLOG-00123`.
 LOG_ID_PREFIX = "PRCLOG-"
@@ -176,30 +178,46 @@ class PricingService:
         entry.bpcl_base_rate = base_rate
         entry.tier_markup = markup
         now = datetime.now(UTC)
-        self.session.add(
-            PricingChangeLog(
-                merchant_id=self.merchant_id,
-                pricing_month_id=month.id,
-                cylinder_type=entry.cylinder_type,
-                tier=entry.tier,
-                old_bpcl_base_rate=old_base_rate,
-                old_tier_markup=old_markup,
-                old_customer_price=old_price,
-                new_bpcl_base_rate=base_rate,
-                new_tier_markup=markup,
-                # Mirrors the generated column. Stored rather than joined, so the log still
-                # reads correctly once the entry it describes has moved on.
-                new_customer_price=base_rate + markup,
-                effective_from=effective_from,
-                reason=_clean(payload.reason),
-                changed_by_user_id=self.actor.user_id,
-                changed_by_name=self.actor.display_name,
-                changed_by_role=await self._actor_role(),
-                changed_at=now,
-            )
+        change_log = PricingChangeLog(
+            merchant_id=self.merchant_id,
+            pricing_month_id=month.id,
+            cylinder_type=entry.cylinder_type,
+            tier=entry.tier,
+            old_bpcl_base_rate=old_base_rate,
+            old_tier_markup=old_markup,
+            old_customer_price=old_price,
+            new_bpcl_base_rate=base_rate,
+            new_tier_markup=markup,
+            # Mirrors the generated column. Stored rather than joined, so the log still
+            # reads correctly once the entry it describes has moved on.
+            new_customer_price=base_rate + markup,
+            effective_from=effective_from,
+            reason=_clean(payload.reason),
+            changed_by_user_id=self.actor.user_id,
+            changed_by_name=self.actor.display_name,
+            changed_by_role=await self._actor_role(),
+            changed_at=now,
         )
+        self.session.add(change_log)
+        # Flushed so the log row has its id: the notification is keyed on that change, not
+        # on the month, because the same cylinder legitimately moves more than once in a
+        # month and the outbox collapses repeats of one key.
+        await self.session.flush()
         month.updated_by = self.actor.display_name
         month.updated_at = now
+        # Staff who are not the one who changed it are quoting customers from what they last
+        # saw. A silent change is how somebody is quoted one figure and billed another.
+        NotificationOutboxWriter(self.session).queue(
+            pricing_events.rate_changed(
+                merchant_id=self.merchant_id,
+                change_log_id=str(change_log.id),
+                cylinder_label=CYLINDER_LABELS[payload.cylinder_type],
+                old_price=int(old_price) if old_price is not None else None,
+                new_price=int(base_rate + markup),
+                changed_by=self.actor.display_name,
+                reason=_clean(payload.reason),
+            )
+        )
         await self.session.commit()
         # `customer_price` is computed by the database, so the row is re-read rather than
         # assumed - the response then shows exactly what was stored.
@@ -323,16 +341,28 @@ class PricingService:
             existing.set_by_user_id = self.actor.user_id
             existing.set_by_name = self.actor.display_name
             existing.set_at = now
-        self.session.add(
-            await self._override_log(
-                profile.id,
-                kind,
-                action=OverrideAction.SET if existing is None else OverrideAction.UPDATE,
-                old_price=old_price,
-                new_price=price,
-                effective_from=effective_from,
+        override_log = await self._override_log(
+            profile.id,
+            kind,
+            action=OverrideAction.SET if existing is None else OverrideAction.UPDATE,
+            old_price=old_price,
+            new_price=price,
+            effective_from=effective_from,
+            reason=reason,
+            now=now,
+        )
+        self.session.add(override_log)
+        # Flushed for its id; see the note on the rate change above.
+        await self.session.flush()
+        # The customer should not discover their own rate on an invoice.
+        NotificationOutboxWriter(self.session).queue(
+            pricing_events.customer_price_set(
+                customer_id=profile.id,
+                change_log_id=str(override_log.id),
+                cylinder_label=CYLINDER_LABELS[kind],
+                price=int(price),
+                set_by=self.actor.display_name,
                 reason=reason,
-                now=now,
             )
         )
         await self.session.commit()
@@ -349,17 +379,28 @@ class PricingService:
         now = datetime.now(UTC)
         old_price = existing.override_price
         await self.session.delete(existing)
-        self.session.add(
-            await self._override_log(
-                profile.id,
-                kind,
-                action=OverrideAction.REMOVE,
-                old_price=old_price,
-                new_price=None,
-                # The revert takes effect now; this slice schedules nothing.
-                effective_from=cal.business_today(),
-                reason=None,
-                now=now,
+        removal_log = await self._override_log(
+            profile.id,
+            kind,
+            action=OverrideAction.REMOVE,
+            old_price=old_price,
+            new_price=None,
+            # The revert takes effect now; this slice schedules nothing.
+            effective_from=cal.business_today(),
+            reason=None,
+            now=now,
+        )
+        self.session.add(removal_log)
+        await self.session.flush()
+        _tier, prices = await self._tier_card(profile)
+        standard = prices.get(kind.value)
+        NotificationOutboxWriter(self.session).queue(
+            pricing_events.customer_price_removed(
+                customer_id=profile.id,
+                change_log_id=str(removal_log.id),
+                cylinder_label=CYLINDER_LABELS[kind],
+                standard_price=int(standard) if standard is not None else None,
+                removed_by=self.actor.display_name,
             )
         )
         await self.session.commit()

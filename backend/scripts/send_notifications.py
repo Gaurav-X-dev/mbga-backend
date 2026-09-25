@@ -24,18 +24,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config.app import get_settings
 from app.modules.notifications.dispatcher import NotificationDispatcher
-from app.modules.notifications.fcm import FcmClient, FcmCredentials
+from app.modules.notifications.projects import FcmProjects
 from app.shared.database.session import AsyncSessionLocal
 
 POLL_SECONDS = 30
 
 
-def _load_client(dry_run: bool) -> FcmClient | None:
-    """The FCM client, or None when push is off or deliberately skipped.
+def _load_projects(dry_run: bool) -> FcmProjects | None:
+    """The per-app FCM clients, or None when push is off or deliberately skipped.
 
-    A missing or unreadable credential is reported and treated as "push is off" rather than
-    crashing: the queue keeps filling, the in-app list keeps working, and turning Firebase
-    on later delivers the backlog.
+    Each app is its own Firebase project. What is configured is printed up front, so a
+    missing credential is visible before anybody waits for a notification that was never
+    going anywhere. An app with no credential is skipped rather than fatal - its rows stay
+    queued and go out once it is configured.
     """
     settings = get_settings()
     if dry_run:
@@ -44,26 +45,27 @@ def _load_client(dry_run: bool) -> FcmClient | None:
     if not settings.fcm_enabled:
         print("FCM_ENABLED is false. Nothing will be sent; rows stay queued.")
         return None
-    path = Path(settings.fcm_credentials_file)
-    if not path.is_absolute():
-        path = Path(__file__).resolve().parents[1] / path
-    try:
-        credentials = FcmCredentials(path)
-    except (OSError, ValueError) as error:
-        print(f"Cannot use {path}: {error}")
-        print("Rows stay queued. Fix the credential and run again.")
+    projects = FcmProjects(settings)
+    ready = projects.configured()
+    if not ready:
+        print("No app has a usable Firebase credential. Rows stay queued.")
         return None
-    print(f"Sending as {credentials.client_email} (project {credentials.project_id}).")
-    return FcmClient(credentials)
+    print("Sending through:")
+    for channel, project_id in sorted(ready.items()):
+        print(f"  {channel:9} -> {project_id}")
+    missing = {"MERCHANT", "CUSTOMER", "DELIVERY"} - set(ready)
+    if missing:
+        print(f"  not configured: {', '.join(sorted(missing))} - their rows stay queued")
+    return projects
 
 
 async def _run(once: bool, dry_run: bool) -> int:
     settings = get_settings()
-    client = _load_client(dry_run)
+    projects = _load_projects(dry_run)
     try:
         while True:
             async with AsyncSessionLocal() as session:
-                report = await NotificationDispatcher(session, client).run(limit=settings.fcm_batch_size)
+                report = await NotificationDispatcher(session, projects).run(limit=settings.fcm_batch_size)
             if report.considered or once:
                 print(report.as_dict())
             if once:
@@ -72,8 +74,8 @@ async def _run(once: bool, dry_run: bool) -> int:
     except KeyboardInterrupt:
         return 0
     finally:
-        if client is not None:
-            await client.aclose()
+        if projects is not None:
+            await projects.aclose()
 
 
 def main() -> int:

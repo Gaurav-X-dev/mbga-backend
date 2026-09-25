@@ -10,6 +10,8 @@ from uuid import uuid4
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.modules.notifications.autodispatch import schedule_dispatch, take_queued
+
 REQUEST_ID_HEADER = "X-Request-ID"
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -63,3 +65,8 @@ class RequestContextMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             _request_id.reset(token)
+            # After the response, never during it: a queued notification is delivered now
+            # rather than on the worker's next sweep, and Firebase being slow can never
+            # make this request slow.
+            if take_queued():
+                schedule_dispatch()

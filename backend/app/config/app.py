@@ -103,9 +103,20 @@ class Settings(BaseSettings):
     # and serves the in-app list, it just sends no push. Turning this on later delivers the
     # backlog rather than losing it.
     fcm_enabled: bool = False
-    # Path to the Firebase service-account JSON. A file, not an env var: a PEM private key
-    # does not survive being pasted into `.env`, and a file can carry its own permissions.
+    # Each app is its own Firebase project, and a device token is only valid in the project
+    # that minted it - so there is one credential per app, chosen by the channel the token
+    # was registered on. Files, not env vars: a PEM private key does not survive being
+    # pasted into `.env`, and a file can carry its own permissions.
+    fcm_credentials_merchant: str | None = "secrets/fcm-merchant.json"
+    fcm_credentials_customer: str | None = "secrets/fcm-customer.json"
+    fcm_credentials_delivery: str | None = "secrets/fcm-delivery.json"
+    # Used for any app with no credential of its own. This is what a single-project
+    # deployment configured before the apps were split, so it keeps working unchanged.
     fcm_credentials_file: str = "secrets/fcm-service-account.json"
+    # Deliver as soon as the request that queued a notification has answered, instead of
+    # waiting for the worker's next sweep. The worker stays as the safety net: it picks up
+    # what a restart interrupted and what an outage deferred.
+    fcm_auto_dispatch: bool = True
     # How many outbox rows one dispatcher pass takes.
     fcm_batch_size: int = Field(default=100, ge=1, le=1000)
     # --- KYC document storage --------------------------------------------------------------

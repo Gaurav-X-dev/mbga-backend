@@ -24,7 +24,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.notifications.constants import category_of, reference_of
-from app.modules.notifications.fcm import FcmClient, PushMessage
+from app.modules.notifications.fcm import PushMessage
+from app.modules.notifications.projects import FcmProjects
 from app.modules.notifications.recipients import RecipientResolver
 from app.shared.notifications.models import NotificationOutbox
 
@@ -48,6 +49,10 @@ class DispatchReport:
     retrying: int = 0
     abandoned: int = 0
     tokens_forgotten: int = 0
+    #: Devices skipped because their app has no Firebase credential configured.
+    unconfigured: int = 0
+    #: Devices whose token belongs to a different project than the one it was sent through.
+    misrouted: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -57,15 +62,17 @@ class DispatchReport:
             "retrying": self.retrying,
             "abandoned": self.abandoned,
             "tokensForgotten": self.tokens_forgotten,
+            "unconfigured": self.unconfigured,
+            "misrouted": self.misrouted,
         }
 
 
 class NotificationDispatcher:
     """One pass over the outbox."""
 
-    def __init__(self, session: AsyncSession, client: FcmClient | None) -> None:
+    def __init__(self, session: AsyncSession, projects: FcmProjects | None) -> None:
         self.session = session
-        self.client = client
+        self.projects = projects
         self.recipients = RecipientResolver(session)
 
     async def run(self, *, limit: int = DEFAULT_BATCH, now: datetime | None = None) -> DispatchReport:
@@ -101,7 +108,7 @@ class NotificationDispatcher:
     async def _deliver(self, row: NotificationOutbox, report: DispatchReport, moment: datetime) -> None:
         devices = await self.recipients.devices_for(row.recipient_kind, row.recipient_id)
 
-        if self.client is None:
+        if self.projects is None:
             # No sender - push is off for this environment, or this is a dry run. Report
             # what would have happened and write **nothing**: a dry run that settles rows
             # is not a dry run, and a disabled deployment must keep its backlog so that
@@ -124,23 +131,53 @@ class NotificationDispatcher:
         message = _message(row)
         sent = 0
         failed = 0
+        # Devices whose app has no Firebase credential. Counted apart from `failed`
+        # because nothing was attempted for them - see the settle rule below.
+        skipped = 0
         last_error: str | None = None
         for device in devices:
-            result = await self.client.send(device.token, message)
+            # Routed by the app that registered the token, not by who the notification is
+            # for: the same person signed into two apps has two tokens in two projects.
+            client = self.projects.client_for(device.channel)
+            if client is None:
+                # That app's push is not configured yet.
+                report.unconfigured += 1
+                skipped += 1
+                last_error = f"{device.channel or 'unknown'}: push not configured"
+                continue
+            result = await client.send(device.token, message)
             if result.ok:
                 sent += 1
                 continue
             failed += 1
             last_error = result.error
-            if result.token_dead:
+            if result.misrouted:
+                # A working token sent through the wrong project. The token is kept - the
+                # configuration is what is wrong - and the row retries so that fixing it
+                # delivers the backlog.
+                report.misrouted += 1
+                logger.warning(
+                    "Token registered on %s was rejected by project %s: check the credential mapping",
+                    device.channel,
+                    client.credentials.project_id,
+                )
+            elif result.token_dead:
                 await self.recipients.forget(device.token)
                 report.tokens_forgotten += 1
                 # A dead token is not a reason to retry the notification; the others may
                 # well have gone through, and this device will never accept it.
                 failed -= 1
 
-        if sent or failed == 0:
-            # At least one device has it, or the only failures were retired devices.
+        attempted = len(devices) - skipped
+        if sent or (attempted and failed == 0):
+            # Settled when at least one device has it, or when every device that was
+            # actually tried turned out to be a retired token - there is nobody left to
+            # reach either way.
+            #
+            # `attempted` is what stops a row being settled when nothing was sent at all:
+            # with no credential configured for any of the recipient's apps, `sent` and
+            # `failed` are both zero, and settling on that alone would silently drop the
+            # notification the moment a credential path was wrong.
             row.delivered_at = moment.replace(tzinfo=None)
             row.last_error = last_error
             report.delivered += 1

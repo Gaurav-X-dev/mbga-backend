@@ -4,10 +4,12 @@ Which bucket an actor reads is the whole access model here:
 
 * a **customer** reads events addressed to their own customer profile;
 * **staff** read events addressed to their merchant - shared, because spec §15 says "all
-  staff share the merchant bucket".
+  staff share the merchant bucket";
+* a **driver** reads only what is addressed to them personally. They are not staff, so the
+  merchant's bucket is not theirs: "New order received" is a job for the office, while
+  "your delivery is ready to load" is for the person driving.
 
-Both also read anything addressed to them personally (`recipient_kind = user`), which is
-what a future "your shift starts in an hour" would use.
+Everyone also reads anything addressed to them personally (`recipient_kind = user`).
 
 Read state is per user, not per bucket. Absence of a `notification_reads` row means unread,
 so marking one read is an insert and nothing needs back-filling for users who already exist.

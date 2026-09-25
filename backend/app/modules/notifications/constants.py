@@ -22,6 +22,7 @@ class Category(StrEnum):
     STOCK = "STOCK"
     KYC = "KYC"
     PRICING = "PRICING"
+    TASK = "TASK"
     SYSTEM = "SYSTEM"
 
 
@@ -33,6 +34,8 @@ class ReferenceType(StrEnum):
     CUSTOMER = "CUSTOMER"
     DELIVERY = "DELIVERY"
     KYC = "KYC"
+    #: Deep-links to /merchant/task/{id}, already wired in the app's `hrefForNotification`.
+    TASK = "TASK"
 
 
 class Severity(StrEnum):
@@ -71,9 +74,12 @@ ENTITY_CATEGORIES: dict[str, Category] = {
     "kyc_application": Category.KYC,
     "customer": Category.ACCOUNT,
     "payment": Category.PAYMENT,
+    # An invoice is money too - it belongs on the Payments filter, not its own.
+    "invoice": Category.PAYMENT,
     "delivery": Category.DELIVERY,
     "stock": Category.STOCK,
     "pricing": Category.PRICING,
+    "task": Category.TASK,
 }
 
 # What the row deep-links to. Absent means the app shows it without a tap target rather
@@ -83,7 +89,9 @@ ENTITY_REFERENCES: dict[str, ReferenceType] = {
     "kyc_application": ReferenceType.KYC,
     "customer": ReferenceType.CUSTOMER,
     "payment": ReferenceType.PAYMENT,
+    "invoice": ReferenceType.PAYMENT,
     "delivery": ReferenceType.DELIVERY,
+    "task": ReferenceType.TASK,
 }
 
 
