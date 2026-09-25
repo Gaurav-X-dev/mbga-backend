@@ -1,8 +1,7 @@
 from collections.abc import AsyncGenerator
 
-from redis.asyncio import Redis, from_url
-
 from app.config.app import get_settings
+from redis.asyncio import Redis, from_url
 
 _redis: Redis | None = None
 

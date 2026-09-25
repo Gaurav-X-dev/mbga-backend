@@ -67,7 +67,9 @@ async def test_delivery_verify_and_me_contract(env):
     assert login["customer_profile"] is None
     assert set(login["token"]) == {"access_token", "refresh_token", "token_type", "expires_in"}
     assert login["token"]["token_type"] == "Bearer"
-    assert login["token"]["expires_in"] == 900
+    # The configured lifetime, not a fixed 900: a deployment that lengthens the access token
+    # for the field apps is a setting, and this test is about the contract's shape.
+    assert login["token"]["expires_in"] == env.settings.access_token_expires_minutes * 60
 
     me = (await env.get(f"{DELIVERY}/me", login["token"]["access_token"])).json()
     assert ACCOUNT_KEYS <= set(me)
