@@ -160,6 +160,11 @@ class BusinessActorResolver:
         return BusinessActor(
             **{
                 **actor.__dict__,
+                # A customer's `users` row is created at their first OTP request, before
+                # they have told us their name, so `full_name` is often empty there and the
+                # actor would be stamped onto every row as "Unknown user". The profile is
+                # where their name actually lives, so it wins.
+                "display_name": _customer_display_name(profile, user),
                 "customer_id": profile.id,
                 "merchant_id": profile.merchant_id,
                 "merchant_code": profile.merchant_code,
@@ -170,3 +175,13 @@ class BusinessActorResolver:
 def _display_name(user: User) -> str:
     """The name written into actor fields. Never the mobile number."""
     return user.full_name or user.username or "Unknown user"
+
+
+def _customer_display_name(profile: CustomerProfile, user: User) -> str:
+    """What a customer is called on the rows they create.
+
+    The person before the business: "cancelled by Aaryan" reads correctly, "cancelled by
+    Aaryan Foods" reads like the company did it. The business name is the fallback for a
+    profile that has no owner recorded, and the user row is the last resort.
+    """
+    return profile.owner_name or profile.name or _display_name(user)
