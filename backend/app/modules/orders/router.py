@@ -258,6 +258,29 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         """
         return await service.reorder(order_id, payload, idempotency_key)
 
+    if not is_customer:
+        # Staff only, and not built through `write_guards`: confirming is an acceptance of the
+        # order by the merchant, which is not something a customer can do to their own order.
+        @router.post(
+            "/{orderId}/confirm",
+            response_model=OrderResponse,
+            dependencies=[channel_only, Depends(require_permission("orders.update"))],
+            responses=error_responses(401, 403, 404, 409),
+            summary="Confirm an order",
+        )
+        async def confirm_order(service: ServiceDep, order_id: OrderIdPath) -> OrderResponse:
+            """Accept a placed order, moving it to `CONFIRMED`.
+
+            **Not one of the spec's six order endpoints**, and its absence was a hole: §6.1
+            defines the status, both apps render it on the tracking timeline, and a delivery slip
+            may only be raised against a confirmed order. Without this every order stayed
+            `PLACED` and no van could be scheduled.
+
+            The customer is notified. A `409` means the order is not `PLACED` any more - already
+            confirmed, or cancelled.
+            """
+            return await service.confirm(order_id)
+
     @router.post(
         "/{orderId}/cancel",
         response_model=OrderResponse,

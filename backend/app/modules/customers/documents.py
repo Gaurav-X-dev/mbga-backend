@@ -29,7 +29,7 @@ from fastapi import UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.customers.constants import DocumentStatus, KycDocumentType, ScanStatus
+from app.modules.customers.constants import DocumentStatus, KycDocumentType, ScanStatus, UploadType
 from app.modules.customers.models import CustomerDocument
 from app.shared.business.actor import BusinessActor
 from app.shared.exceptions.api_error import ApiError
@@ -37,6 +37,7 @@ from app.shared.storage.file_types import (
     ALLOWED_CONTENT_TYPES,
     EXTENSIONS,
     SNIFF_BYTES,
+    TASK_CONTENT_TYPES,
     detect_content_type,
     extension_matches,
     sanitize_filename,
@@ -80,9 +81,23 @@ class DocumentUploadService:
         self.storage = storage
         self.max_bytes = max_bytes
 
-    async def upload(self, actor: BusinessActor, upload: UploadFile, document_type: KycDocumentType) -> UploadResult:
+    async def upload(
+        self,
+        actor: BusinessActor,
+        upload: UploadFile,
+        document_type: KycDocumentType | UploadType,
+    ) -> UploadResult:
+        """Store one upload.
+
+        What a file may be depends on what it is *for*: a KYC slot takes PDF, JPG or PNG, while a
+        task attachment also takes the office formats people actually send each other. The purpose
+        is declared by the caller and the format is read from the bytes - neither is inferred from
+        the other.
+        """
+        allowed = _allowed_types(document_type)
         head = await upload.read(SNIFF_BYTES)
-        detection = detect_content_type(head)
+        display_name = sanitize_filename(upload.filename)
+        detection = detect_content_type(head, display_name)
         if detection.content_type is None:
             raise ApiError(
                 "UNSUPPORTED_FILE_TYPE",
@@ -91,7 +106,16 @@ class DocumentUploadService:
                 fields=[{"field": "file", "code": "unsupported_type", "message": detection.reason or ""}],
             )
         content_type = detection.content_type
-        display_name = sanitize_filename(upload.filename)
+        if content_type not in allowed:
+            # The bytes are a format this endpoint understands, but not one this *purpose* takes -
+            # a spreadsheet offered as an Aadhaar scan, say.
+            message = _unsupported_message(document_type)
+            raise ApiError(
+                "UNSUPPORTED_FILE_TYPE",
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                message,
+                fields=[{"field": "file", "code": "unsupported_type", "message": message}],
+            )
         if not extension_matches(content_type, display_name):
             # The bytes and the extension disagree. The bytes are believed, but the mismatch
             # is refused rather than silently corrected: it is either a mistake worth telling
@@ -102,12 +126,13 @@ class DocumentUploadService:
                 "The file contents do not match its extension.",
                 fields=[{"field": "file", "code": "extension_mismatch", "message": "The file extension does not match its contents."}],
             )
-        if upload.content_type and upload.content_type.split(";")[0].strip().lower() not in ALLOWED_CONTENT_TYPES:
+        if upload.content_type and upload.content_type.split(";")[0].strip().lower() not in allowed:
+            message = _unsupported_message(document_type)
             raise ApiError(
                 "UNSUPPORTED_FILE_TYPE",
                 status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                "Upload a PDF, JPG or PNG.",
-                fields=[{"field": "file", "code": "unsupported_type", "message": "Upload a PDF, JPG or PNG."}],
+                message,
+                fields=[{"field": "file", "code": "unsupported_type", "message": message}],
             )
 
         now = datetime.now(UTC)
@@ -168,6 +193,19 @@ class DocumentUploadService:
                     fields=[{"field": "file", "code": "too_large", "message": "Choose a smaller file."}],
                 )
             yield chunk
+
+
+def _allowed_types(document_type: "KycDocumentType | UploadType") -> set[str]:
+    """Which formats this upload's purpose accepts."""
+    if document_type == UploadType.TASK_ATTACHMENT:
+        return TASK_CONTENT_TYPES
+    return ALLOWED_CONTENT_TYPES
+
+
+def _unsupported_message(document_type: "KycDocumentType | UploadType") -> str:
+    if document_type == UploadType.TASK_ATTACHMENT:
+        return "Upload a PDF, image, Word, Excel or CSV file."
+    return "Upload a PDF, JPG or PNG."
 
 
 def not_found() -> ApiError:

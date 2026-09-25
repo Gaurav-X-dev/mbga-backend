@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.business_schemas import DocumentUploadResponse, DocumentUrlResponse
-from app.modules.customers.constants import KycDocumentType
+from app.modules.customers.constants import UploadType
 from app.modules.customers.dependencies import (
     AccessDep,
     ActorDep,
@@ -62,8 +62,14 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         service: UploadDep,
         auditor: Annotated[BusinessAuditor, Depends(get_auditor)],
         session: Annotated[object, Depends(get_db_session)],
-        file: Annotated[UploadFile, File(description="PDF, JPG or PNG, at most 5 MB.")],
-        type: Annotated[KycDocumentType, Form(description="AADHAAR, PAN, FSSAI or GST.")],
+        file: Annotated[
+            UploadFile,
+            File(description="PDF, JPG or PNG - and Word, Excel or CSV for a task attachment. At most 5 MB."),
+        ],
+        type: Annotated[
+            UploadType,
+            Form(description="AADHAAR, PAN, FSSAI, GST, or TASK_ATTACHMENT for a file on a task."),
+        ],
     ) -> DocumentUploadResponse:
         result = await service.upload(actor, file, type)
         await auditor.record(

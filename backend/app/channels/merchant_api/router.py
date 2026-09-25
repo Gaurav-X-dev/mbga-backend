@@ -8,11 +8,15 @@ from app.modules.customers.document_router import build_document_router
 from app.modules.customers.kyc_router import router as kyc_router
 from app.modules.customers.merchant_router import router as merchant_customers_router
 from app.modules.customers.review_router import router as customer_review_router
+from app.modules.deliveries.router import router as deliveries_router
 from app.modules.delivery_users.router import router as delivery_users_router
 from app.modules.expenses.router import router as expenses_router
+from app.modules.inventory.router import router as inventory_router
 from app.modules.notifications.router import build_notification_router
 from app.modules.orders.router import build_order_router
 from app.modules.pricing.router import customer_pricing_router, pricing_router
+from app.modules.tasks.router import router as tasks_router
+from app.modules.tasks.router import team_router
 
 router = APIRouter()
 router.include_router(build_channel_auth_router(LoginChannel.MERCHANT, "MERCHANT_LOGIN"))
@@ -39,5 +43,16 @@ router.include_router(build_order_router(LoginChannel.MERCHANT))
 router.include_router(build_notification_router(LoginChannel.MERCHANT))
 # Expenses: the operational spend screens, with their own dynamic category list.
 router.include_router(expenses_router)
+# Warehouse Stock. Staff only and deliberately not mounted on the customer channel: a
+# merchant's stock position is not their customers' business (spec §11).
+router.include_router(inventory_router)
+# Delivery & Dispatch. Mounted after inventory because it drives it: a dispatch is the event
+# that takes filled cylinders off the shelf (spec §10).
+router.include_router(deliveries_router)
+# Tasks, and the staff directory the Assign To picker reads. The directory is its own path
+# rather than /tasks/team: it is the merchant's staff list, reused by the task screens rather
+# than owned by them.
+router.include_router(team_router)
+router.include_router(tasks_router)
 # Public dropdown data. Mounted on both channels so each app calls its own base URL.
 router.include_router(constants_router)

@@ -13,14 +13,30 @@ PDF = "application/pdf"
 JPEG = "image/jpeg"
 PNG = "image/png"
 
+# Office formats, accepted only for task attachments. A KYC slot still takes PDF/JPG/PNG alone:
+# widening that would let an Aadhaar slot hold a spreadsheet.
+DOC = "application/msword"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLS = "application/vnd.ms-excel"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CSV = "text/csv"
+
 ALLOWED_CONTENT_TYPES = {PDF, JPEG, PNG}
+#: What a task attachment may be: the KYC set plus the office formats above.
+TASK_CONTENT_TYPES = ALLOWED_CONTENT_TYPES | {DOC, DOCX, XLS, XLSX, CSV}
+
 EXTENSIONS: dict[str, set[str]] = {
     PDF: {".pdf"},
     JPEG: {".jpg", ".jpeg"},
     PNG: {".png"},
+    DOC: {".doc"},
+    DOCX: {".docx"},
+    XLS: {".xls"},
+    XLSX: {".xlsx"},
+    CSV: {".csv", ".txt"},
 }
 
-# Enough bytes to cover every signature below.
+# Enough bytes to cover every signature below. The OLE2 header used by .doc/.xls is 8 bytes.
 SNIFF_BYTES = 16
 
 
@@ -30,8 +46,13 @@ class Detection:
     reason: str | None = None
 
 
-def detect_content_type(head: bytes) -> Detection:
-    """Identify an allowed format, or explain why the bytes are refused."""
+def detect_content_type(head: bytes, filename: str | None = None) -> Detection:
+    """Identify an allowed format, or explain why the bytes are refused.
+
+    `filename` is consulted for the two formats whose bytes are genuinely ambiguous - a modern
+    Office file is a ZIP, and a CSV is plain text - and for nothing else. Everything with a real
+    signature is identified by it, because that is the only field an attacker does not control.
+    """
     if len(head) < 4:
         return Detection(None, "The file is empty or too small to identify.")
     if head.startswith(b"%PDF-"):
@@ -40,7 +61,39 @@ def detect_content_type(head: bytes) -> Detection:
         return Detection(JPEG)
     if head.startswith(b"\x89PNG\r\n\x1a\n"):
         return Detection(PNG)
+    # OLE2 compound file: the legacy .doc and .xls container. One signature, two formats, so the
+    # extension picks between them - both are accepted for the same callers anyway.
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return Detection(XLS if _suffix(filename) == ".xls" else DOC)
+    # DOCX and XLSX are ZIP archives. The archive signature alone is refused below, so these are
+    # only reachable when the extension says which one it is - and the caller still has to be
+    # allowed office formats at all.
+    if head.startswith(b"PK\x03\x04"):
+        suffix = _suffix(filename)
+        if suffix == ".docx":
+            return Detection(DOCX)
+        if suffix == ".xlsx":
+            return Detection(XLSX)
+    if _looks_like_text(head) and _suffix(filename) in {".csv", ".txt"}:
+        return Detection(CSV)
     return Detection(None, _refusal(head))
+
+
+def _suffix(filename: str | None) -> str:
+    if not filename or "." not in filename:
+        return ""
+    return filename[filename.rfind(".") :].lower()
+
+
+def _looks_like_text(head: bytes) -> bool:
+    """No NUL bytes and decodable as UTF-8. Enough to tell a spreadsheet export from a binary."""
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
 
 
 def _refusal(head: bytes) -> str:

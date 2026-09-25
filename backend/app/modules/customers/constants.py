@@ -29,6 +29,25 @@ class KycDocumentType(StrEnum):
     GST = "GST"
 
 
+class UploadType(StrEnum):
+    """What an upload is *for*, which is wider than KYC now that tasks attach files too.
+
+    Kept apart from `KycDocumentType` on purpose. That enum drives which documents a customer type
+    must supply and which slot a file may be attached to; adding `TASK_ATTACHMENT` to it would put
+    a task screenshot in the list of things a registration can be completed with.
+    """
+
+    AADHAAR = "AADHAAR"
+    PAN = "PAN"
+    FSSAI = "FSSAI"
+    GST = "GST"
+    TASK_ATTACHMENT = "TASK_ATTACHMENT"
+
+    @property
+    def is_kyc(self) -> bool:
+        return self is not UploadType.TASK_ATTACHMENT
+
+
 class PricingTier(StrEnum):
     STANDARD = "STANDARD"
     BULK = "BULK"

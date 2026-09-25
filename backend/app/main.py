@@ -66,6 +66,13 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Merchant Pricing"
     if path.startswith("/api/v1/merchant/notifications"):
         return "Merchant Notifications"
+    if path.startswith("/api/v1/merchant/inventory"):
+        return "Merchant Inventory"
+    if path.startswith(("/api/v1/merchant/tasks", "/api/v1/merchant/team")):
+        return "Merchant Tasks"
+    # Before the delivery-users rule: /deliveries and /delivery-users are different screens.
+    if path.startswith("/api/v1/merchant/deliveries"):
+        return "Merchant Deliveries"
     if path.startswith("/api/v1/merchant/orders"):
         return "Merchant Orders"
     if path.startswith("/api/v1/merchant/expenses"):
@@ -80,6 +87,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Merchant APIs"
     if path.startswith("/api/v1/delivery/auth/"):
         return "Delivery Authentication"
+    if path.startswith("/api/v1/delivery/notifications"):
+        return "Delivery Notifications"
     if path.startswith("/api/v1/delivery/"):
         return "Delivery APIs"
     return "Internal"

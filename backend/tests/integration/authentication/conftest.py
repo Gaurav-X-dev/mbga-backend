@@ -43,12 +43,26 @@ DATA_TABLES = [
     "login_sessions",
     "otp_challenges",
     # Orders, expenses and pricing hang off merchants and customer_profiles, so they
-    # are emptied before them.
+    # are emptied before them. Delivery slips hang off orders, so they go first of all.
+    "delivery_slip_items",
+    "delivery_slips",
+    "delivery_number_sequences",
     "order_status_history",
     "order_items",
     "orders",
     "order_number_sequences",
     "idempotency_keys",
+    # Tasks and everything hanging off them, before the merchants and users they reference.
+    "task_activity_log",
+    "task_attachments",
+    "task_message_mentions",
+    "task_messages",
+    "task_assignees",
+    "tasks",
+    "task_number_sequences",
+    # The warehouse ledger and its counts, before the merchants they hang off.
+    "stock_movements",
+    "stock_items",
     "notification_reads",
     "notification_outbox",
     "expenses",

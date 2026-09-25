@@ -12,6 +12,11 @@ The grants below are spec §2.1's role matrix:
     permission      MANAGER  SALESPERSON  GODOWN_INCHARGE  ACCOUNTANT
     orders.view        x          x              x              x
     orders.create      x          x
+    orders.update      x          x
+
+`orders.update` is what accepts a placed order (`POST /orders/{id}/confirm`). It is not in the
+spec's matrix either - §2.1 lists no "confirm an order" right - but the status exists in §6.1 and
+somebody has to be able to reach it, so it goes to the two roles that already take orders.
 
 `orders.cancel` is not in that matrix - the cancel route is an addition on top of the
 spec's six endpoints - so it goes to `manager` only, the role that already carries the
@@ -42,10 +47,10 @@ from app.modules.permissions.models import Permission
 from app.modules.roles.models import Role, RolePermission
 
 GRANTS: dict[str, tuple[str, ...]] = {
-    # Runs the Orders tab and the Create Order screen, and may undo an order.
-    "manager": ("orders.view", "orders.create", "orders.cancel"),
-    # Places orders for customers, but does not cancel them.
-    "salesperson": ("orders.view", "orders.create"),
+    # Runs the Orders tab and the Create Order screen, accepts orders, and may undo one.
+    "manager": ("orders.view", "orders.create", "orders.update", "orders.cancel"),
+    # Places orders for customers and accepts them, but does not cancel them.
+    "salesperson": ("orders.view", "orders.create", "orders.update"),
     # Reads the order queue to prepare cylinders; does not place or cancel.
     "godown_stock_manager": ("orders.view",),
     # Reads orders for billing and reconciliation only.

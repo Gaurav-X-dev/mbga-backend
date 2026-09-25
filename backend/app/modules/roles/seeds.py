@@ -39,10 +39,19 @@ SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
     SeedPermission("orders.cancel", "Cancel orders", "orders", "cancel"),
     SeedPermission("deliveries.view", "View deliveries", "deliveries", "view"),
     SeedPermission("deliveries.update_status", "Update delivery status", "deliveries", "update_status"),
+    # The merchant dispatch board (spec §2.1, §10). Deliberately named apart from the
+    # `deliveries.*` pair above, which belongs to the driver app: reading your own trips and
+    # running the office's dispatch board are different rights held by different people.
+    SeedPermission("delivery.view", "View delivery slips", "delivery", "view"),
+    SeedPermission("delivery.confirm", "Dispatch and confirm deliveries", "delivery", "confirm"),
     SeedPermission("payments.collect", "Collect payments", "payments", "collect"),
     SeedPermission("payments.reconcile", "Reconcile payments", "payments", "reconcile"),
     SeedPermission("inventory.view", "View inventory", "inventory", "view"),
     SeedPermission("inventory.adjust", "Adjust inventory", "inventory", "adjust"),
+    # One flat permission for the whole task module, held by every merchant role. The spec is
+    # explicit that there is no `tasks.manage` split: the screens let any staff member create,
+    # assign and update, and do not expect a 403 on somebody else's task.
+    SeedPermission("tasks.view", "View and manage tasks", "tasks", "view"),
     SeedPermission("reports.view", "View reports", "reports", "view"),
     SeedPermission("reports.export", "Export reports", "reports", "export"),
     SeedPermission("users.view", "View users", "users", "view"),
