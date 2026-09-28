@@ -1,9 +1,12 @@
 """What the delivery slice will write, and what the bell gets told (spec §10, §18.6, §18.8).
 
-`dispatch` and `collect_empties` have no endpoint - they are refused on `POST /movements` on
-purpose - so they are tested directly against the ledger. They are written now, with tests,
-because the rule they have to keep is the hardest one in the module and the delivery module
-should not have to discover it: **a dispatch that is short on any line changes nothing at all.**
+`deliver` and `collect_empties` have no endpoint - they are refused on `POST /movements` on
+purpose - so they are tested directly against the ledger. The rule they have to keep is the
+hardest one in the module: **a handover that is short on any line changes nothing at all.**
+
+`deliver` writes a `DISPATCHED` movement, which is the spec's word for cylinders leaving on a
+delivery. It is called when the customer actually receives them, not when the van loads: until
+then the cylinders are on a van and still the merchant's.
 
 The notification tests pin the other easily-got-wrong rule: staff are told when stock crosses
 the reorder line, once per crossing, and not on every movement while it is already low.
@@ -33,11 +36,11 @@ NINETEEN = CylinderType.LPG_19KG
 FIVE = CylinderType.LPG_5KG
 
 
-async def dispatch(env, merchant, lines: dict, *, reference_id: str = "DS-0148"):
-    """Run one dispatch on its own transaction, the way a delivery endpoint would."""
+async def deliver(env, merchant, lines: dict, *, reference_id: str = "DS-0148"):
+    """Hand one load over on its own transaction, the way the confirm endpoint would."""
     async with env.sessions() as session:
         ledger = StockLedger(session, merchant.id)
-        applied = await ledger.dispatch(
+        applied = await ledger.deliver(
             lines,
             reference_id=reference_id,
             recorded_by_user_id=None,
@@ -78,7 +81,7 @@ async def test_a_dispatch_takes_filled_stock_out(env):
     token, merchant, _user = await godown_staff(env)
     await refill(env, token, quantity=60)
 
-    applied = await dispatch(env, merchant, {NINETEEN: 4})
+    applied = await deliver(env, merchant, {NINETEEN: 4})
 
     assert len(applied) == 1
     assert counts(await snapshot(env, token)) == (56, 0, 0)
@@ -89,7 +92,7 @@ async def test_a_dispatch_records_itself_against_the_slip(env):
     token, merchant, _user = await godown_staff(env)
     await refill(env, token, quantity=60)
 
-    await dispatch(env, merchant, {NINETEEN: 4}, reference_id="DS-0148")
+    await deliver(env, merchant, {NINETEEN: 4}, reference_id="DS-0148")
 
     row = await env.scalar(
         select(StockMovement).where(
@@ -109,7 +112,7 @@ async def test_a_short_line_refuses_the_whole_dispatch(env):
     await refill(env, token, quantity=3)
 
     with pytest.raises(ApiError) as caught:
-        await dispatch(env, merchant, {NINETEEN: 4})
+        await deliver(env, merchant, {NINETEEN: 4})
 
     assert caught.value.status_code == 409
     assert caught.value.detail["code"] == "INSUFFICIENT_STOCK"
@@ -130,7 +133,7 @@ async def test_a_short_line_leaves_every_other_line_untouched(env):
     before = await movement_count(env, merchant)
 
     with pytest.raises(ApiError):
-        await dispatch(env, merchant, {FIVE: 10, NINETEEN: 4})
+        await deliver(env, merchant, {FIVE: 10, NINETEEN: 4})
 
     body = await snapshot(env, token)
     assert counts(body, "LPG_5KG") == (40, 0, 0), "the sufficient line must not have moved"
@@ -143,7 +146,7 @@ async def test_a_dispatch_of_several_lines_writes_one_movement_each(env):
     await refill(env, token, cylinder="LPG_5KG", quantity=40)
     await refill(env, token, cylinder="LPG_19KG", quantity=40)
 
-    applied = await dispatch(env, merchant, {FIVE: 6, NINETEEN: 2})
+    applied = await deliver(env, merchant, {FIVE: 6, NINETEEN: 2})
 
     assert len(applied) == 2
     body = await snapshot(env, token)
@@ -156,7 +159,7 @@ async def test_a_dispatch_may_empty_the_godown_exactly(env):
     token, merchant, _user = await godown_staff(env)
     await refill(env, token, quantity=4)
 
-    await dispatch(env, merchant, {NINETEEN: 4})
+    await deliver(env, merchant, {NINETEEN: 4})
 
     assert counts(await snapshot(env, token)) == (0, 0, 0)
 
@@ -166,7 +169,7 @@ async def test_dispatching_a_cylinder_never_stocked_is_refused(env):
     _token, merchant, _user = await godown_staff(env)
 
     with pytest.raises(ApiError) as caught:
-        await dispatch(env, merchant, {NINETEEN: 4})
+        await deliver(env, merchant, {NINETEEN: 4})
 
     assert "0 available" in caught.value.detail["message"]
 
@@ -177,7 +180,7 @@ async def test_dispatching_a_cylinder_never_stocked_is_refused(env):
 async def test_collected_empties_go_into_the_empty_bucket(env):
     token, merchant, _user = await godown_staff(env)
     await refill(env, token, quantity=10)
-    await dispatch(env, merchant, {NINETEEN: 4})
+    await deliver(env, merchant, {NINETEEN: 4})
 
     await collect(env, merchant, {NINETEEN: 4})
 
@@ -198,7 +201,7 @@ async def test_the_full_delivery_cycle_reconciles(env):
     """Sixty in, four out, four empties back: the ledger and the counts agree at every step."""
     token, merchant, _user = await godown_staff(env)
     await refill(env, token, quantity=60)
-    await dispatch(env, merchant, {NINETEEN: 4})
+    await deliver(env, merchant, {NINETEEN: 4})
     await collect(env, merchant, {NINETEEN: 4})
 
     filled, empty, damaged = counts(await snapshot(env, token))

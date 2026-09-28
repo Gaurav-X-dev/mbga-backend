@@ -242,10 +242,14 @@ class TestWithoutTheDevSwitch:
 # --- A slip that never delivered ---------------------------------------------------------------------
 
 
-async def test_failing_a_dispatched_slip_returns_the_stock(env):
-    """The cylinders came back on the van, so they come back on the books."""
+async def test_failing_a_dispatched_slip_moves_no_stock(env):
+    """Nothing ever left the books, so there is nothing to bring back.
+
+    The counts only drop at handover, so a van that returns loaded needs no movement at all -
+    the cylinders were the merchant's the whole time.
+    """
     token, _merchant, _order, slip, _driver, _code = await on_the_road(env)
-    assert await counts(env, token) == (56, 0, 0)
+    assert await counts(env, token) == (60, 0, 0)
 
     response = await env.post(
         f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Customer refused - wrong address"}
@@ -255,29 +259,32 @@ async def test_failing_a_dispatched_slip_returns_the_stock(env):
     failed = response.json()
     assert failed["status"] == "FAILED"
     assert failed["failureReason"] == "Customer refused - wrong address"
-    assert await counts(env, token) == (60, 0, 0), "back on the shelf"
+    assert await counts(env, token) == (60, 0, 0)
 
 
-async def test_the_return_is_booked_against_the_slip(env):
-    """A correction would say "the register was wrong". This says where the cylinders went."""
+async def test_a_returned_van_leaves_the_ledger_untouched(env):
+    """No movement in, no movement out. The ledger records events, and none happened."""
     token, merchant, _order, slip, _driver, _code = await on_the_road(env)
 
     await env.post(f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Shop closed"})
 
     rows = list(
         await env.execute(
-            select(StockMovement.movement_type, StockMovement.reference_type, StockMovement.note)
-            .where(StockMovement.merchant_id == merchant.id, StockMovement.reference_id == slip["id"])
+            select(StockMovement.movement_type).where(
+                StockMovement.merchant_id == merchant.id,
+                StockMovement.reference_id == slip["id"],
+            )
         )
     )
-    types = {(row.movement_type, row.reference_type) for row in rows}
-    assert ("DISPATCHED", "DELIVERY") in types
-    assert ("RECEIVED_FILLED", "DELIVERY") in types
-    assert any(row.note == "Returned undelivered" for row in rows)
+    assert rows == []
 
 
-async def test_stock_left_with_the_customer_is_not_returned(env):
-    """`returnedToStock: false` - the cylinders are out there and the office has to resolve it."""
+async def test_stock_left_with_the_customer_comes_off_the_count(env):
+    """`returnedToStock: false` - handed over without a confirmation, so they are genuinely gone.
+
+    Leaving them on the books would mean the godown believed it held cylinders that are sitting
+    in a customer's yard.
+    """
     token, _merchant, _order, slip, _driver, _code = await on_the_road(env)
 
     await env.post(
@@ -286,7 +293,7 @@ async def test_stock_left_with_the_customer_is_not_returned(env):
         {"reason": "Left at the shop, no one to sign", "returnedToStock": False},
     )
 
-    assert await counts(env, token) == (56, 0, 0), "still out"
+    assert await counts(env, token) == (56, 0, 0)
 
 
 async def test_failing_a_scheduled_slip_moves_no_stock(env):
@@ -342,14 +349,16 @@ async def test_a_delivered_slip_cannot_be_failed(env):
 
 
 async def test_a_failed_slip_cannot_be_failed_again(env):
-    """Otherwise the stock comes back twice."""
+    """Otherwise a write-off could be recorded twice."""
     token, _merchant, _order, slip, _driver, _code = await on_the_road(env)
-    await env.post(f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Shop closed"})
+    await env.post(
+        f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Left behind", "returnedToStock": False}
+    )
 
-    again = await env.post(f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Shop closed"})
+    again = await env.post(f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Left behind"})
 
     assert again.status_code == 409
-    assert await counts(env, token) == (60, 0, 0), "returned once"
+    assert await counts(env, token) == (56, 0, 0), "written off once"
 
 
 async def test_a_failed_slip_cannot_be_dispatched(env):

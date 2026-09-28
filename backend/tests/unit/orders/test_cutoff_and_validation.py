@@ -35,13 +35,14 @@ def line(cylinder_type: CylinderType, quantity: int) -> OrderLineRequest:
 # --- Cut-off (spec §18.4) ---------------------------------------------------------------
 
 
-def test_before_four_pm_promises_tomorrow():
+def test_before_four_pm_promises_the_same_day():
+    """There is still a working afternoon left, so the van goes today."""
     result = evaluate(at_ist(2026, 9, 23, 15, 59))
 
     assert result.within_cutoff is True
     # A calendar day, not an instant. There is no delivery slot: the godown never scheduled
     # against one, so promising a morning or afternoon window was a promise that got broken.
-    assert result.scheduled_delivery_date == date(2026, 9, 24)
+    assert result.scheduled_delivery_date == date(2026, 9, 23)
 
 
 def test_at_exactly_four_pm_the_cutoff_has_passed():
@@ -49,19 +50,19 @@ def test_at_exactly_four_pm_the_cutoff_has_passed():
     result = evaluate(at_ist(2026, 9, 23, 16, 0))
 
     assert result.within_cutoff is False
-    assert result.scheduled_delivery_date == date(2026, 9, 25)
+    assert result.scheduled_delivery_date == date(2026, 9, 24)
 
 
 def test_the_cutoff_is_read_on_an_ist_wall_clock():
-    """23:30 UTC is already tomorrow in IST, and the order belongs to the merchant's day.
+    """23:30 UTC is already the 24th in IST, and the order belongs to the merchant's day.
 
-    Evaluating this in UTC would move the cut-off to 21:30 IST and promise next-day delivery for
+    Evaluating this in UTC would move the cut-off to 21:30 IST and promise same-day delivery for
     five and a half hours a day that the godown cannot honour.
     """
     result = evaluate(datetime(2026, 9, 23, 23, 30, tzinfo=UTC))
 
     assert result.within_cutoff is True
-    assert result.scheduled_delivery_date == date(2026, 9, 25)
+    assert result.scheduled_delivery_date == date(2026, 9, 24)
 
 
 def test_there_is_no_slot_on_the_cutoff_at_all():
@@ -74,17 +75,17 @@ def test_just_after_midnight_ist_is_still_within_the_same_day():
     result = evaluate(at_ist(2026, 9, 23, 0, 30))
 
     assert result.within_cutoff is True
-    assert result.scheduled_delivery_date == date(2026, 9, 24)
+    assert result.scheduled_delivery_date == date(2026, 9, 23)
 
 
 def test_a_late_order_on_the_last_day_of_a_month_rolls_into_the_next():
     result = evaluate(at_ist(2026, 9, 30, 18, 0))
 
-    assert result.scheduled_delivery_date == date(2026, 10, 2)
+    assert result.scheduled_delivery_date == date(2026, 10, 1)
 
 
 def test_the_cutoff_message_is_the_one_the_user_reads():
-    assert "4:00 PM" in evaluate(at_ist(2026, 9, 23, 10, 0)).message
+    assert "same-day" in evaluate(at_ist(2026, 9, 23, 10, 0)).message
     assert "cut-off has passed" in evaluate(at_ist(2026, 9, 23, 17, 0)).message
 
 

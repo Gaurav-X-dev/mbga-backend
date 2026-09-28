@@ -75,6 +75,24 @@ STATUS_CATALOGUE: tuple[StatusMeta, ...] = (
 
 STATUS_BY_CODE: dict[str, StatusMeta] = {meta.code.value: meta for meta in STATUS_CATALOGUE}
 
+#: Statuses the platform no longer moves an order into, but which existing orders passed through.
+#: They are **not** in `STATUS_CATALOGUE` - the apps must not offer them as steps - but their rows
+#: are still in `order_status_history`, because that is an append-only record of what happened and
+#: rewriting one to match a schema change is how a trail stops being evidence.
+#:
+#: Kept here so a historical entry still renders with the words it was shown under at the time.
+RETIRED_STATUS_LABELS: dict[str, str] = {
+    "PREPARING": "Preparing / Dispatch",
+}
+
+
+def status_label(code: str) -> str:
+    """What a status was called - live or retired. Falls back to the raw code."""
+    meta = STATUS_BY_CODE.get(code)
+    if meta is not None:
+        return meta.label
+    return RETIRED_STATUS_LABELS.get(code, code.replace("_", " ").title())
+
 #: `status=ACTIVE` on the list endpoint means every non-terminal status (spec §6.5).
 ACTIVE_STATUSES: tuple[str, ...] = tuple(meta.code.value for meta in STATUS_CATALOGUE if not meta.is_terminal)
 TERMINAL_STATUSES: frozenset[str] = frozenset(meta.code.value for meta in STATUS_CATALOGUE if meta.is_terminal)

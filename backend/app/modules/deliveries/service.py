@@ -4,15 +4,19 @@ This is the module where four others meet, and every write here is the atomic jo
 
     order status  <->  slip status  <->  stock ledger  <->  notifications
 
-A dispatch moves the order to OUT_FOR_DELIVERY, marks the slip DISPATCHED, takes filled
-cylinders off the shelf, and tells the customer - **in one transaction**. Any of those four
-happening without the others is a real-world inconsistency somebody has to unpick by hand: stock
-that left with no delivery behind it, a customer told their order is coming when it is still in
-the godown, an order stuck OUT_FOR_DELIVERY for a van that never loaded.
+A dispatch moves the order to OUT_FOR_DELIVERY, marks the slip DISPATCHED and tells the
+customer - **in one transaction**. Any of those happening without the others is a real-world
+inconsistency somebody has to unpick by hand: a customer told their order is coming when it is
+still in the godown, an order stuck OUT_FOR_DELIVERY for a van that never loaded.
 
-Order of operations is therefore the same everywhere: check everything that can refuse, then
-write everything, then commit once. Spec §10.3 spells this out for the stock check - "no counts
-change" if any line is short - and `StockLedger.dispatch` enforces it across lines.
+**Stock moves at confirmation, not at dispatch.** Cylinders on a van are still the merchant's:
+the delivery can fail and they come straight back. So the counts drop when the customer actually
+receives them, and a dispatch only *checks* that the load can be filled - against filled stock
+minus what the vans already out are carrying, or `filled` would stay whole while a van was on the
+road and a second one could be loaded from the same cylinders.
+
+Order of operations is the same everywhere: check everything that can refuse, then write
+everything, then commit once.
 
 Only merchant staff reach these routes. A customer follows their order through the order
 endpoints; the slip is the godown's document, and it carries the crew's names and the vehicle.
@@ -23,7 +27,7 @@ from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from fastapi import status as http_status
-from sqlalchemy import Select, case, or_, select
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings
@@ -194,23 +198,25 @@ class DeliveryService:
     # --- Dispatch ---------------------------------------------------------------------------
 
     async def dispatch(self, slip_id: str) -> DeliverySlipResponse:
-        """Mark a slip dispatched (spec §10.3). Atomic across all four systems.
+        """Mark a slip dispatched (spec §10.3).
 
-        The stock check runs before anything is written, and `StockLedger.dispatch` refuses the
-        whole load if any line is short - so a van that cannot be filled completely leaves the
-        counts, the slip, the order and the customer exactly as they were.
+        The stock is **checked but not deducted**. Cylinders on a van are still the merchant's -
+        the delivery can fail and bring them back - so the counts move at handover instead, in
+        `confirm()`.
+
+        The check measures what the godown can actually load: filled stock minus what the vans
+        already on the road are carrying. Without that subtraction `filled` would stay whole while
+        a van was out, and a second van could be loaded from the same cylinders.
         """
         slip = await self._owned(slip_id)
         self._require_status(slip, DeliveryStatus.DISPATCHED, ready=DeliveryStatus.SCHEDULED)
         order = await self._order_of(slip)
         now = datetime.now(UTC)
 
-        # Refuses with spec §10.3's message, and touches no count if any line is short.
-        await StockLedger(self.session, self.merchant_id).dispatch(
+        # Refuses with spec §10.3's message, and writes nothing either way.
+        await StockLedger(self.session, self.merchant_id).check_available(
             await self._lines(slip.id),
-            reference_id=slip.id,
-            recorded_by_user_id=self.actor.user_id,
-            recorded_by_name=self.actor.display_name,
+            committed=await self._committed(exclude_slip_id=slip.id),
             now=now,
         )
 
@@ -271,9 +277,19 @@ class DeliveryService:
         slip.confirmation_code_hash = None
         slip.updated_at = now
 
+        # The cylinders have now actually changed hands, so this is where they come off the
+        # books. Before this moment they were on a van and still the merchant's.
+        lines = await self._lines(slip.id)
+        ledger = StockLedger(self.session, self.merchant_id)
+        await ledger.deliver(
+            lines,
+            reference_id=slip.id,
+            recorded_by_user_id=self.actor.user_id,
+            recorded_by_name=self.actor.display_name,
+            now=now,
+        )
         if collected:
-            lines = await self._lines(slip.id)
-            await StockLedger(self.session, self.merchant_id).collect_empties(
+            await ledger.collect_empties(
                 {_primary_type(lines): collected},
                 reference_id=slip.id,
                 recorded_by_user_id=self.actor.user_id,
@@ -302,14 +318,17 @@ class DeliveryService:
     async def fail(self, slip_id: str, payload: FailDeliveryRequest) -> DeliverySlipResponse:
         """Record a slip that did not deliver (an addition - see the schema's docstring).
 
-        A dispatched slip that failed has stock sitting on a van. `returnedToStock` puts the
-        filled cylinders back with a `CORRECTION`-free path: the cylinders physically returned,
-        so the honest ledger entry is the reverse of the dispatch rather than an audit fudge.
+        A slip that comes back loaded needs **no stock movement at all**, because nothing ever
+        left the books: the counts only drop at handover. The van is simply released, and the
+        cylinders were the merchant's the whole time.
 
-        The order goes back to nothing automatically - it stays OUT_FOR_DELIVERY, because the
-        transition table forbids reversing it and the office decides whether to reschedule or
-        cancel. That is deliberate: silently walking an order backwards would lose the fact that
-        it once went out.
+        `returnedToStock: false` is the other case - the cylinders were left with the customer
+        even though the handover was never confirmed. Those are genuinely gone, so they come off
+        the count here rather than sitting on the books for ever.
+
+        The order stays OUT_FOR_DELIVERY either way. The transition table forbids reversing it,
+        and silently walking an order backwards would lose the fact that it once went out; the
+        office decides whether to reschedule or cancel.
         """
         slip = await self._owned(slip_id)
         if slip.status not in {DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value}:
@@ -317,10 +336,9 @@ class DeliveryService:
         now = datetime.now(UTC)
         was_dispatched = slip.status == DeliveryStatus.DISPATCHED.value
 
-        if was_dispatched and payload.returned_to_stock:
-            # Back on the shelf. Booked as `EMPTIES_COLLECTED`'s counterpart - a receipt of
-            # filled cylinders against this slip - so the ledger still reconciles to the counts.
-            await StockLedger(self.session, self.merchant_id).return_filled(
+        if was_dispatched and not payload.returned_to_stock:
+            # Left with the customer without a confirmation. They are gone, so the count says so.
+            await StockLedger(self.session, self.merchant_id).deliver(
                 await self._lines(slip.id),
                 reference_id=slip.id,
                 recorded_by_user_id=self.actor.user_id,
@@ -491,6 +509,32 @@ class DeliveryService:
             )
         )
 
+    async def _committed(self, *, exclude_slip_id: str | None = None) -> dict[CylinderType, int]:
+        """Cylinders on this merchant's vans: dispatched, not yet confirmed or failed.
+
+        This is the difference between what the godown holds and what it can still load. Counts
+        only drop at handover now, so `filled` stays whole while a van is out - without this
+        subtraction a second van could be loaded from the cylinders the first one is carrying.
+
+        The slip being dispatched is excluded, so a retry of its own dispatch does not count
+        against itself.
+        """
+        statement = (
+            select(DeliverySlipItem.cylinder_type, func.sum(DeliverySlipItem.quantity))
+            .join(DeliverySlip, DeliverySlip.id == DeliverySlipItem.slip_id)
+            .where(
+                DeliverySlip.merchant_id == self.merchant_id,
+                DeliverySlip.status == DeliveryStatus.DISPATCHED.value,
+            )
+            .group_by(DeliverySlipItem.cylinder_type)
+        )
+        if exclude_slip_id:
+            statement = statement.where(DeliverySlip.id != exclude_slip_id)
+        return {
+            CylinderType(cylinder_type): int(total or 0)
+            for cylinder_type, total in await self.session.execute(statement)
+        }
+
     async def _lines(self, slip_id: str) -> dict[CylinderType, int]:
         """The slip's cylinders, as the ledger wants them."""
         rows = list(
@@ -582,6 +626,14 @@ class DeliveryService:
     # --- Views ------------------------------------------------------------------------------
 
     async def _view(self, slip: DeliverySlip, *, reveal_code: str | None = None) -> DeliverySlipResponse:
+        # The money comes off the order rather than the slip: one billing record, one set of
+        # numbers. The order's prices were frozen at placement, so this cannot drift.
+        money = await self.session.execute(
+            select(Order.subtotal, Order.gst_percent, Order.gst_amount, Order.total_amount).where(
+                Order.id == slip.order_id
+            )
+        )
+        subtotal, gst_percent, gst_amount, total_amount = money.first() or (0, 0, 0, 0)
         return DeliverySlipResponse(
             id=slip.id,
             slip_number=slip.slip_number,
@@ -600,6 +652,10 @@ class DeliveryService:
             items=await self._items_view(slip.id),
             items_summary=slip.items_summary,
             cylinders_allocated=slip.cylinders_allocated,
+            subtotal=subtotal,
+            gst_percent=gst_percent,
+            gst_amount=gst_amount,
+            total_amount=total_amount,
             vehicle_number=slip.vehicle_number,
             driver_name=slip.driver_name,
             helper_name=slip.helper_name,

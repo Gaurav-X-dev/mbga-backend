@@ -12,10 +12,15 @@ recording a refill for the same cylinder at the same time serialise instead of b
 and both writing 180. Read-then-write without the lock loses one of the two movements' effect
 while still writing both ledger rows - the exact disagreement §18.6 forbids.
 
-**Atomicity across lines.** A dispatch checks *every* line before touching *any* count
-(spec §10): "fails without touching counts if any line is short". Per-line application would
-leave a four-line dispatch half-applied when the last line came up short, with three movements
-recorded against a delivery that never left.
+**Atomicity across lines.** A handover checks *every* line before touching *any* count
+(spec §10). Per-line application would leave a four-line delivery half-applied when the last line
+came up short, with three movements recorded against cylinders nobody received.
+
+**Counts drop at handover, not at dispatch.** Cylinders on a van are still the merchant's - the
+delivery can fail and bring them back - so `filled` only moves when the customer actually
+receives them. `check_available()` is what keeps that honest at dispatch: it measures filled
+minus what is already committed to vans on the road, so a second van cannot be loaded from
+cylinders the first one is carrying.
 
 **Refusing rather than clamping.** No bucket may go negative (spec §11.3). A negative count is
 not a smaller number, it is a warehouse that has lost track of physical objects, so the movement
@@ -138,7 +143,37 @@ class StockLedger:
 
     # --- What the delivery endpoints write --------------------------------------------------
 
-    async def dispatch(
+    async def check_available(
+        self,
+        lines: dict[CylinderType, int],
+        *,
+        committed: dict[CylinderType, int] | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Refuse a load the godown cannot fill. Writes nothing.
+
+        Called when a van is dispatched, which is no longer when the counts move - cylinders come
+        off the books at handover, because until then they are still the merchant's and the
+        delivery can still fail. That leaves `filled` unchanged while a van is out, so a second
+        van could otherwise be authorised for cylinders already on the first.
+
+        `committed` is what the slips already on the road are carrying. Availability is filled
+        minus that, which is the number a person walking the godown would actually count.
+
+        The rows are locked here even though nothing is written: the check and the slip's status
+        change happen in one transaction, so two concurrent dispatches for the last four cylinders
+        serialise rather than both passing.
+        """
+        moment = now or datetime.now(UTC)
+        items = await self._locked_items(lines, moment)
+        outstanding = committed or {}
+
+        for cylinder_type, quantity in sorted(lines.items()):
+            available = items[cylinder_type].filled - outstanding.get(cylinder_type, 0)
+            if available < quantity:
+                raise _insufficient(cylinder_type, available=max(available, 0), needed=quantity)
+
+    async def deliver(
         self,
         lines: dict[CylinderType, int],
         *,
@@ -148,12 +183,15 @@ class StockLedger:
         reference_type: MovementReference = MovementReference.DELIVERY,
         now: datetime | None = None,
     ) -> list[Applied]:
-        """Take filled stock out for a delivery slip (spec §10, §18.6). Atomic across lines.
+        """Take filled stock off the books, at the moment it is handed over (spec §18.6).
 
-        Every line is locked and checked for sufficiency **before** the first count moves, so a
-        short line refuses the whole dispatch and leaves the warehouse exactly as it was. The
-        locks are taken in a stable order (by cylinder type) so two dispatches that overlap
-        cannot each hold what the other needs.
+        The movement type stays `DISPATCHED` because that is the spec's vocabulary for cylinders
+        leaving on a delivery, and the app's filter chips are built from it. What changed is
+        *when* it is written: on confirmation rather than on dispatch, so the count reflects what
+        the godown still owns rather than what is merely loaded.
+
+        Still atomic across lines, and the locks are taken in a stable order (by cylinder type) so
+        two handovers that overlap cannot each hold what the other needs.
         """
         moment = now or datetime.now(UTC)
         items = await self._locked_items(lines, moment)
@@ -173,47 +211,6 @@ class StockLedger:
                 previous_count=None,
                 new_count=None,
                 note=None,
-                reference_type=reference_type,
-                reference_id=reference_id,
-                recorded_by_user_id=recorded_by_user_id,
-                recorded_by_name=recorded_by_name,
-                moment=moment,
-            )
-            for cylinder_type, quantity in sorted(lines.items())
-        ]
-
-    async def return_filled(
-        self,
-        lines: dict[CylinderType, int],
-        *,
-        reference_id: str,
-        recorded_by_user_id: str | None,
-        recorded_by_name: str | None,
-        reference_type: MovementReference = MovementReference.DELIVERY,
-        now: datetime | None = None,
-    ) -> list[Applied]:
-        """Put filled cylinders back after a delivery failed (spec §10 `FAILED`).
-
-        Booked as `RECEIVED_FILLED` against the delivery rather than as a `CORRECTION`, and the
-        distinction matters to whoever reconciles the month: a correction says "the register was
-        wrong", while this says "these cylinders went out on slip DS-0148 and came back on it".
-        The spec's movement types have no dedicated "returned", and inventing one outside
-        `StockMovementType` would break the app's filter chips.
-
-        No sufficiency check: it only ever adds.
-        """
-        moment = now or datetime.now(UTC)
-        items = await self._locked_items(lines, moment)
-        return [
-            self._apply(
-                items[cylinder_type],
-                deltas=Deltas(filled=quantity),
-                movement_type=StockMovementType.RECEIVED_FILLED,
-                quantity=quantity,
-                bucket=StockBucket.FILLED,
-                previous_count=None,
-                new_count=None,
-                note="Returned undelivered",
                 reference_type=reference_type,
                 reference_id=reference_id,
                 recorded_by_user_id=recorded_by_user_id,

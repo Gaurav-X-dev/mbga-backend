@@ -131,8 +131,12 @@ async def test_a_hired_van_needs_no_account(env):
 # --- Dispatch ----------------------------------------------------------------------------------
 
 
-async def test_dispatch_lands_in_all_four_places_at_once(env):
-    """The slip, the order, the ledger and the bell - one call, one transaction."""
+async def test_dispatch_moves_the_slip_the_order_and_the_bell(env):
+    """Three of the four. The counts are the fourth and they move at handover.
+
+    Cylinders on a van are still the merchant's - the delivery can fail and bring them back -
+    so `filled` does not drop until the customer actually receives them.
+    """
     token, _merchant, order, slip, _driver = await ready_to_dispatch(env)
 
     response = await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
@@ -144,11 +148,11 @@ async def test_dispatch_lands_in_all_four_places_at_once(env):
     assert dispatched["dispatchedAt"] is not None
     # 2. the order
     assert await order_status(env, order["id"]) == "OUT_FOR_DELIVERY"
-    # 3. the ledger
-    assert await counts(env, token) == (56, 0, 0)
-    # 4. the customer
+    # 3. the customer
     titles = [title for _event, title in await notifications_for(env, order["customerId"])]
     assert "Order out for delivery" in titles
+    # ...and the godown still holds them.
+    assert await counts(env, token) == (60, 0, 0)
 
 
 async def test_the_order_history_names_the_van_and_the_driver(env):
@@ -161,11 +165,25 @@ async def test_the_order_history_names_the_van_and_the_driver(env):
     assert ("OUT_FOR_DELIVERY", "Vehicle MP09 GH 4521 · Test Driver") in trail
 
 
-async def test_the_dispatch_movement_points_at_the_slip(env):
-    """`referenceType: DELIVERY` - which is how a slip is reconciled back to the counts."""
+async def test_no_movement_is_written_until_the_handover(env):
+    """The ledger records what happened, and until the customer signs nothing has."""
     token, merchant, _order, slip, _driver = await ready_to_dispatch(env)
 
     await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
+
+    assert await env.scalar(
+        select(StockMovement).where(
+            StockMovement.merchant_id == merchant.id,
+            StockMovement.movement_type == "DISPATCHED",
+        )
+    ) is None
+
+
+async def test_the_handover_movement_points_at_the_slip(env):
+    """`referenceType: DELIVERY` - which is how a slip is reconciled back to the counts."""
+    token, merchant, _order, slip, _driver, code = await dispatched(env)
+
+    await env.post(f"{DELIVERIES}/{slip['id']}/confirm", token, {"otp": code, "emptiesCollected": 0})
 
     row = await env.scalar(
         select(StockMovement).where(
@@ -210,11 +228,36 @@ async def test_a_refill_then_a_retry_dispatches(env):
     retried = await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
 
     assert retried.status_code == 200
-    assert await counts(env, token) == (8, 0, 0)
+    # Loaded, not yet handed over, so all twelve are still on the books.
+    assert await counts(env, token) == (12, 0, 0)
+
+
+async def test_a_second_van_cannot_be_loaded_from_the_first_ones_cylinders(env):
+    """The bug that moving the deduction to handover would otherwise introduce.
+
+    `filled` stays whole while a van is out, so availability has to subtract what is already on
+    the road - or the godown authorises two loads for one set of cylinders.
+    """
+    token, merchant, _order, first, _driver = await ready_to_dispatch(env, quantity=6)
+    assert (await env.post(f"{DELIVERIES}/{first['id']}/dispatch", token)).status_code == 200
+
+    customer = await make_customer(env, merchant)
+    order = await place_order(env, token, customer.id, ("LPG_19KG", 4))
+    created = await env.post(
+        DELIVERIES,
+        token,
+        {"orderId": order["id"], "vehicleNumber": "MP09 GH 4522", "driverName": "Second driver"},
+    )
+    assert created.status_code == 201, created.text
+    second = await env.post(f"{DELIVERIES}/{created.json()['id']}/dispatch", token)
+
+    # Six on the shelf, four already on a van: only two are actually loadable.
+    assert second.status_code == 409
+    assert "2 available, 4 needed" in second.json()["detail"]["message"]
 
 
 async def test_a_slip_cannot_be_dispatched_twice(env):
-    """Otherwise the second call takes the cylinders off the shelf a second time."""
+    """Otherwise one load could be confirmed twice and take the cylinders off twice."""
     token, _merchant, _order, slip, _driver = await ready_to_dispatch(env)
     await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
 
@@ -222,7 +265,6 @@ async def test_a_slip_cannot_be_dispatched_twice(env):
 
     assert again.status_code == 409
     assert "already been dispatched" in again.json()["detail"]["message"]
-    assert await counts(env, token) == (56, 0, 0), "the stock moved once"
 
 
 # --- Confirmation ------------------------------------------------------------------------------
@@ -308,7 +350,8 @@ async def test_more_empties_than_cylinders_is_refused(env):
 
     assert response.status_code == 422
     assert response.json()["detail"]["fields"][0]["message"] == "Invalid count"
-    assert await counts(env, token) == (56, 0, 0)
+    # Refused before anything moved, so the load is still the merchant's.
+    assert await counts(env, token) == (60, 0, 0)
 
 
 async def test_a_slip_cannot_be_confirmed_before_it_is_dispatched(env):
@@ -375,12 +418,14 @@ async def test_the_full_cycle_leaves_the_ledger_agreeing_with_the_counts(env):
     assert await order_status(env, order["id"]) == "DELIVERED"
 
 
-async def test_a_multi_line_slip_dispatches_every_line(env):
-    token, _merchant, _order, slip, _driver = await ready_to_dispatch(
-        env, ("LPG_19KG", 4), ("LPG_5KG", 6)
+async def test_a_multi_line_slip_comes_off_every_line_at_handover(env):
+    token, _merchant, _order, slip, _driver, code = await dispatched(
+        env, lines=(("LPG_19KG", 4), ("LPG_5KG", 6))
     )
 
-    response = await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
+    response = await env.post(
+        f"{DELIVERIES}/{slip['id']}/confirm", token, {"otp": code, "emptiesCollected": 0}
+    )
 
     assert response.status_code == 200, response.text
     assert await counts(env, token, "LPG_19KG") == (56, 0, 0)

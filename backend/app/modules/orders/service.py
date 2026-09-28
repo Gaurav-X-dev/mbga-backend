@@ -42,6 +42,7 @@ from app.modules.orders.constants import (
     OrderMode,
     OrderSource,
     OrderStatus,
+    status_label,
 )
 from app.modules.orders.cutoff import Cutoff, evaluate
 from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
@@ -866,7 +867,11 @@ def _order_view(
         status=order.status,
         status_history=[
             OrderStatusEntry(
-                status=row.status, at=row.changed_at, by=row.changed_by_name, note=row.note
+                status=row.status,
+                label=status_label(row.status),
+                at=row.changed_at,
+                by=row.changed_by_name,
+                note=row.note,
             )
             for row in history
         ],

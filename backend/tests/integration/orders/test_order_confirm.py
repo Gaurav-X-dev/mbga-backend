@@ -271,3 +271,61 @@ async def test_the_whole_chain_runs_in_order(env):
         "CONFIRMED",
         "OUT_FOR_DELIVERY",
     ]
+
+
+# --- A status the catalogue has retired ----------------------------------------------------------
+
+
+async def test_an_order_whose_history_holds_a_retired_status_still_renders(env):
+    """`PREPARING` is in the history of every order raised before it was removed.
+
+    The migration left those rows alone on purpose - an append-only trail records what happened,
+    and rewriting one to match a schema change is how it stops being evidence. But the response
+    model typed the entry as the live enum, so every such order was a validation error and a 500:
+    the customer-detail screen showed "Something went wrong" instead of the order history.
+    """
+    from datetime import UTC, datetime
+
+    from app.modules.orders.models import OrderStatusHistory
+
+    token, merchant, _user = await order_staff(env, permissions=STAFF_PERMISSIONS)
+    customer = await make_customer(env, merchant)
+    order = await created_order(env, token, customer.id)
+    # A row from before the status was retired.
+    async with env.sessions() as db:
+        db.add(
+            OrderStatusHistory(
+                order_id=order["id"],
+                status="PREPARING",
+                changed_by_name="Test Manager",
+                changed_by_user_id=None,
+                note=None,
+                changed_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+
+    detail = await env.get(f"{ORDERS}/{order['id']}", token)
+    listed = await env.get(ORDERS, token)
+
+    assert detail.status_code == 200, detail.text
+    assert listed.status_code == 200, listed.text
+    entry = next(row for row in detail.json()["statusHistory"] if row["status"] == "PREPARING")
+    # Rendered with the words it was shown under at the time, so the app needs no lookup.
+    assert entry["label"] == "Preparing / Dispatch"
+
+
+async def test_a_live_status_carries_its_catalogue_label(env):
+    token, merchant, _user = await order_staff(env, permissions=STAFF_PERMISSIONS)
+    customer = await make_customer(env, merchant)
+    order = await created_order(env, token, customer.id)
+
+    detail = (await env.get(f"{ORDERS}/{order['id']}", token)).json()
+
+    assert detail["statusHistory"][0] == {
+        "status": "PLACED",
+        "label": "Order Placed",
+        "at": detail["statusHistory"][0]["at"],
+        "by": detail["statusHistory"][0]["by"],
+        "note": None,
+    }

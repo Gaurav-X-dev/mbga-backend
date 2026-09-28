@@ -112,9 +112,20 @@ class OrderQuoteResponse(BaseModel):
 
 
 class OrderStatusEntry(BaseModel):
-    """One step of the tracking timeline. Oldest first."""
+    """One step of the tracking timeline. Oldest first.
 
-    status: OrderStatus
+    `status` is a plain string rather than `OrderStatus` on purpose. This is a record of a state
+    the order was actually in, which can include one the platform has since retired - `PREPARING`
+    is in the history of every order raised before it was removed. Typing it as the live enum
+    would mean a schema change made old orders unrenderable, and the only way out would be to
+    rewrite their history.
+
+    `label` is resolved server-side so the app never has to look a historical code up in the
+    status catalogue - where, being retired, it would not be found.
+    """
+
+    status: str
+    label: str
     at: UtcTime
     by: str | None = None
     note: str | None = None

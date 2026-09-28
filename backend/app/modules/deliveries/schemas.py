@@ -69,6 +69,15 @@ class DeliverySlipResponse(BaseModel):
     dispatched_at: UtcTime | None = Field(default=None, alias="dispatchedAt")
     delivered_at: UtcTime | None = Field(default=None, alias="deliveredAt")
 
+    #: The bill, with GST broken **out of** the total rather than added on top (spec §18.1).
+    #: Read through from the order at render time rather than copied onto the slip: the order's
+    #: prices are frozen at placement and it is the billing record, so a second copy here would
+    #: be a second set of numbers that has to agree with the first.
+    subtotal: int
+    gst_percent: int = Field(alias="gstPercent")
+    gst_amount: int = Field(alias="gstAmount")
+    total_amount: int = Field(alias="totalAmount")
+
     empties_collected: int = Field(alias="emptiesCollected")
     #: `cylindersAllocated - emptiesCollected`. Derived, so it cannot disagree with the two.
     pending_pickup: int = Field(alias="pendingPickup")
