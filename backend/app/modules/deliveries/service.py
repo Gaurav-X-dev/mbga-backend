@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings
 from app.modules.customers.business_schemas import Address
-from app.modules.customers.models import CustomerProfile
+from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 from app.modules.deliveries import codes, validation
 from app.modules.deliveries.constants import (
     ALL_STATUSES,
@@ -134,6 +134,7 @@ class DeliveryService:
 
         now = datetime.now(UTC)
         items = await self._order_items(order.id)
+        destination = await self._site_coordinates(order)
         slip = DeliverySlip(
             id=str(uuid4()),
             slip_number=await SlipNumberAllocator(self.session, self.merchant_id).allocate(),
@@ -149,6 +150,10 @@ class DeliveryService:
             address_city=order.address_city,
             address_state=order.address_state,
             address_pincode=order.address_pincode,
+            # Copied like the address, and null for most slips: an order usually goes to the
+            # customer's registered address rather than a named site, and nobody surveys those.
+            destination_latitude=destination[0],
+            destination_longitude=destination[1],
             # Copied verbatim from the order so the slip and the order read identically.
             items_summary=order.items_summary,
             cylinders_allocated=order.total_cylinders,
@@ -461,6 +466,20 @@ class DeliveryService:
                 f"Order {order.order_number} is already on slip {existing.slip_number}.",
             )
         return order
+
+    async def _site_coordinates(self, order: Order) -> tuple[float | None, float | None]:
+        """Where the van is being sent, when anybody has recorded it.
+
+        Only a named delivery site can carry coordinates; an order to the customer's registered
+        address has none, which is the common case. Returning `(None, None)` rather than raising
+        is deliberate - a delivery must never depend on a latitude the office never typed in.
+        """
+        if not order.delivery_site_id:
+            return None, None
+        site = await self.session.get(CustomerDeliverySite, order.delivery_site_id)
+        if site is None:
+            return None, None
+        return site.latitude, site.longitude
 
     async def _order_of(self, slip: DeliverySlip) -> Order:
         order = await self.session.scalar(

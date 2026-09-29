@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # Reverse proxies whose X-Forwarded-For header is trusted (IP addresses or CIDR ranges).
     trusted_proxy_ips: list[str] = Field(default_factory=list)
 
+    # Re-shapes delivery-channel responses into the delivery app's own envelope
+    # (`{success, data}` / `{success, error}`). Off by default: that app is already integrated
+    # against the platform's raw shapes on auth and notifications, so this is flipped on only
+    # once its developer expects it. See app/shared/middleware/delivery_envelope.py.
+    delivery_response_envelope: bool = False
+
     database_url: str = "mysql+asyncmy://mbga_user:change_me@mysql:3306/mbga?charset=utf8mb4"
     redis_url: str = "redis://redis:6379/0"
     # Redis only backs the permission cache; permission checks always fall back to the database.

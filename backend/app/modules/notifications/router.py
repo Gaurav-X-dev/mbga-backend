@@ -107,4 +107,24 @@ def build_notification_router(channel: LoginChannel) -> APIRouter:
         await service.mark_read(notification_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @router.patch(
+        "/{notificationId}/read",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[channel_only],
+        responses=error_responses(401, 403, 404),
+        summary="Mark read (PATCH)",
+        operation_id=f"{channel.value}_notification_mark_read_patch",
+    )
+    async def mark_read_patch(
+        service: ServiceDep, notification_id: NotificationIdPath
+    ) -> Response:
+        """The same write under the verb the delivery app calls.
+
+        The merchant and customer apps already ship against `POST`, and the delivery app against
+        `PATCH`. Marking something read is a bodyless state change, so neither verb is wrong -
+        and breaking a shipped app to settle the question would be.
+        """
+        await service.mark_read(notification_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     return router

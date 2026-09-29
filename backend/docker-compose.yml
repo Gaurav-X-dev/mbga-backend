@@ -1,10 +1,17 @@
 services:
   api:
     build: .
+    restart: unless-stopped
     env_file:
       - .env
     ports:
       - "8000:8000"
+    volumes:
+      # Mounted, not baked into the image. Service-account keys and customer KYC documents
+      # must not travel with an image that gets pushed to a registry, and uploaded documents
+      # have to outlive the container that received them.
+      - ./secrets:/app/secrets:ro
+      - documents:/app/var/documents
     depends_on:
       mysql:
         condition: service_healthy
@@ -18,6 +25,7 @@ services:
 
   mysql:
     image: mysql:8.4
+    restart: unless-stopped
     environment:
       MYSQL_DATABASE: mbga
       MYSQL_USER: mbga_user
@@ -39,6 +47,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -51,3 +60,4 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  documents:

@@ -6,6 +6,12 @@ from fastapi.responses import JSONResponse
 from app.api import api_router
 from app.config.app import get_settings
 from app.shared.exceptions.handlers import register_exception_handlers
+from app.shared.middleware.delivery_envelope import (
+    STATE_FLAG as ENVELOPE_STATE_FLAG,
+)
+from app.shared.middleware.delivery_envelope import (
+    DeliveryEnvelopeMiddleware,
+)
 from app.shared.middleware.request_context import REQUEST_ID_HEADER, RequestContextMiddleware
 
 CHANNEL_DOC_PREFIXES = {
@@ -172,6 +178,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
     )
+    # Inside RequestContextMiddleware, so the request id header it sets survives the rewrap.
+    # The switch is read per request off `app.state`, so it is one boolean to flip.
+    setattr(app.state, ENVELOPE_STATE_FLAG, settings.delivery_response_envelope)
+    app.add_middleware(DeliveryEnvelopeMiddleware)
     # Outermost, so request IDs and security headers are also set on CORS and error responses.
     app.add_middleware(RequestContextMiddleware, hsts=not settings.is_local_environment)
     app.include_router(api_router, prefix=settings.api_prefix)

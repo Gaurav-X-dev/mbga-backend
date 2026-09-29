@@ -4,6 +4,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -125,6 +126,12 @@ class CustomerDeliverySite(Base):
     address_pincode: Mapped[str] = mapped_column(String(6))
     contact_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     contact_mobile: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Where the van is actually going, when anybody has recorded it. Used only to tell a driver
+    # how far they still are from the gate. Nullable and expected to stay null for most sites:
+    # nobody surveys a customer's godown to onboard them, so a delivery must never depend on
+    # these being present - a missing coordinate means "cannot measure", not "wrong place".
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

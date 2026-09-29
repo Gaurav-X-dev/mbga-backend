@@ -23,6 +23,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -69,6 +70,12 @@ class DeliverySlip(Base):
     address_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_state: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_pincode: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    # Copied from the delivery site at creation, like the address above and for the same reason:
+    # a slip has to keep saying where the van was sent even after the site is edited. Null for
+    # most slips - an order usually goes to the customer's registered address, which nobody has
+    # surveyed - and every read treats null as "cannot measure", never as "wrong place".
+    destination_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    destination_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # "4 × 19 KG · 6 × 5 KG". Display only, built at creation so the list needs no lines.
     items_summary: Mapped[str] = mapped_column(String(255))
@@ -88,6 +95,12 @@ class DeliverySlip(Base):
     # to carry a time of day.
     scheduled_date: Mapped[date] = mapped_column(Date)
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the driver pressed Start on their phone, and where they were. Separate from
+    # `dispatched_at`, which is the office marking the van loaded: the two are often an hour
+    # apart, and only this one is evidence of where the driver actually was.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    driver_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    driver_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # 0 until the delivery is confirmed (spec §3.12). `pendingPickup` is derived from this and

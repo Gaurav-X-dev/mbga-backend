@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.database.base import Base
@@ -23,5 +23,15 @@ class DeliveryProfile(Base):
     address: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(30), index=True)
     approval_status: Mapped[str] = mapped_column(String(30), index=True)
+
+    # --- what the delivery app owns -------------------------------------------------------
+    # The van this driver runs. Shown on their profile screen and defaulted onto a slip raised
+    # for them; nullable because a merchant may assign a vehicle per trip rather than per driver.
+    vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # On duty means "assignable right now". It is the driver's own switch, not the office's -
+    # going off duty is how they signal the end of a shift, and it is refused while a van of
+    # theirs is still out, because the cylinders on it are nobody else's to deliver.
+    on_duty: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
