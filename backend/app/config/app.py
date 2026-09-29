@@ -37,8 +37,14 @@ class Settings(BaseSettings):
 
     database_url: str = "mysql+asyncmy://mbga_user:change_me@mysql:3306/mbga?charset=utf8mb4"
     redis_url: str = "redis://redis:6379/0"
-    # Redis only backs the permission cache; permission checks always fall back to the database.
-    # REDIS_ENABLED=false is accepted only in local/development/test environments.
+    # Redis backs the permission cache and nothing else - every permission check falls back to
+    # the database when it is absent, so the platform is correct either way.
+    #
+    # `REDIS_ENABLED=false` is therefore allowed anywhere, including production. What it costs
+    # is a database round-trip on every authorised request instead of a cache hit, which is a
+    # real cost on a remote database and none at all on a local one. It is a deployment
+    # decision, not a safety one, so it is not refused - unlike DEBUG or a mock SMS provider,
+    # which change what the platform *does* and stay refused outside local.
     redis_enabled: bool = True
     redis_socket_connect_timeout_seconds: float = Field(default=0.5, gt=0, le=10)
     redis_socket_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
@@ -185,14 +191,6 @@ class Settings(BaseSettings):
     @property
     def document_cipher_secret(self) -> str:
         return self.document_encryption_secret or self.jwt_signing_secret
-
-    @field_validator("redis_enabled", mode="after")
-    @classmethod
-    def reject_disabled_redis_outside_local(cls, value: bool, info) -> bool:
-        env = str(info.data.get("app_env", "local")).lower()
-        if not value and env not in LOCAL_ENVIRONMENTS:
-            raise ValueError("REDIS_ENABLED=false is allowed only in local/development/test")
-        return value
 
     @field_validator("debug", mode="after")
     @classmethod

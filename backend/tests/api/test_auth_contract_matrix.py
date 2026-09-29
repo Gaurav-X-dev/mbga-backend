@@ -284,6 +284,9 @@ def test_customer_schema_uses_exact_customer_tags_and_has_no_cross_channel_leaka
         "Customer Orders",
         # And reads its own notification bell (spec §15).
         "Customer Notifications",
+        # And its own invoices and receipts, on the Payments tab (spec §12.1). Read-only:
+        # recording a collection is an act of the merchant's books, never the customer's.
+        "Customer Payments",
         "Health",
     }
     for path, method, operation in _operation_items(schema):

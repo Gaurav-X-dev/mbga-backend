@@ -21,6 +21,10 @@ dependencies = [
   # Async HTTP client for the SMS provider (app/shared/otp/hanuotp_provider.py). Runtime, not
   # test-only: the OTP path calls it on every send.
   "httpx>=0.27.0",
+  # Backs pydantic's EmailStr (app/modules/users/schemas.py). Declared explicitly because
+  # pydantic does not require it: without it the app imports fine locally, where something else
+  # has pulled it in, and fails at start-up on a clean install.
+  "email-validator>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -13,6 +13,7 @@ from app.modules.delivery_users.router import router as delivery_users_router
 from app.modules.expenses.router import router as expenses_router
 from app.modules.inventory.router import router as inventory_router
 from app.modules.notifications.router import build_notification_router
+from app.modules.payments.router import build_payment_router
 from app.modules.orders.router import build_order_router
 from app.modules.pricing.router import customer_pricing_router, pricing_router
 from app.modules.tasks.router import router as tasks_router
@@ -41,6 +42,10 @@ router.include_router(customer_pricing_router)
 router.include_router(build_order_router(LoginChannel.MERCHANT))
 # The bell: the in-app list behind the push notifications (spec §15).
 router.include_router(build_notification_router(LoginChannel.MERCHANT))
+
+# Invoices and payments (spec §12). Staff see the merchant's books; a customer sees
+# their own invoices and receipts, and cannot record a collection against them.
+router.include_router(build_payment_router(LoginChannel.MERCHANT))
 # Expenses: the operational spend screens, with their own dynamic category list.
 router.include_router(expenses_router)
 # Warehouse Stock. Staff only and deliberately not mounted on the customer channel: a

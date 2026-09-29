@@ -6,7 +6,7 @@ each growing their own slightly different idea of what a `Customer` looks like â
 the single place that has to be correct about never emitting an unmasked identifier.
 """
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.customers.business_schemas import (
@@ -23,11 +23,13 @@ from app.modules.customers.models import (
     CustomerProfile,
     KycApplication,
 )
+from app.modules.payments.models import Invoice
 
-# Balance and order history come from modules that do not exist yet. They are reported as the
-# contract's documented empty values rather than invented, and this constant marks every
-# place that has to change when the invoice module lands.
-UNIMPLEMENTED_RUNNING_BALANCE = 0
+# Order history still comes from a module that does not exist, and is reported as the
+# contract's documented empty value rather than invented. The running balance is real now: it
+# is the sum of this customer's open invoice balances, passed in by the caller that already
+# knows how to batch-load it.
+UNIMPLEMENTED_LAST_ORDER_AT = None
 
 
 def address_of(profile: CustomerProfile) -> Address:
@@ -81,6 +83,7 @@ def customer_response(
     sites: list[CustomerDeliverySite],
     documents: list[CustomerDocument],
     application: KycApplication | None = None,
+    running_balance: int = 0,
 ) -> CustomerResponse:
     return CustomerResponse(
         id=profile.id,
@@ -100,8 +103,8 @@ def customer_response(
         registered_at=profile.registered_at or profile.created_at,
         approved_at=profile.approved_at,
         rejection_reason=profile.rejection_reason,
-        running_balance=UNIMPLEMENTED_RUNNING_BALANCE,
-        last_order_at=None,
+        running_balance=running_balance,
+        last_order_at=UNIMPLEMENTED_LAST_ORDER_AT,
         application_id=application.id if application else None,
     )
 
@@ -193,15 +196,33 @@ class CustomerViewLoader:
         # Ordered ascending and overwritten, so the last write per customer is the newest.
         return {application.customer_id: application for application in rows}
 
+    async def running_balances_for(self, customer_ids: list[str]) -> dict[str, int]:
+        """What each of these customers still owes, across all their open invoices.
+
+        Batched with the sites and documents rather than summed per row: the customer list is
+        the screen this is shown on, and a query per customer is how that screen gets slow.
+        A customer with no invoices is absent from the result and reads as zero.
+        """
+        if not customer_ids:
+            return {}
+        rows = await self.session.execute(
+            select(Invoice.customer_id, func.coalesce(func.sum(Invoice.balance), 0))
+            .where(Invoice.customer_id.in_(customer_ids))
+            .group_by(Invoice.customer_id)
+        )
+        return {customer_id: int(total or 0) for customer_id, total in rows}
+
     async def customer_view(self, profile: CustomerProfile) -> CustomerResponse:
         sites = await self.sites_for([profile.id])
         documents = await self.documents_for([profile.id])
         applications = await self.latest_applications_for([profile.id])
+        balances = await self.running_balances_for([profile.id])
         return customer_response(
             profile,
             sites=sites.get(profile.id, []),
             documents=documents.get(profile.id, []),
             application=applications.get(profile.id),
+            running_balance=balances.get(profile.id, 0),
         )
 
     async def customer_views(self, profiles: list[CustomerProfile]) -> list[CustomerResponse]:
@@ -209,12 +230,14 @@ class CustomerViewLoader:
         sites = await self.sites_for(ids)
         documents = await self.documents_for(ids)
         applications = await self.latest_applications_for(ids)
+        balances = await self.running_balances_for(ids)
         return [
             customer_response(
                 profile,
                 sites=sites.get(profile.id, []),
                 documents=documents.get(profile.id, []),
                 application=applications.get(profile.id),
+                running_balance=balances.get(profile.id, 0),
             )
             for profile in profiles
         ]

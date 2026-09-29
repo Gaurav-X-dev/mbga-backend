@@ -1,8 +1,5 @@
 """Payment and invoice notifications (spec §18.8, "Payment recorded").
 
-**No module calls these yet** - the payment slice is not merged. See the note in
-`deliveries.py`; the same reasoning applies.
-
 Keyed on the payment or invoice, so the notification opens the receipt rather than a list.
 """
 
@@ -65,4 +62,24 @@ def invoice_overdue(customer_id: str, invoice_id: str, invoice_number: str, amou
         title="Invoice overdue",
         body=f"Invoice {invoice_number} for {rupees(amount)} is {days} day(s) overdue.",
         severity=WARNING,
+    )
+
+
+def invoice_raised(
+    customer_id: str, invoice_id: str, invoice_number: str, amount: int, order_number: str
+) -> NotificationEvent:
+    """To the customer: here is the bill for the order you just received.
+
+    Sent at handover rather than at dispatch, because that is when the invoice is raised - and
+    a bill for cylinders still on a van is a bill for something the customer does not have.
+    """
+    return NotificationEvent(
+        event_type="INVOICE_RAISED",
+        recipient_kind=CUSTOMER,
+        recipient_id=customer_id,
+        entity_type=INVOICE,
+        entity_id=invoice_id,
+        title="Invoice raised",
+        body=f"Invoice {invoice_number} for {rupees(amount)} against order {order_number}.",
+        severity=INFO,
     )

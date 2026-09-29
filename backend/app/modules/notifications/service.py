@@ -15,6 +15,12 @@ Read state is per user, not per bucket. Absence of a `notification_reads` row me
 so marking one read is an insert and nothing needs back-filling for users who already exist.
 """
 
+# Annotations are deferred so a method named after a builtin does not shadow it. This class has
+# a `list()` method, and on Python 3.12 an annotation like `list[str]` in the class body is
+# evaluated immediately - finding the method, not the builtin, and failing at import. Python 3.14
+# defers annotations by default, which is why this only shows up on 3.12.
+from __future__ import annotations
+
 from datetime import UTC, datetime
 
 from fastapi import status
