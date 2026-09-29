@@ -38,6 +38,9 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Customer Profile"
     if path.startswith("/api/v1/customer/notifications"):
         return "Customer Notifications"
+    # The customer's Payments tab: their own invoices and receipts (spec §12).
+    if path.startswith(("/api/v1/customer/invoices", "/api/v1/customer/payments")):
+        return "Customer Payments"
     if path.startswith("/api/v1/customer/orders"):
         return "Customer Orders"
     if path == "/api/v1/customer/registration/status":

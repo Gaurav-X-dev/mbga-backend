@@ -53,9 +53,11 @@ from app.modules.deliveries.schemas import (
 from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.inventory.ledger import StockLedger
 from app.modules.notifications.events import deliveries as delivery_events
+from app.modules.notifications.events import payments as payment_events
 from app.modules.orders import transitions
 from app.modules.orders.constants import ORDER_LABELS, OrderStatus
 from app.modules.orders.models import Order, OrderItem
+from app.modules.payments.invoicing import InvoiceRaiser
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
 from app.shared.business.actor import BusinessActor
@@ -310,9 +312,24 @@ class DeliveryService:
             note=_delivered_note(collected, slip.cylinders_allocated),
             now=now,
         )
+        # The bill is raised here rather than at dispatch (spec §10.4 leaves the choice to the
+        # backend). Handover is the honest moment: until the customer has the cylinders there is
+        # nothing to bill for, and a failed delivery would otherwise leave an invoice for goods
+        # that came back on the van. Raising it is idempotent, so a retried confirmation bills
+        # nothing twice.
+        invoice = await InvoiceRaiser(self.session, self.merchant_id).raise_for(order, now=now)
         self.notifications.queue(
             delivery_events.delivered(
                 slip.customer_id, order.id, slip.order_number, cylinders=slip.cylinders_allocated
+            )
+        )
+        self.notifications.queue(
+            payment_events.invoice_raised(
+                slip.customer_id,
+                invoice.id,
+                invoice.invoice_number,
+                invoice.total_amount,
+                slip.order_number,
             )
         )
         await self.session.commit()

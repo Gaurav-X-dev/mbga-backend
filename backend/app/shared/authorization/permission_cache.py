@@ -1,3 +1,10 @@
+
+# Annotations are deferred so a method named after a builtin does not shadow it. This class has
+# a `set()` method, and on Python 3.12 an annotation like `set[str]` in the class body is
+# evaluated immediately - finding the method, not the builtin, and failing at import. Python 3.14
+# defers annotations by default, which is why this only shows up on 3.12.
+from __future__ import annotations
+
 import json
 import logging
 import time

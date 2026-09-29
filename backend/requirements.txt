@@ -1,3 +1,7 @@
+# Kept in step with [project.dependencies] in pyproject.toml. `pip install -e .` is the
+# supported install and reads that file; this one exists for tooling that expects it, so the
+# two drifting apart is how a clean deploy fails on an import that works everywhere else.
+
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.8.0
@@ -9,9 +13,17 @@ redis>=5.0.8
 pyjwt>=2.9.0
 passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.9
+# Encrypts stored KYC identifiers (app/shared/crypto). Arrives locally only as an optional
+# extra of another package, so a clean install would not get it.
+cryptography>=43.0.0
+# Async HTTP client for the SMS provider. Runtime, not test-only: the OTP path calls it on
+# every send.
+httpx>=0.27.0
+# Backs pydantic's EmailStr (app/modules/users/schemas.py). pydantic does not require it, so
+# without this line the app imports fine locally and fails at start-up on a clean install.
+email-validator>=2.0
 
 # Development and test tools
 pytest>=8.3.0
 pytest-asyncio>=0.23.8
-httpx>=0.27.0
 ruff>=0.6.0
