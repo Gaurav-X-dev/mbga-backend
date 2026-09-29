@@ -6,6 +6,12 @@ from fastapi.responses import JSONResponse
 from app.api import api_router
 from app.config.app import get_settings
 from app.shared.exceptions.handlers import register_exception_handlers
+from app.shared.middleware.delivery_envelope import (
+    STATE_FLAG as ENVELOPE_STATE_FLAG,
+)
+from app.shared.middleware.delivery_envelope import (
+    DeliveryEnvelopeMiddleware,
+)
 from app.shared.middleware.request_context import REQUEST_ID_HEADER, RequestContextMiddleware
 
 CHANNEL_DOC_PREFIXES = {
@@ -30,6 +36,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Customer Registration"
     if path.startswith(("/api/v1/customer/customers", "/api/v1/customer/profile")):
         return "Customer Profile"
+    if path.startswith("/api/v1/customer/notifications"):
+        return "Customer Notifications"
     if path.startswith("/api/v1/customer/orders"):
         return "Customer Orders"
     if path == "/api/v1/customer/registration/status":
@@ -62,6 +70,15 @@ def _primary_doc_tag(path: str, method: str) -> str:
     # tab sits on a customer path but belongs with pricing, not with customer review.
     if path.startswith("/api/v1/merchant/pricing") or path.endswith("/pricing") or "/pricing/" in path:
         return "Merchant Pricing"
+    if path.startswith("/api/v1/merchant/notifications"):
+        return "Merchant Notifications"
+    if path.startswith("/api/v1/merchant/inventory"):
+        return "Merchant Inventory"
+    if path.startswith(("/api/v1/merchant/tasks", "/api/v1/merchant/team")):
+        return "Merchant Tasks"
+    # Before the delivery-users rule: /deliveries and /delivery-users are different screens.
+    if path.startswith("/api/v1/merchant/deliveries"):
+        return "Merchant Deliveries"
     if path.startswith("/api/v1/merchant/orders"):
         return "Merchant Orders"
     if path.startswith("/api/v1/merchant/expenses"):
@@ -76,6 +93,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Merchant APIs"
     if path.startswith("/api/v1/delivery/auth/"):
         return "Delivery Authentication"
+    if path.startswith("/api/v1/delivery/notifications"):
+        return "Delivery Notifications"
     if path.startswith("/api/v1/delivery/"):
         return "Delivery APIs"
     return "Internal"
@@ -159,15 +178,16 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
     )
+    # Inside RequestContextMiddleware, so the request id header it sets survives the rewrap.
+    # The switch is read per request off `app.state`, so it is one boolean to flip.
+    setattr(app.state, ENVELOPE_STATE_FLAG, settings.delivery_response_envelope)
+    app.add_middleware(DeliveryEnvelopeMiddleware)
     # Outermost, so request IDs and security headers are also set on CORS and error responses.
     app.add_middleware(RequestContextMiddleware, hsts=not settings.is_local_environment)
     app.include_router(api_router, prefix=settings.api_prefix)
     if docs_enabled:
         _register_channel_docs(app)
     register_exception_handlers(app)
-
-    from app.shared.middleware.response_envelope import install_envelope_handlers
-    install_envelope_handlers(app)
 
     @app.get("/health", tags=["health"])
     async def health_check() -> dict[str, str]:

@@ -83,8 +83,7 @@ ORDERS = StatusMachine(
     name="order",
     allowed={
         "PLACED": frozenset({"CONFIRMED", "CANCELLED"}),
-        "CONFIRMED": frozenset({"PREPARING", "CANCELLED"}),
-        "PREPARING": frozenset({"OUT_FOR_DELIVERY"}),
+        "CONFIRMED": frozenset({"OUT_FOR_DELIVERY", "CANCELLED"}),
         "OUT_FOR_DELIVERY": frozenset({"DELIVERED"}),
     },
     terminal=frozenset({"DELIVERED", "CANCELLED"}),

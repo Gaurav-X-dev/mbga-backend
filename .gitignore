@@ -21,3 +21,6 @@ frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
 frontend/*.tsbuildinfo
+
+# Reference copies of other branches, unpacked locally for comparison. Large, and already in git.
+mbga-backend.zip

@@ -7,7 +7,7 @@ read them all from one place.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.database.base import Base
@@ -41,4 +41,12 @@ class NotificationOutbox(Base):
     body: Mapped[str] = mapped_column(Text)
     severity: Mapped[str] = mapped_column(String(20), default="INFO")
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Retry bookkeeping, written only by the dispatcher. A business module queues an event
+    # and never touches these.
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # When the next attempt is due. Null means "now" for an unsent row, and "given up" for
+    # one that has exhausted its attempts.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Why the last attempt failed, for an operator reading the table. Never shown to a user.
+    last_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

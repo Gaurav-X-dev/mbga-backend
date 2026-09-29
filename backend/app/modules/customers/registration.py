@@ -261,11 +261,18 @@ class CustomerRegistrationService:
 
     # --- shared write primitives ---------------------------------------------------------
 
-    def apply_profile_fields(self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime) -> None:
+    async def apply_profile_fields(
+        self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime
+    ) -> None:
         """Write the validated business fields onto a profile row.
 
         Status, pricing tier, merchant and code are **not** written here. They are decided by
         the workflow, never by the request, which is what makes mass assignment impossible.
+
+        The owner's name is also copied onto their `users` row when that row has none. A
+        customer's login is created at their first OTP request, before they have told us who
+        they are, and everything that stamps an actor name reads `users` - so without this a
+        self-registered customer signs every row they touch as "Unknown user".
         """
         profile.customer_type = data.customer_type.value
         profile.name = data.business_name
@@ -278,6 +285,20 @@ class CustomerRegistrationService:
         profile.address_state = data.address["state"]
         profile.address_pincode = data.address["pincode"]
         profile.updated_at = now
+        await self._name_the_login(profile, data.owner_name, now)
+
+    async def _name_the_login(self, profile: CustomerProfile, owner_name: str, now: datetime) -> None:
+        """Give the customer's login their name, if it has none yet.
+
+        Only fills a blank. A name already on the row was put there deliberately - by the
+        staff path or by an admin - and a registration edit must not overwrite it.
+        """
+        if not owner_name or not profile.user_id:
+            return
+        user = await self.session.get(User, profile.user_id)
+        if user is not None and not user.full_name:
+            user.full_name = owner_name
+            user.updated_at = now
 
     def link_documents(self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime) -> None:
         """Finalize each staged upload onto the customer.
@@ -407,7 +428,7 @@ class CustomerRegistrationService:
 
         data = await self.validate(request, actor, require_documents=False)
         now = datetime.now(UTC)
-        self.apply_profile_fields(profile, data, now)
+        await self.apply_profile_fields(profile, data, now)
         self.link_documents(profile, data, now)
         await self.replace_sites(profile, data, now)
         if profile.registered_at is None:
@@ -592,7 +613,7 @@ class CustomerRegistrationService:
             created_at=now,
             updated_at=now,
         )
-        self.apply_profile_fields(profile, data, now)
+        await self.apply_profile_fields(profile, data, now)
         self.session.add(profile)
         try:
             # A savepoint, so a concurrent create losing the unique-mobile race becomes a

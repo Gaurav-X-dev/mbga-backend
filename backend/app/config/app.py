@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # Reverse proxies whose X-Forwarded-For header is trusted (IP addresses or CIDR ranges).
     trusted_proxy_ips: list[str] = Field(default_factory=list)
 
+    # Re-shapes delivery-channel responses into the delivery app's own envelope
+    # (`{success, data}` / `{success, error}`). Off by default: that app is already integrated
+    # against the platform's raw shapes on auth and notifications, so this is flipped on only
+    # once its developer expects it. See app/shared/middleware/delivery_envelope.py.
+    delivery_response_envelope: bool = False
+
     database_url: str = "mysql+asyncmy://mbga_user:change_me@mysql:3306/mbga?charset=utf8mb4"
     redis_url: str = "redis://redis:6379/0"
     # Redis only backs the permission cache; permission checks always fall back to the database.
@@ -98,6 +104,27 @@ class Settings(BaseSettings):
     # Guards the one-off transport smoke script. Never true in a deployed environment.
     hanuotp_live_smoke_test_enabled: bool = False
     hanuotp_smoke_test_mobile: str | None = None
+    # --- Push notifications (FCM) ----------------------------------------------------------
+    # Off by default: a deployment with no Firebase project still queues notification rows
+    # and serves the in-app list, it just sends no push. Turning this on later delivers the
+    # backlog rather than losing it.
+    fcm_enabled: bool = False
+    # Each app is its own Firebase project, and a device token is only valid in the project
+    # that minted it - so there is one credential per app, chosen by the channel the token
+    # was registered on. Files, not env vars: a PEM private key does not survive being
+    # pasted into `.env`, and a file can carry its own permissions.
+    fcm_credentials_merchant: str | None = "secrets/fcm-merchant.json"
+    fcm_credentials_customer: str | None = "secrets/fcm-customer.json"
+    fcm_credentials_delivery: str | None = "secrets/fcm-delivery.json"
+    # Used for any app with no credential of its own. This is what a single-project
+    # deployment configured before the apps were split, so it keeps working unchanged.
+    fcm_credentials_file: str = "secrets/fcm-service-account.json"
+    # Deliver as soon as the request that queued a notification has answered, instead of
+    # waiting for the worker's next sweep. The worker stays as the safety net: it picks up
+    # what a restart interrupted and what an outage deferred.
+    fcm_auto_dispatch: bool = True
+    # How many outbox rows one dispatcher pass takes.
+    fcm_batch_size: int = Field(default=100, ge=1, le=1000)
     # --- KYC document storage --------------------------------------------------------------
     # "local" keeps files on a private disk path. No vendor is hard-coded; a production
     # provider binds to the same StorageProvider interface and changes no route.

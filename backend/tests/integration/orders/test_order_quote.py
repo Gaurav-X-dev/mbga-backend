@@ -27,15 +27,16 @@ async def test_the_status_catalogue_is_sorted_and_complete(env):
     assert [s["code"] for s in statuses] == [
         "PLACED",
         "CONFIRMED",
-        "PREPARING",
         "OUT_FOR_DELIVERY",
         "DELIVERED",
         "CANCELLED",
     ]
-    assert [s["sequence"] for s in statuses] == [1, 2, 3, 4, 5, 99]
+    # 1..4 along the timeline, and 99 for the terminal failure state so it never appears as a
+    # step. There is no PREPARING: dispatching the slip takes a confirmed order straight out.
+    assert [s["sequence"] for s in statuses] == [1, 2, 3, 4, 99]
     # The app renders its timeline from this, so every field it reads must be present.
     assert all({"code", "label", "sequence", "tone", "description", "isTerminal"} <= set(s) for s in statuses)
-    assert [s["isTerminal"] for s in statuses] == [False, False, False, False, True, True]
+    assert [s["isTerminal"] for s in statuses] == [False, False, False, True, True]
 
 
 # --- Cut-off (§6.2) --------------------------------------------------------------------------
@@ -51,7 +52,8 @@ async def test_the_cutoff_endpoint_answers_with_a_real_utc_instant(env):
     assert body["cutoffTime"] == "16:00"
     assert isinstance(body["withinCutoff"], bool)
     # A `Z` instant, not a naive wall-clock string that JS would read as local time.
-    assert body["scheduledDeliveryDate"].endswith("Z")
+    # A date, not an instant: a delivery day has no time of day now that the slot is gone.
+    assert len(body["scheduledDeliveryDate"]) == 10
     assert body["message"]
 
 
@@ -123,7 +125,7 @@ async def test_a_quote_carries_the_cutoff_so_the_screen_needs_one_call(env):
     ).json()
 
     assert quote["cutoff"]["cutoffTime"] == "16:00"
-    assert quote["cutoff"]["scheduledDeliveryDate"].endswith("Z")
+    assert len(quote["cutoff"]["scheduledDeliveryDate"]) == 10
 
 
 async def test_a_customer_price_override_reaches_the_quote(env):

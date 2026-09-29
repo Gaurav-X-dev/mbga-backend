@@ -1,44 +1,130 @@
-"""FastAPI router for Notifications domain (API Reference §9)."""
+"""Notification routes, mounted on the customer and merchant channels (spec §15).
 
-from __future__ import annotations
+Both channels mount the same handlers through `build_notification_router`, the way orders
+and documents already do. No permission is required on either: spec §2.1 gives customers
+none, and a staff member reading their own merchant's notifications is authorised by being
+that merchant's staff - `NotificationService._scoped()` is what enforces it.
+
+Route order matters: `/notifications/unread-count` and `/notifications/read-all` are
+declared before `/notifications/{notificationId}`, or they would be matched as ids.
+"""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Path, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.deliveries.dependencies import require_delivery_user
-from app.modules.notifications.repository import NotificationRepository
+from app.modules.authentication.constants import LoginChannel
+from app.modules.customers.dependencies import ActorDep, CustomerActorDep
+from app.modules.notifications.schemas import AppNotification, UnreadCount
 from app.modules.notifications.service import NotificationService
-from app.shared.authorization.context import AuthContext
+from app.shared.authorization.dependencies import require_login_channel
 from app.shared.database.session import get_db_session
-from app.shared.middleware.response_envelope import success_response
+from app.shared.exceptions.openapi import error_responses
 
-router = APIRouter(tags=["delivery-notifications"])
-
-
-def get_notification_service(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> NotificationService:
-    return NotificationService(NotificationRepository(session), session)
+NotificationIdPath = Annotated[str, Path(alias="notificationId", max_length=36)]
 
 
-@router.get("/notifications")
-async def list_notifications(
-    auth: Annotated[AuthContext, Depends(require_delivery_user)],
-    service: Annotated[NotificationService, Depends(get_notification_service)],
-):
-    """GET /notifications — §9.1: Driver notifications list."""
-    items = await service.list_notifications(user_id=auth.user_id)
-    return success_response(items)
+def build_notification_router(channel: LoginChannel) -> APIRouter:
+    """Build the `/notifications` routes for one channel."""
+    is_customer = channel is LoginChannel.CUSTOMER
+    router = APIRouter(prefix="/notifications", tags=[f"{channel.value.title()} Notifications"])
 
+    channel_only = Depends(require_login_channel(channel))
+    actor_dependency = CustomerActorDep if is_customer else ActorDep
 
-@router.patch("/notifications/{notification_id}/read")
-async def mark_notification_read(
-    notification_id: str,
-    auth: Annotated[AuthContext, Depends(require_delivery_user)],
-    service: Annotated[NotificationService, Depends(get_notification_service)],
-):
-    """PATCH /notifications/{notificationId}/read — §9.2: Mark notification as read."""
-    await service.mark_as_read(notification_id=notification_id, user_id=auth.user_id)
-    return success_response(None)
+    def build_service(
+        actor: actor_dependency,
+        session: Annotated[AsyncSession, Depends(get_db_session)],
+    ) -> NotificationService:
+        return NotificationService(session, actor)
+
+    ServiceDep = Annotated[NotificationService, Depends(build_service)]
+
+    @router.get(
+        "",
+        response_model=list[AppNotification],
+        dependencies=[channel_only],
+        responses=error_responses(401, 403),
+        summary="Notifications",
+    )
+    async def list_notifications(
+        service: ServiceDep,
+        unread_only: Annotated[bool, Query(alias="unreadOnly", description="Only the ones not yet read.")] = False,
+    ) -> list[AppNotification]:
+        """Newest first.
+
+        A customer sees their own; staff see their merchant's, shared across the team
+        (spec §15). `read` is per user, so one person opening a notification does not hide
+        it from the rest.
+        """
+        return await service.list(unread_only=unread_only)
+
+    @router.get(
+        "/unread-count",
+        response_model=UnreadCount,
+        dependencies=[channel_only],
+        responses=error_responses(401, 403),
+        summary="Unread count",
+    )
+    async def unread_count(service: ServiceDep) -> UnreadCount:
+        """The bell badge, without fetching the list to count it."""
+        return await service.unread_count()
+
+    @router.post(
+        "/read-all",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[channel_only],
+        responses=error_responses(401, 403),
+        summary="Mark all read",
+    )
+    async def mark_all_read(service: ServiceDep) -> Response:
+        await service.mark_all_read()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get(
+        "/{notificationId}",
+        response_model=AppNotification,
+        dependencies=[channel_only],
+        responses=error_responses(401, 403, 404),
+        summary="Notification detail",
+    )
+    async def notification_detail(
+        service: ServiceDep, notification_id: NotificationIdPath
+    ) -> AppNotification:
+        """Someone else's notification is reported as 404, never 403."""
+        return await service.get(notification_id)
+
+    @router.post(
+        "/{notificationId}/read",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[channel_only],
+        responses=error_responses(401, 403, 404),
+        summary="Mark read",
+    )
+    async def mark_read(service: ServiceDep, notification_id: NotificationIdPath) -> Response:
+        """Idempotent - marking an already-read notification read again is not an error."""
+        await service.mark_read(notification_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.patch(
+        "/{notificationId}/read",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[channel_only],
+        responses=error_responses(401, 403, 404),
+        summary="Mark read (PATCH)",
+        operation_id=f"{channel.value}_notification_mark_read_patch",
+    )
+    async def mark_read_patch(
+        service: ServiceDep, notification_id: NotificationIdPath
+    ) -> Response:
+        """The same write under the verb the delivery app calls.
+
+        The merchant and customer apps already ship against `POST`, and the delivery app against
+        `PATCH`. Marking something read is a bodyless state change, so neither verb is wrong -
+        and breaking a shipped app to settle the question would be.
+        """
+        await service.mark_read(notification_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    return router

@@ -1,8 +1,11 @@
 import pytest
-
 from pydantic import ValidationError
 
-from app.modules.roles.exceptions import LastSuperAdminError, ProtectedSystemRoleError, RoleAlreadyExistsError
+from app.modules.roles.exceptions import (
+    LastSuperAdminError,
+    ProtectedSystemRoleError,
+    RoleAlreadyExistsError,
+)
 from app.modules.roles.schemas import RoleCreate
 from app.modules.roles.service import RoleService
 

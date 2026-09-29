@@ -64,6 +64,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "UNSUPPORTED_FILE_TYPE": "Upload a PDF, JPG or PNG.",
     "FILE_TYPE_MISMATCH": "The file contents do not match its extension.",
     "FILE_TOO_LARGE": "The file is too large. Choose a smaller file.",
+    # Notifications
+    "NOTIFICATION_NOT_FOUND": "We could not find this notification.",
     # Orders
     "ORDER_NOT_FOUND": "We could not find this order.",
     "ORDER_NOT_CANCELLABLE": "This order can no longer be cancelled.",
@@ -71,6 +73,19 @@ ERROR_MESSAGES: dict[str, str] = {
     "REORDER_NOT_POSSIBLE": "This order cannot be repeated as it is. Edit the items and try again.",
     "CYLINDER_NOT_PRICED": "This cylinder has no price set for the current month.",
     "ORDER_NOT_ALLOWED": "An order cannot be placed for this customer yet.",
+    # Tasks
+    "TASK_NOT_FOUND": "We could not find this task.",
+    # Deliveries
+    "DELIVERY_NOT_FOUND": "We could not find this delivery slip.",
+    "DELIVERY_ALREADY_EXISTS": "This order is already on a delivery slip.",
+    "DELIVERY_ALREADY_SETTLED": "This delivery has already been completed.",
+    "DELIVERY_NOT_READY": "This delivery is not at that step yet.",
+    "DELIVERY_CODE_LOCKED": "Too many incorrect codes for this delivery. Confirm it from the office.",
+    "DELIVERY_USER_NOT_FOUND": "We could not find this delivery user.",
+    "ORDER_NOT_DISPATCHABLE": "This order cannot be scheduled for delivery yet.",
+    "INVALID_ORDER_STATUS": "This order cannot be moved to that status.",
+    # Inventory
+    "INSUFFICIENT_STOCK": "There is not enough stock for this. Record a refill first.",
     # Expenses
     "EXPENSE_NOT_FOUND": "We could not find this expense.",
     "EXPENSE_CATEGORY_NOT_FOUND": "We could not find this expense category.",

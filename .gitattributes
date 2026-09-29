@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings. Git on Windows would otherwise check them out as CRLF,
+# and a CRLF shebang makes Linux report "no such file or directory" for the interpreter -
+# an error that points at the wrong thing entirely.
+*.sh text eol=lf

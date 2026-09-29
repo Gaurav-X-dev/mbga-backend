@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from app.modules.authentication.constants import LoginChannel
-
 import pytest
+
+from app.modules.authentication.constants import LoginChannel
 
 pytestmark = pytest.mark.unit
 

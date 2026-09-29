@@ -11,7 +11,7 @@ Ranges are checked in `validation.py` so a bad field comes back in the coded env
 apps read, rather than FastAPI's list-shaped 422.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
@@ -52,7 +52,8 @@ class CutoffResponse(BaseModel):
 
     cutoff_time: str = Field(alias="cutoffTime")
     within_cutoff: bool = Field(alias="withinCutoff")
-    scheduled_delivery_date: UtcTime = Field(alias="scheduledDeliveryDate")
+    #: A plain date - `"2026-09-26"`. There is no delivery slot; see `orders/cutoff.py`.
+    scheduled_delivery_date: date = Field(alias="scheduledDeliveryDate")
     # Rendered verbatim to the user.
     message: str
 
@@ -111,9 +112,20 @@ class OrderQuoteResponse(BaseModel):
 
 
 class OrderStatusEntry(BaseModel):
-    """One step of the tracking timeline. Oldest first."""
+    """One step of the tracking timeline. Oldest first.
 
-    status: OrderStatus
+    `status` is a plain string rather than `OrderStatus` on purpose. This is a record of a state
+    the order was actually in, which can include one the platform has since retired - `PREPARING`
+    is in the history of every order raised before it was removed. Typing it as the live enum
+    would mean a schema change made old orders unrenderable, and the only way out would be to
+    rewrite their history.
+
+    `label` is resolved server-side so the app never has to look a historical code up in the
+    status catalogue - where, being retired, it would not be found.
+    """
+
+    status: str
+    label: str
     at: UtcTime
     by: str | None = None
     note: str | None = None
@@ -147,7 +159,6 @@ class OrderResponse(BaseModel):
     placed_at: UtcTime = Field(alias="placedAt")
     # The cut-off as evaluated at placement, not as it would be evaluated now.
     cutoff: CutoffResponse
-    delivery_slot: str | None = Field(default=None, alias="deliverySlot")
     created_by: str | None = Field(default=None, alias="createdBy")
     delivery_slip_id: str | None = Field(default=None, alias="deliverySlipId")
     invoice_id: str | None = Field(default=None, alias="invoiceId")
