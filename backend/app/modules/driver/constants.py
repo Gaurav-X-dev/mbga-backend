@@ -10,18 +10,8 @@ from app.modules.deliveries.constants import DeliveryStatus
 
 
 class DriverDeliveryStatus(StrEnum):
-    """What the app calls a slip.
-
-    Three states instead of the board's four, because a driver has no use for the difference
-    between a slip the office has not dispatched yet and one it has: either it is on their van
-    or it is not. `pending` covers both, and the app's Start button is what moves it on.
-
-    These are the strings the delivery app already renders, so they stay lower case rather than
-    being bent into the platform's upper-case codes.
-    """
-
     PENDING = "pending"
-    IN_PROGRESS = "in_progress"
+    OUT_FOR_DELIVERY = "out_for_delivery"
     COMPLETED = "completed"
     FAILED = "failed"
 
