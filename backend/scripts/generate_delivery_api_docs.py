@@ -187,19 +187,20 @@ def main() -> None:
     out.append(
         "```\n"
         "1.  GET  /deliveries/today                      what am I delivering\n"
-        "2.  POST /deliveries/{id}/start                 I have set off (sends my location)\n"
-        "3.  POST /deliveries/{id}/confirm               what I counted at the gate\n"
-        "4.  POST /deliveries/{id}/verify-customer-otp   the customer's code -> DONE\n"
+        "2.  POST /deliveries/{id}/out-for-delivery      I have set off\n"
+        "3.  POST /deliveries/{id}/verify-location       where I am against the delivery site\n"
+        "4.  POST /deliveries/{id}/confirm               what I counted at the gate\n"
+        "5.  POST /deliveries/{id}/verify-customer-otp   the customer's code -> DONE\n"
         "```\n"
     )
     out.append(
-        "**Step 3 does not complete the delivery.** It records the counts and nothing else: no "
+        "**Step 4 does not complete the delivery.** It records the counts and nothing else: no "
         "stock moves, the order does not advance, the customer is not told. It exists so the app "
         "can be backgrounded between counting cylinders and the customer finding their code "
         "without losing what the driver entered. Safe to call again.\n"
     )
     out.append(
-        "**Step 4 is the delivery.** Only here do the cylinders come off the merchant's books, "
+        "**Step 5 is the delivery.** Only here do the cylinders come off the merchant's books, "
         "the order become `DELIVERED`, and the customer get their notification. Until it "
         "succeeds, nothing has happened.\n"
     )
@@ -224,7 +225,10 @@ def main() -> None:
         "| `pending` | Assigned to this driver - either not dispatched yet, or dispatched and "
         "not started. |"
     )
-    out.append("| `in_progress` | The driver has pressed Start. |")
+    out.append(
+        "| `out_for_delivery` | The driver has pressed Out for delivery. Derived from the slip's "
+        "`started_at`, not a status of its own. |"
+    )
     out.append("| `completed` | Handed over and confirmed. |")
     out.append("| `failed` | Closed without delivering. Only the office can set this. |")
 
@@ -241,9 +245,12 @@ def main() -> None:
     )
     out.append("| `DELIVERY_ALREADY_SETTLED` | 409 | Already delivered or failed. |")
     out.append(
-        "| `DELIVERY_PARTIAL_NOT_SUPPORTED` | 422 | `deliveredQuantity` must equal "
-        "`cylindersAllocated`. A part delivery is an office decision - they close this slip and "
-        "raise a new one. |"
+        "| `DELIVERY_QUANTITY_EXCEEDS_ALLOCATION` | 422 | More was handed over than the van "
+        "carries. A part delivery is fine - only the quantity the slip allocated is not a "
+        "ceiling the driver can exceed. |"
+    )
+    out.append(
+        "| `DELIVERY_ITEM_NOT_ON_SLIP` | 422 | A cylinder type that is not on this slip. |"
     )
     out.append(
         "| `DELIVERY_EMPTIES_EXCEED_LOAD` | 422 | More empties than cylinders on the slip. |"

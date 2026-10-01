@@ -51,14 +51,15 @@ The order the calls have to happen in. This is the part the endpoint list cannot
 
 ```
 1.  GET  /deliveries/today                      what am I delivering
-2.  POST /deliveries/{id}/start                 I have set off (sends my location)
-3.  POST /deliveries/{id}/confirm               what I counted at the gate
-4.  POST /deliveries/{id}/verify-customer-otp   the customer's code -> DONE
+2.  POST /deliveries/{id}/out-for-delivery      I have set off
+3.  POST /deliveries/{id}/verify-location       where I am against the delivery site
+4.  POST /deliveries/{id}/confirm               what I counted at the gate
+5.  POST /deliveries/{id}/verify-customer-otp   the customer's code -> DONE
 ```
 
-**Step 3 does not complete the delivery.** It records the counts and nothing else: no stock moves, the order does not advance, the customer is not told. It exists so the app can be backgrounded between counting cylinders and the customer finding their code without losing what the driver entered. Safe to call again.
+**Step 4 does not complete the delivery.** It records the counts and nothing else: no stock moves, the order does not advance, the customer is not told. It exists so the app can be backgrounded between counting cylinders and the customer finding their code without losing what the driver entered. Safe to call again.
 
-**Step 4 is the delivery.** Only here do the cylinders come off the merchant's books, the order become `DELIVERED`, and the customer get their notification. Until it succeeds, nothing has happened.
+**Step 5 is the delivery.** Only here do the cylinders come off the merchant's books, the order become `DELIVERED`, and the customer get their notification. Until it succeeds, nothing has happened.
 
 
 ### Where the customer's code comes from
@@ -73,7 +74,7 @@ A wrong code returns `422` and costs one attempt out of ten. After ten the slip 
 | `status` | Meaning |
 |---|---|
 | `pending` | Assigned to this driver - either not dispatched yet, or dispatched and not started. |
-| `in_progress` | The driver has pressed Start. |
+| `out_for_delivery` | The driver has pressed Out for delivery. Derived from the slip's `started_at`, not a status of its own. |
 | `completed` | Handed over and confirmed. |
 | `failed` | Closed without delivering. Only the office can set this. |
 
@@ -84,7 +85,8 @@ A wrong code returns `422` and costs one attempt out of ten. After ten the slip 
 | `DELIVERY_NOT_FOUND` | 404 | Not this driver's delivery. Never 403 - ids are guessable, so the server will not confirm one exists. |
 | `DELIVERY_NOT_READY` | 409 | The office has not dispatched the van. Nothing has left the godown yet. |
 | `DELIVERY_ALREADY_SETTLED` | 409 | Already delivered or failed. |
-| `DELIVERY_PARTIAL_NOT_SUPPORTED` | 422 | `deliveredQuantity` must equal `cylindersAllocated`. A part delivery is an office decision - they close this slip and raise a new one. |
+| `DELIVERY_QUANTITY_EXCEEDS_ALLOCATION` | 422 | More was handed over than the van carries. A part delivery is fine - only the quantity the slip allocated is not a ceiling the driver can exceed. |
+| `DELIVERY_ITEM_NOT_ON_SLIP` | 422 | A cylinder type that is not on this slip. |
 | `DELIVERY_EMPTIES_EXCEED_LOAD` | 422 | More empties than cylinders on the slip. |
 | `DELIVERY_CODE_LOCKED` | 409 | Ten wrong codes. The office has to close it. |
 | `DRIVER_HAS_ACTIVE_DELIVERIES` | 409 | Cannot go off duty with a van still out. |
@@ -267,82 +269,28 @@ Revokes the session of the given refresh token. Always returns 204, even when no
 The driver's work. Every one of these is scoped to the slips addressed to **this** driver; another driver's delivery returns `404`, never `403`.
 
 
-### `GET /deliveries`
-
-**My deliveries**
-
-Every slip addressed to this driver, newest first.
-
-
-**Query parameters**
-
-| Name | Type | Required | Notes |
-|---|---|---|---|
-| `scheduledDate` | string · nullable | no | Limit to one delivery day. |
-| `limit` | int | no |  |
-
-
-**Response** - an array of:
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `id` | string | yes |  |
-| `orderNumber` | string | yes |  |
-| `slipNumber` | string | yes |  |
-| `customerName` | string | yes |  |
-| `customerPhone` | string · nullable | no |  |
-| `address` | string | yes |  |
-| `deliverySiteName` | string | yes |  |
-| `items` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
-| `itemsSummary` | string | yes |  |
-| `cylindersAllocated` | int | yes |  |
-| `status` | DriverDeliveryStatus | yes |  |
-| `scheduledDate` | string | yes |  |
-| `distanceKm` | float · nullable | no |  |
-| `startedAt` | string · nullable | no |  |
-| `completedAt` | string · nullable | no |  |
-| `emptiesCollected` | int | yes |  |
-| `requiresCustomerOtp` | bool | yes |  |
-
-
-**Error statuses**: `401`, `403`, `422`
-
-
 ### `GET /deliveries/history`
 
-**Completed deliveries**
-
-What this driver has already settled - delivered or failed (§6.4).
+**Delivery History**
 
 
 **Query parameters**
 
 | Name | Type | Required | Notes |
 |---|---|---|---|
+| `period` | string | no |  |
+| `page` | int | no |  |
 | `limit` | int | no |  |
 
 
-**Response** - an array of:
+**Response**
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `id` | string | yes |  |
-| `orderNumber` | string | yes |  |
-| `slipNumber` | string | yes |  |
-| `customerName` | string | yes |  |
-| `customerPhone` | string · nullable | no |  |
-| `address` | string | yes |  |
-| `deliverySiteName` | string | yes |  |
-| `items` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
-| `itemsSummary` | string | yes |  |
-| `cylindersAllocated` | int | yes |  |
-| `status` | DriverDeliveryStatus | yes |  |
-| `scheduledDate` | string | yes |  |
-| `distanceKm` | float · nullable | no |  |
-| `startedAt` | string · nullable | no |  |
-| `completedAt` | string · nullable | no |  |
-| `emptiesCollected` | int | yes |  |
-| `requiresCustomerOtp` | bool | yes |  |
+| `items` | HistoryDeliveryEntry[] | yes |  |
+| `total` | int | yes |  |
+| `page` | int | yes |  |
+| `limit` | int | yes |  |
 
 
 **Error statuses**: `401`, `403`, `422`
@@ -350,15 +298,7 @@ What this driver has already settled - delivered or failed (§6.4).
 
 ### `GET /deliveries/today`
 
-**Today's deliveries**
-
-The driver's queue for today (§6.1).
-
-Today is read on the **IST business calendar**, not UTC: a slip scheduled for the 28th
-belongs to the 28th in the godown, and a driver opening the app at 06:00 IST must not still
-be looking at yesterday's list.
-
-Ordered as work: what is on the van, then what is still to load, then what is done.
+**Todays Deliveries**
 
 
 **Response** - an array of:
@@ -367,31 +307,21 @@ Ordered as work: what is on the van, then what is still to load, then what is do
 |---|---|---|---|
 | `id` | string | yes |  |
 | `orderNumber` | string | yes |  |
-| `slipNumber` | string | yes |  |
-| `customerName` | string | yes |  |
-| `customerPhone` | string · nullable | no |  |
-| `address` | string | yes |  |
-| `deliverySiteName` | string | yes |  |
-| `items` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
-| `itemsSummary` | string | yes |  |
-| `cylindersAllocated` | int | yes |  |
-| `status` | DriverDeliveryStatus | yes |  |
-| `scheduledDate` | string | yes |  |
+| `status` | string | yes |  |
+| `deliveryDate` | string | yes |  |
+| `customer` | CustomerLocation | yes |  |
 | `distanceKm` | float · nullable | no |  |
-| `startedAt` | string · nullable | no |  |
-| `completedAt` | string · nullable | no |  |
-| `emptiesCollected` | int | yes |  |
-| `requiresCustomerOtp` | bool | yes |  |
+| `items` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
+| `emptyReturns` | EmptyReturnItem[] | yes |  |
+| `billing` | BillingSummary | yes |  |
 
 
 **Error statuses**: `401`, `403`
 
 
-### `GET /deliveries/{deliveryId}`
+### `GET /deliveries/{deliveryId}/completed-detail`
 
-**Delivery detail**
-
-One drop. Another driver's delivery is a 404, never a 403.
+**Delivery Completed Detail**
 
 
 **Response**
@@ -400,21 +330,14 @@ One drop. Another driver's delivery is a 404, never a 403.
 |---|---|---|---|
 | `id` | string | yes |  |
 | `orderNumber` | string | yes |  |
-| `slipNumber` | string | yes |  |
-| `customerName` | string | yes |  |
-| `customerPhone` | string · nullable | no |  |
-| `address` | string | yes |  |
-| `deliverySiteName` | string | yes |  |
-| `items` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
-| `itemsSummary` | string | yes |  |
-| `cylindersAllocated` | int | yes |  |
-| `status` | DriverDeliveryStatus | yes |  |
-| `scheduledDate` | string | yes |  |
-| `distanceKm` | float · nullable | no |  |
-| `startedAt` | string · nullable | no |  |
-| `completedAt` | string · nullable | no |  |
-| `emptiesCollected` | int | yes |  |
-| `requiresCustomerOtp` | bool | yes |  |
+| `status` | string | yes |  |
+| `deliveryDate` | string | yes |  |
+| `completedAt` | string | yes |  |
+| `customer` | CustomerInfoDetail | yes |  |
+| `deliveredItems` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
+| `emptyItems` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
+| `payment` | object | no |  |
+| `driverNotes` | string · nullable | no |  |
 
 
 **Error statuses**: `401`, `403`, `404`, `422`
@@ -422,27 +345,17 @@ One drop. Another driver's delivery is a 404, never a 403.
 
 ### `POST /deliveries/{deliveryId}/confirm`
 
-**Record the counts**
-
-What the driver counted at the gate (§7.2).
-
-**This does not complete the delivery.** No stock moves, the order does not advance and the
-customer is not told - that happens at `verify-customer-otp`. Saving the counts separately is
-what lets the app be backgrounded between counting cylinders and the customer finding their
-code.
-
-A part delivery is refused with `422`: the ledger books the slip's whole load at handover, so
-accepting a smaller number would take the full quantity off the shelf while the driver still
-had some on the van.
+**Confirm Counts**
 
 
 **Request body**
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `deliveredQuantity` | int | yes |  |
-| `emptyCollectedQuantity` | int | no | Defaults to `0`. |
-| `note` | string · nullable | no |  |
+| `deliveredItems` | DeliveredItemEntry[] | yes |  |
+| `collectedEmpties` | CollectedEmptyEntry[] | yes |  |
+| `payment` | PaymentEntry | yes |  |
+| `driverNotes` | string · nullable | no |  |
 
 
 **Response**
@@ -451,23 +364,124 @@ had some on the van.
 |---|---|---|---|
 | `deliveryId` | string | yes |  |
 | `customerOtpRequired` | bool | yes |  |
-| `deliveredQuantity` | int | yes |  |
-| `emptyCollectedQuantity` | int | yes |  |
+| `otpChannel` | string | yes |  |
+| `message` | string | yes |  |
 
 
 **Error statuses**: `401`, `403`, `404`, `409`, `422`
 
 
-### `POST /deliveries/{deliveryId}/start`
+### `POST /deliveries/{deliveryId}/generate-qr`
 
-**Start the trip**
+**Generate Qr**
 
-Record that the driver has set off, and where from (§7.1).
 
-`isAtLocation` is a hint for the UI, not a gate: it is true whenever the distance cannot be
-measured, because most delivery sites have no recorded coordinates and a driver standing at
-the gate must still be able to work. Pressing Start twice is safe - the first departure time
-is kept and the position refreshed.
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `amount` | float | yes |  |
+| `paymentSplit` | string | yes |  |
+
+
+**Response**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `deliveryId` | string | yes |  |
+| `orderNumber` | string | yes |  |
+| `amount` | float | yes |  |
+| `upiString` | string | yes |  |
+| `qrImageUrl` | string | yes |  |
+| `expiresInSeconds` | int | yes |  |
+
+
+**Error statuses**: `401`, `403`, `404`, `409`, `422`
+
+
+### `POST /deliveries/{deliveryId}/out-for-delivery`
+
+**Out For Delivery**
+
+
+**Response**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `deliveryId` | string | yes |  |
+| `orderNumber` | string | yes |  |
+| `status` | string | yes |  |
+| `updatedAt` | string | yes |  |
+
+
+**Error statuses**: `401`, `403`, `404`, `409`, `422`
+
+
+### `PUT /deliveries/{deliveryId}/update-items`
+
+**Update Items**
+
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `updatedItems` | UpdateItemEntry[] | yes |  |
+| `reason` | string | yes |  |
+
+
+**Response**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `id` | string | yes |  |
+| `orderNumber` | string | yes |  |
+| `status` | string | yes |  |
+| `deliveryDate` | string | yes |  |
+| `customer` | CustomerLocation | yes |  |
+| `distanceKm` | float · nullable | no |  |
+| `items` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
+| `emptyReturns` | EmptyReturnItem[] | yes |  |
+| `billing` | BillingSummary | yes |  |
+
+
+**Error statuses**: `401`, `403`, `404`, `409`, `422`
+
+
+### `POST /deliveries/{deliveryId}/verify-customer-otp`
+
+**Verify Customer Otp**
+
+
+**Request body**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `otp` | string | yes |  |
+
+
+**Response**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `deliveryId` | string | yes |  |
+| `orderNumber` | string | yes |  |
+| `status` | string | yes |  |
+| `completedAt` | string | yes |  |
+| `totalDeliveredQuantity` | int | yes |  |
+| `deliveredItems` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
+| `totalEmptyCollectedQuantity` | int | yes |  |
+| `emptyCollectedItems` | app__modules__driver__schemas__DeliveryItemResponse[] | yes |  |
+| `emptyDueSummary` | EmptyDueSummary | yes |  |
+| `payment` | PaymentEntry | no |  |
+
+
+**Error statuses**: `401`, `403`, `404`, `409`, `422`
+
+
+### `POST /deliveries/{deliveryId}/verify-location`
+
+**Verify Location**
 
 
 **Request body**
@@ -485,42 +499,8 @@ is kept and the position refreshed.
 | `deliveryId` | string | yes |  |
 | `isAtLocation` | bool | yes |  |
 | `distanceMetersFromDestination` | float · nullable | no |  |
-| `status` | DriverDeliveryStatus | yes |  |
-
-
-**Error statuses**: `401`, `403`, `404`, `409`, `422`
-
-
-### `POST /deliveries/{deliveryId}/verify-customer-otp`
-
-**Verify the customer's code**
-
-Complete the handover (§7.3).
-
-The customer reads out the four-digit code their "out for delivery" notification carried.
-This runs the **same** confirm the office runs: stock comes off the books, the order becomes
-DELIVERED and the customer is notified.
-
-A wrong code costs one attempt out of a generous budget - a misheard digit at a noisy gate is
-the common case, and a locked slip means a wasted trip.
-
-
-**Request body**
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `otp` | string | yes | Max 10 characters. |
-
-
-**Response**
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `deliveryId` | string | yes |  |
-| `orderNumber` | string | yes |  |
-| `deliveredQuantity` | int | yes |  |
-| `emptyCollectedQuantity` | int | yes |  |
-| `completedAt` | string | yes |  |
+| `isLocationCaptured` | bool | yes |  |
+| `message` | string | yes |  |
 
 
 **Error statuses**: `401`, `403`, `404`, `409`, `422`
@@ -535,22 +515,17 @@ The driver's own record, and what their van is carrying.
 
 ### `GET /driver/inventory`
 
-**What is on my van**
-
-Computed from this driver's dispatched slips, never stored (§10).
-
-A van-stock table would be a second place the same cylinders are counted, and it would drift
-the first time a delivery was confirmed from the office rather than the app.
+**Van Inventory**
 
 
 **Response**
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `fullCylinders` | DriverInventoryLine[] | yes |  |
-| `fullCylinderCount` | int | yes |  |
-| `emptyCylinderCount` | int | yes |  |
-| `activeDeliveries` | int | yes |  |
+| `totalFullCylinders` | int | yes |  |
+| `totalEmptyCylinders` | int | yes |  |
+| `activeDeliveriesCount` | int | yes |  |
+| `stockByType` | DriverInventoryLine[] | yes |  |
 
 
 **Error statuses**: `401`, `403`
@@ -558,9 +533,7 @@ the first time a delivery was confirmed from the office rather than the app.
 
 ### `GET /driver/profile`
 
-**My profile**
-
-The driver's own record (§8.1).
+**My Profile**
 
 
 **Response**
@@ -570,11 +543,11 @@ The driver's own record (§8.1).
 | `id` | string | yes |  |
 | `name` | string | yes |  |
 | `phone` | string | yes |  |
-| `employeeCode` | string · nullable | no |  |
 | `vehicleNumber` | string · nullable | no |  |
 | `role` | string | yes |  |
 | `onDuty` | bool | yes |  |
 | `avatarInitials` | string · nullable | no |  |
+| `shiftStats` | ShiftStats · nullable | no |  |
 
 
 **Error statuses**: `401`, `403`
@@ -582,13 +555,7 @@ The driver's own record (§8.1).
 
 ### `PATCH /driver/status`
 
-**Go on or off duty**
-
-The driver's own shift switch (§8.2).
-
-Going off duty is refused with `409` while a van of theirs is still out: those cylinders are
-on the road under this driver's name, and signing off would leave a dispatched slip with
-nobody responsible for it.
+**Set Duty**
 
 
 **Request body**
@@ -605,11 +572,11 @@ nobody responsible for it.
 | `id` | string | yes |  |
 | `name` | string | yes |  |
 | `phone` | string | yes |  |
-| `employeeCode` | string · nullable | no |  |
 | `vehicleNumber` | string · nullable | no |  |
 | `role` | string | yes |  |
 | `onDuty` | bool | yes |  |
 | `avatarInitials` | string · nullable | no |  |
+| `shiftStats` | ShiftStats · nullable | no |  |
 
 
 **Error statuses**: `401`, `403`, `404`, `409`, `422`
