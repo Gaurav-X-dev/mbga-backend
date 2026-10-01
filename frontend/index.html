@@ -5,8 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="MBGA web panel for administrators and merchants" />
     <meta name="theme-color" content="#0b1f3a" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/mbga-logo.png" type="image/png" />
     <title>MBGA Web Panel</title>
+    <script>
+      // Settle the theme before the first paint, so a dark-mode user never sees a white flash.
+      (function () {
+        try {
+          var stored = localStorage.getItem("mbga.web.theme");
+          var dark =
+            stored === "dark" ||
+            ((stored === "system" || !stored) && matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (error) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

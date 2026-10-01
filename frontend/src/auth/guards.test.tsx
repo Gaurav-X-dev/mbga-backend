@@ -86,7 +86,7 @@ describe("route protection", () => {
     const before = tokenStorage.get();
     backend.expireAccessTokens();
     renderApp("/admin/dashboard");
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^Good (morning|afternoon|evening)/ })).toBeInTheDocument();
     await waitFor(() => expect(tokenStorage.get()?.accessToken).not.toBe(before?.accessToken));
     expect(backend.calls.filter((call) => call === "POST /admin/auth/token/refresh")).toHaveLength(1);
   });

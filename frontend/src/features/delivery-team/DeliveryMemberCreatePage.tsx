@@ -184,7 +184,7 @@ export function DeliveryMemberCreatePage() {
           <ButtonLink to="/merchant/delivery-team" variant="secondary">
             Cancel
           </ButtonLink>
-          <Button type="submit" variant="accent" loading={mutation.isPending} loadingText="Adding team member…">
+          <Button type="submit" variant="primary" loading={mutation.isPending} loadingText="Adding team member…">
             Add team member
           </Button>
         </div>

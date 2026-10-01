@@ -75,7 +75,7 @@ export function DeliveryTeamListPage() {
   ];
 
   return (
-    <div className="page">
+    <div className="page list-page">
       <PageHeader
         title="Delivery team"
         description="Drivers and helpers who deliver for your business using the MBGA Delivery app."
@@ -83,7 +83,7 @@ export function DeliveryTeamListPage() {
         meta={<RefreshIndicator active={query.isFetching && !query.isLoading} />}
         actions={
           canCreate ? (
-            <ButtonLink to="/merchant/delivery-team/new" variant="accent" icon="plus">
+            <ButtonLink to="/merchant/delivery-team/new" variant="primary" icon="plus">
               Add team member
             </ButtonLink>
           ) : undefined
@@ -149,7 +149,7 @@ export function DeliveryTeamListPage() {
                 description="Add your drivers and helpers so they can sign in to the MBGA Delivery app."
                 action={
                   canCreate ? (
-                    <ButtonLink to="/merchant/delivery-team/new" variant="accent" icon="plus">
+                    <ButtonLink to="/merchant/delivery-team/new" variant="primary" icon="plus">
                       Add team member
                     </ButtonLink>
                   ) : undefined

@@ -235,9 +235,7 @@ export function LoginPage() {
       <main className="auth-main" id="main-content">
         <div className="auth-card">
           <div className="auth-card__header">
-            <div className="row">
-              <BrandMark />
-            </div>
+            <img src="/mbga-logo.png" alt="" className="auth-card__logo" width={64} height={64} />
             <h1 className="page-title">Welcome to MBGA</h1>
             <p className="text-muted">Sign in to manage your MBGA operations.</p>
           </div>
@@ -282,7 +280,7 @@ export function LoginPage() {
                 label="Mobile number"
                 required
                 error={mobileError}
-                hint="Enter the 10-digit mobile number registered with MBGA."
+                hint="Enter the 10-digit mobile number registered with Madhav Bharat Gas Agency."
               >
                 <PhoneInput
                   ref={mobileRef}
@@ -301,7 +299,7 @@ export function LoginPage() {
 
               <Button
                 type="submit"
-                variant="accent"
+                variant="primary"
                 size="lg"
                 block
                 loading={requestMutation.isPending}
@@ -361,7 +359,7 @@ export function LoginPage() {
 
               <Button
                 type="submit"
-                variant="accent"
+                variant="primary"
                 size="lg"
                 block
                 loading={busy}

@@ -1,67 +1,176 @@
 /*
- * MBGA design tokens.
- * Navy = trust/operations, orange = action/energy, semantic colours only for status.
- * All text/background pairs below meet WCAG 2.1 AA (4.5:1) for body text.
+ * MBGA design tokens — the one place a colour, a radius or a shadow is decided.
+ *
+ * The panel follows a floating-card layout: a soft slate page with the sidebar, the top bar and
+ * the content each sitting in their own rounded white card. Blue carries the product and a
+ * blue→violet gradient marks the things that matter (page titles, KPI tiles, primary actions).
+ * Semantic colours (green, amber, red) mean status and nothing else.
+ *
+ * Every text/background pair below meets WCAG 2.1 AA (4.5:1) for body text.
  */
 :root {
-  /* Brand */
-  --navy-950: #081a33;
-  --navy-900: #0b1f3a;
-  --navy-800: #12294d;
-  --navy-700: #1b3a66;
-  --navy-600: #2a4d80;
-  --navy-100: #e6ecf5;
-  --navy-50: #f2f5fa;
+  /* --- Brand: blue ------------------------------------------------------------------------ */
+  --blue-950: #172554;
+  --blue-900: #1e3a8a;
+  --blue-800: #1e40af;
+  --blue-700: #1d4ed8;
+  --blue-600: #2563eb;
+  --blue-500: #3b82f6;
+  --blue-400: #60a5fa;
+  --blue-200: #bfdbfe;
+  --blue-100: #dbeafe;
+  --blue-50: #eff6ff;
 
-  --orange-700: #c2410c;
-  --orange-800: #9a3412;
-  --orange-500: #f97316;
-  --orange-100: #ffedd5;
-  --orange-50: #fff7ed;
+  /* --- Accent: violet. Pairs with blue in the gradient; never used alone as a status. ------ */
+  --violet-700: #6d28d9;
+  --violet-600: #7c3aed;
+  --violet-500: #8b5cf6;
+  --violet-100: #ede9fe;
+  --violet-50: #f5f3ff;
 
-  /* Neutrals */
-  --bg: #f5f7fa;
+  /* --- Accent: LPG orange. Brand moments only (panel badge, "Soon" tag). ------------------- */
+  --orange-700: #b45309;
+  --orange-600: #d97706;
+  --orange-500: #f59e0b;
+  --orange-100: #fef3c7;
+  --orange-50: #fffbeb;
+
+  /* The signature gradient: page title rules, KPI tile caps, primary buttons, the brand mark. */
+  --gradient-brand: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  --gradient-brand-br: linear-gradient(135deg, #2563eb, #4f46e5);
+  --gradient-primary-btn: linear-gradient(90deg, #2563eb, #4f46e5);
+  --gradient-primary-btn-hover: linear-gradient(90deg, #1d4ed8, #4338ca);
+  --gradient-danger-btn: linear-gradient(90deg, #dc2626, #e11d48);
+  --gradient-danger-btn-hover: linear-gradient(90deg, #b91c1c, #be123c);
+  /* --- Analytics panels ------------------------------------------------------------------- */
+  /* Every chart sits on the same deep-blue gradient in both themes, so the analytics band reads
+     as one surface. Only the ink and hairlines inside it are themed. */
+  --gradient-hero: linear-gradient(135deg, #020617, #172554 55%, #1e3a8a);
+  --panel-bg: var(--gradient-hero);
+  --panel-border: #1e3a8a;
+  --panel-ink: #ffffff;
+  --panel-ink-soft: #cbd5e1;
+  --panel-ink-muted: #94a3b8;
+  --panel-accent: #7dd3fc;
+  --panel-grid: rgba(255, 255, 255, 0.1);
+  --panel-track: rgba(255, 255, 255, 0.12);
+  --panel-divider: rgba(255, 255, 255, 0.1);
+  --panel-control-bg: rgba(255, 255, 255, 0.1);
+  --panel-control-border: rgba(255, 255, 255, 0.18);
+  /* A solid stand-in for the gradient, used where a shape needs an opaque edge. */
+  --panel-solid: #0f1e3d;
+  --panel-axis: #94a3b8;
+  /* Series stepped for the deep-blue panel rather than for white. */
+  --panel-series-1: #60a5fa;
+  --panel-series-2: #34d399;
+  --panel-series-3: #c4b5fd;
+  --panel-series-4: #fbbf24;
+  --panel-success: #34d399;
+  --panel-warning: #fbbf24;
+  --panel-danger: #f87171;
+  --panel-neutral: #64748b;
+
+  /* Legacy aliases still referenced by a few components. */
+  --navy-950: #020617;
+  --navy-900: #0f172a;
+  --navy-800: #1e293b;
+  --navy-700: #334155;
+  --navy-600: var(--blue-600);
+  --navy-100: var(--blue-100);
+  --navy-50: var(--blue-50);
+
+  /* --- Interactive ------------------------------------------------------------------------ */
+  --action-primary: var(--blue-600);
+  --action-primary-hover: var(--blue-700);
+  --action-primary-active: var(--blue-800);
+  --action-primary-soft: var(--blue-50);
+  --action-accent: var(--violet-600);
+  --action-accent-hover: var(--violet-700);
+  --action-link: var(--blue-600);
+
+  /* --- Neutrals (slate) ------------------------------------------------------------------- */
+  --bg: #f6f7fb;
   --surface: #ffffff;
   --surface-muted: #f8fafc;
-  --border: #dde3ea;
-  --border-strong: #b8c2cf;
-  --text: #16202e;
-  --text-muted: #4f5d6d;
-  --text-subtle: #647284;
+  --surface-hover: #f8fafc;
+  --surface-selected: var(--blue-50);
+  --surface-tint: #f1f5f9;
+  --border: #e2e8f0;
+  --border-subtle: #eef2f7;
+  --border-strong: #cbd5e1;
+  --control-bg: #ffffff;
+  --control-border: #e2e8f0;
+  --control-border-hover: #cbd5e1;
+  --input-invalid-bg: #fffbfb;
+  /* The frosted surfaces: top bar and the sticky form footer. */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.6);
+  --glass-solid: rgba(255, 255, 255, 0.92);
+  --text: #0f172a;
+  --text-muted: #475569;
+  --text-subtle: #64748b;
+  --text-placeholder: #94a3b8;
   --text-inverse: #ffffff;
 
-  /* Semantic */
-  --success-700: #146c43;
-  --success-50: #e8f5ee;
-  --success-200: #b7e0c9;
-  --warning-700: #8a5300;
-  --warning-50: #fff5df;
-  --warning-200: #f5d99a;
-  --danger-700: #b42318;
-  --danger-800: #912018;
-  --danger-50: #fdecea;
-  --danger-200: #f5c2bd;
-  --info-700: #1d5bbf;
-  --info-50: #e9f0fc;
-  --info-200: #bcd0f2;
-  --neutral-badge-bg: #eef1f5;
+  /* --- Semantic: status only -------------------------------------------------------------- */
+  --success-700: #047857;
+  --success-600: #059669;
+  --success-500: #10b981;
+  --success-200: #a7f3d0;
+  --success-100: #d1fae5;
+  --success-50: #ecfdf5;
+  --warning-700: #b45309;
+  --warning-500: #f59e0b;
+  --warning-200: #fde68a;
+  --warning-50: #fffbeb;
+  --danger-700: #b91c1c;
+  --danger-800: #991b1b;
+  --danger-600: #dc2626;
+  --danger-500: #ef4444;
+  --danger-200: #fecaca;
+  --danger-50: #fef2f2;
+  --info-700: var(--blue-700);
+  --info-200: var(--blue-200);
+  --info-50: var(--blue-50);
+  --neutral-badge-bg: #f1f5f9;
 
-  /* Focus */
-  --focus-ring: 0 0 0 3px rgba(29, 91, 191, 0.45);
+  /* --- Data visualisation ----------------------------------------------------------------- */
+  /* On white cards. */
+  --series-1: #2563eb;
+  --series-2: #8b5cf6;
+  --series-3: #10b981;
+  --series-4: #f59e0b;
+  --chart-grid: #eef2f7;
+  --chart-axis: #94a3b8;
+  /* On the dark hero panel — lighter steps so they clear the deep-blue surface. */
+  --series-on-dark-1: #60a5fa;
+  --series-on-dark-2: #34d399;
+  --chart-grid-on-dark: rgba(255, 255, 255, 0.1);
+  --chart-axis-on-dark: #94a3b8;
 
-  /* Typography */
+  --skeleton-base: #e9eef5;
+  --skeleton-highlight: #f6f8fc;
+
+  --focus-ring: 0 0 0 4px rgba(37, 99, 235, 0.14);
+  --focus-ring-danger: 0 0 0 4px rgba(185, 28, 28, 0.14);
+
+  /* --- Typography ------------------------------------------------------------------------- */
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-md: 1rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.375rem;
-  --text-2xl: 1.75rem;
+  --text-2xs: 0.6875rem; /* 11 — the tiny uppercase labels */
+  --text-xs: 0.75rem; /* 12 */
+  --text-sm: 0.8125rem; /* 13 */
+  --text-md: 0.875rem; /* 14 */
+  --text-lg: 1rem; /* 16 */
+  --text-xl: 1.25rem; /* 20 */
+  --text-2xl: 1.875rem; /* 30 */
   --leading-tight: 1.25;
   --leading-normal: 1.5;
+  /* Wide letter-spacing for the small uppercase eyebrows this design leans on. */
+  --tracking-label: 0.08em;
+  --tracking-wide: 0.18em;
 
-  /* Spacing (4px base) */
+  /* --- Spacing (4px base) ----------------------------------------------------------------- */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -72,26 +181,153 @@
   --space-10: 2.5rem;
   --space-12: 3rem;
 
-  /* Shape & elevation */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* --- Shape & elevation ------------------------------------------------------------------ */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --radius-full: 999px;
-  --shadow-sm: 0 1px 2px rgba(11, 31, 58, 0.06);
-  --shadow-md: 0 4px 16px rgba(11, 31, 58, 0.08);
-  --shadow-lg: 0 12px 40px rgba(11, 31, 58, 0.18);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
+  --shadow-hover: 0 12px 24px -8px rgba(15, 23, 42, 0.12);
+  --shadow-glass: 0 8px 32px rgba(31, 38, 135, 0.07);
+  --shadow-md: 0 10px 28px rgba(15, 23, 42, 0.1);
+  --shadow-lg: 0 24px 56px rgba(15, 23, 42, 0.18);
+  --shadow-hero: 0 20px 45px -20px rgba(23, 37, 84, 0.55);
 
-  /* Layout */
-  --sidebar-width: 248px;
-  --sidebar-collapsed-width: 72px;
-  --header-height: 64px;
-  --content-max: 1280px;
+  /* --- Layout ----------------------------------------------------------------------------- */
+  --sidebar-width: 268px;
+  --sidebar-collapsed-width: 84px;
+  --header-height: 68px;
+  --content-max: 1680px;
+  /* The breathing space around the floating cards. */
+  --shell-gap: 1rem;
+  --shell-pad: 0.875rem;
 
-  --transition-fast: 120ms ease;
+  --transition-fast: 160ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ==========================================================================================
+ * Dark theme
+ *
+ * Only the tokens that carry light/dark meaning are restated; hues, spacing, radii and type
+ * come from :root above. The attribute is written by a script in index.html before the first
+ * paint, so "follow the system" is resolved in JS and this palette exists once, not twice.
+ *
+ * On a dark surface a saturated mid-tone reads as muddy, so status and brand text steps move
+ * up the ramp (700 → 400) while their tinted backgrounds become low-alpha washes of the hue.
+ * ========================================================================================== */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* --- Neutrals --------------------------------------------------------------------------- */
+  --bg: #0a0f1c;
+  --surface: #121a2b;
+  --surface-muted: #172033;
+  --surface-hover: #1b2539;
+  --surface-selected: rgba(59, 130, 246, 0.16);
+  --surface-tint: #1e293b;
+  --border: #253048;
+  --border-subtle: #1c2537;
+  --border-strong: #3b4a66;
+  --control-bg: #172033;
+  --control-border: #2c3850;
+  --control-border-hover: #435473;
+  --input-invalid-bg: rgba(239, 68, 68, 0.08);
+  --glass-bg: rgba(18, 26, 43, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-solid: rgba(18, 26, 43, 0.94);
+  --text: #f1f5f9;
+  --text-muted: #cbd5e1;
+  --text-subtle: #94a3b8;
+  --text-placeholder: #64748b;
+  --neutral-badge-bg: rgba(148, 163, 184, 0.16);
+
+  /* --navy-* and --text-inverse are deliberately NOT flipped: they name surfaces that stay
+     dark in both themes (the skip link, the JSON block) and the white ink that sits on the
+     blue gradient of a primary button. */
+
+  /* --- Brand ------------------------------------------------------------------------------ */
+  --blue-800: #93c5fd;
+  --blue-700: #7dd3fc;
+  --blue-600: #60a5fa;
+  --blue-500: #60a5fa;
+  --blue-200: rgba(96, 165, 250, 0.4);
+  --blue-100: rgba(96, 165, 250, 0.22);
+  --blue-50: rgba(59, 130, 246, 0.14);
+
+  --violet-700: #c4b5fd;
+  --violet-600: #a78bfa;
+  --violet-500: #a78bfa;
+  --violet-100: rgba(167, 139, 250, 0.22);
+  --violet-50: rgba(139, 92, 246, 0.14);
+
+  --orange-700: #fbbf24;
+  --orange-600: #f59e0b;
+  --orange-100: rgba(251, 191, 36, 0.24);
+  --orange-50: rgba(245, 158, 11, 0.14);
+
+  --action-primary: #3b82f6;
+  --action-primary-hover: #2563eb;
+  --action-primary-active: #1d4ed8;
+  --action-primary-soft: rgba(59, 130, 246, 0.14);
+  --action-link: #7dd3fc;
+
+  /* --- Semantic: status only -------------------------------------------------------------- */
+  --success-700: #6ee7b7;
+  --success-600: #34d399;
+  --success-500: #10b981;
+  --success-200: rgba(52, 211, 153, 0.34);
+  --success-100: rgba(52, 211, 153, 0.22);
+  --success-50: rgba(16, 185, 129, 0.14);
+  --warning-700: #fcd34d;
+  --warning-500: #f59e0b;
+  --warning-200: rgba(252, 211, 77, 0.32);
+  --warning-50: rgba(245, 158, 11, 0.14);
+  --danger-800: #fca5a5;
+  --danger-700: #fca5a5;
+  --danger-600: #f87171;
+  --danger-500: #ef4444;
+  --danger-200: rgba(248, 113, 113, 0.34);
+  --danger-50: rgba(239, 68, 68, 0.14);
+  --info-700: #7dd3fc;
+  --info-200: rgba(96, 165, 250, 0.4);
+  --info-50: rgba(59, 130, 246, 0.14);
+
+  /* --- Data visualisation ----------------------------------------------------------------- */
+  --series-1: #60a5fa;
+  --series-2: #a78bfa;
+  --series-3: #34d399;
+  --series-4: #fbbf24;
+  --chart-grid: #1c2537;
+  --chart-axis: #64748b;
+
+  /* The panel lifts off the dark page instead of sinking into it. */
+  --gradient-hero: linear-gradient(135deg, #101b30, #16294d 55%, #1b3566);
+  --panel-border: #2b3f66;
+  --panel-solid: #16294d;
+
+  /* --- Elevation -------------------------------------------------------------------------- */
+  /* Shadows barely read on a dark page, so depth comes from the border instead. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-hover: 0 12px 24px -8px rgba(0, 0, 0, 0.6);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 10px 28px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.7);
+  --shadow-hero: 0 20px 45px -20px rgba(0, 0, 0, 0.75);
+
+  --skeleton-base: #1b2539;
+  --skeleton-highlight: #243149;
+
+  --focus-ring: 0 0 0 4px rgba(96, 165, 250, 0.3);
+  --focus-ring-danger: 0 0 0 4px rgba(248, 113, 113, 0.3);
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root {
     --transition-fast: 0ms;
+    --transition-smooth: 0ms;
   }
 }

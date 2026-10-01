@@ -58,3 +58,12 @@ globalThis.Request = class extends NodeRequest {
 
 // jsdom does not implement scrolling.
 window.scrollTo = () => undefined;
+
+// jsdom has no layout, so no ResizeObserver; charts only need it to exist.
+if (!("ResizeObserver" in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+}

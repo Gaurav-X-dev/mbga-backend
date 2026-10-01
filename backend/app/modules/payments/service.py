@@ -24,6 +24,7 @@ from fastapi import status as http_status
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.customers.models import CustomerProfile
 from app.modules.notifications.events import payments as payment_events
 from app.modules.payments import validation
 from app.modules.payments.constants import (
@@ -119,21 +120,25 @@ class PaymentService:
         cannot drift: a stored balance is a second copy of a number the invoices already carry,
         and the two disagree the first time a write half-succeeds.
         """
-        self._require_visible_customer(customer_id)
+        await self._require_visible_customer(customer_id)
         now = datetime.now(UTC)
 
+        # Scoped the same way the lists are, not only gated by the check above: one guard can be
+        # forgotten by the next caller, and these sums must never reach across a merchant.
         totals = (
             await self.session.execute(
-                select(
-                    func.coalesce(func.sum(Invoice.total_amount), 0),
-                    func.coalesce(func.sum(Invoice.paid_amount), 0),
-                    func.coalesce(func.sum(Invoice.balance), 0),
+                self._scope_invoices(
+                    select(
+                        func.coalesce(func.sum(Invoice.total_amount), 0),
+                        func.coalesce(func.sum(Invoice.paid_amount), 0),
+                        func.coalesce(func.sum(Invoice.balance), 0),
+                    )
                 ).where(Invoice.customer_id == customer_id)
             )
         ).first() or (0, 0, 0)
 
         overdue = await self.session.scalar(
-            select(func.coalesce(func.sum(Invoice.balance), 0)).where(
+            self._scope_invoices(select(func.coalesce(func.sum(Invoice.balance), 0))).where(
                 Invoice.customer_id == customer_id,
                 Invoice.balance > 0,
                 Invoice.due_at < now,
@@ -142,7 +147,7 @@ class PaymentService:
         # INVALID payments are excluded: money that never arrived is not a last payment, and
         # showing it as one is how a customer is told they have paid when they have not.
         last_paid = await self.session.scalar(
-            select(func.max(Payment.paid_at)).where(
+            self._scope_payments(select(func.max(Payment.paid_at))).where(
                 Payment.customer_id == customer_id,
                 Payment.reconciliation_status != ReconciliationStatus.INVALID.value,
             )
@@ -311,9 +316,25 @@ class PaymentService:
             return statement.where(Payment.customer_id == self.actor.require_customer_id())
         return statement.where(Payment.merchant_id == self.actor.require_merchant_id())
 
-    def _require_visible_customer(self, customer_id: str) -> None:
-        """A customer may only ask for their own summary."""
-        if self.actor.is_customer and customer_id != self.actor.require_customer_id():
+    async def _require_visible_customer(self, customer_id: str) -> None:
+        """Whose summary the caller is allowed to ask for.
+
+        Both sides are checked. A customer may only ask for their own. Merchant staff may only
+        ask for a customer of their own merchant: the summary is an aggregate, so unlike a
+        single invoice it has no row of its own to be scoped by, and without this check a
+        guessed customer id answers with another merchant's books.
+
+        Not found rather than forbidden, as everywhere else here: ids are guessable and a 403
+        confirms the customer exists.
+        """
+        if self.actor.is_customer:
+            if customer_id != self.actor.require_customer_id():
+                raise ApiError("CUSTOMER_NOT_FOUND", http_status.HTTP_404_NOT_FOUND)
+            return
+        owner = await self.session.scalar(
+            select(CustomerProfile.merchant_id).where(CustomerProfile.id == customer_id)
+        )
+        if owner is None or owner != self.actor.require_merchant_id():
             raise ApiError("CUSTOMER_NOT_FOUND", http_status.HTTP_404_NOT_FOUND)
 
     async def _owned_invoice(self, invoice_id: str) -> Invoice:

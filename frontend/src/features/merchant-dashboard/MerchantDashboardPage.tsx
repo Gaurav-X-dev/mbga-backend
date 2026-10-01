@@ -48,14 +48,14 @@ export function MerchantDashboardPage() {
     query.isLoading ? <Skeleton width={56} height={32} /> : formatNumber(query.data);
 
   return (
-    <div className="page">
+    <div className="page dashboard-page">
       <PageHeader
         title="Dashboard"
         description={firstName ? `Welcome back, ${firstName}.` : "Welcome back."}
         meta={<RefreshIndicator active={total.isFetching && !total.isLoading} />}
         actions={
           auth.can(PERMISSIONS.deliveryUsersCreate) ? (
-            <ButtonLink to="/merchant/delivery-team/new" variant="accent" icon="plus">
+            <ButtonLink to="/merchant/delivery-team/new" variant="primary" icon="plus">
               Add team member
             </ButtonLink>
           ) : undefined
@@ -118,6 +118,7 @@ export function MerchantDashboardPage() {
         {canTeam ? (
           <Card
             title="Recently added team members"
+            className="dashboard-main-card"
             actions={
               <Link to="/merchant/delivery-team" className="text-small">
                 View all
@@ -157,7 +158,7 @@ export function MerchantDashboardPage() {
                 description="Add your drivers and helpers so they can use the MBGA Delivery app."
                 action={
                   auth.can(PERMISSIONS.deliveryUsersCreate) ? (
-                    <ButtonLink to="/merchant/delivery-team/new" variant="accent" icon="plus">
+                    <ButtonLink to="/merchant/delivery-team/new" variant="primary" icon="plus">
                       Add team member
                     </ButtonLink>
                   ) : undefined
@@ -166,12 +167,12 @@ export function MerchantDashboardPage() {
             )}
           </Card>
         ) : (
-          <Card title="Welcome">
+          <Card title="Welcome" className="dashboard-main-card">
             <p className="text-muted">Your account does not have access to any operational modules yet. Contact MBGA support if this is unexpected.</p>
           </Card>
         )}
 
-        <Card title="Shortcuts">
+        <Card title="Shortcuts" className="dashboard-dark-card">
           <ul className="shortcut-list list-plain">
             {auth.can(PERMISSIONS.deliveryUsersCreate) ? (
               <li>

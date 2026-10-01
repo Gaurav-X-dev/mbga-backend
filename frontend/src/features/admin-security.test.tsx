@@ -189,7 +189,7 @@ describe("Roles page", () => {
     // Built-in, active and protected: there is no action to offer, so no actions menu is shown.
     expect(screen.queryByRole("button", { name: "More role actions" })).not.toBeInTheDocument();
 
-    await user.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Roles" }));
+    await user.click(within(screen.getByRole("navigation", { name: "Breadcrumb" })).getByRole("link", { name: "Roles & Access" }));
     await user.click(within(await screen.findByRole("table")).getByRole("link", { name: "Area Supervisor" }));
     expect(await screen.findByRole("heading", { name: "Area Supervisor", level: 1 })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More role actions" }));
@@ -278,13 +278,25 @@ describe("Audit logs page", () => {
 describe("features without a backend API", () => {
   const MESSAGE = "This feature is not available in the current backend release.";
 
-  it("Admin customer approval shows the message and no data", async () => {
+  it("Admin customer KYC lists real applications from the backend", async () => {
     await seedSession("admin", ADMIN_MOBILE);
     renderApp("/admin/customers");
-    expect(await screen.findByText(MESSAGE, {}, SLOW)).toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(document.querySelector(".stat-card")).toBeNull();
-    expect(backend.calls.filter((call) => !call.includes("/auth/"))).toEqual([]);
+    expect(await screen.findByRole("heading", { name: "Customer KYC", level: 1 }, SLOW)).toBeInTheDocument();
+    const table = await screen.findByRole("table", {}, SLOW);
+    expect(within(table).getByRole("link", { name: "Anita Sharma" })).toBeInTheDocument();
+    expect(table).toHaveTextContent("Madhav Bharat Gas Agency");
+    expect(backend.calls).toContain("GET /admin/kyc/applications");
+  });
+
+  it("opens one KYC application on its own page", async () => {
+    const user = userEvent.setup();
+    await seedSession("admin", ADMIN_MOBILE);
+    const { router } = renderApp("/admin/customers");
+    const table = await screen.findByRole("table", {}, SLOW);
+    await user.click(within(table).getByRole("link", { name: "Anita Sharma" }));
+    expect(await screen.findByRole("heading", { name: "Anita Sharma", level: 1 })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/admin/customers/kyc-1");
+    expect(backend.calls).toContain("GET /admin/kyc/applications/kyc-1");
   });
 
   it.each(["customers", "orders", "inventory", "payments", "reports"])(

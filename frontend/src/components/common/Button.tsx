@@ -1,6 +1,6 @@
 import { forwardRef } from "react";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { Link, type LinkProps } from "react-router-dom";
+import type { ButtonHTMLAttributes, MouseEvent, ReactNode } from "react";
+import { Link, useNavigate, type LinkProps } from "react-router-dom";
 
 import { Icon, type IconName } from "./Icon";
 
@@ -48,9 +48,51 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
 type ButtonLinkProps = LinkProps & CommonProps & { children: ReactNode };
 
-export function ButtonLink({ variant, size, icon, block, className, children, ...rest }: ButtonLinkProps) {
+function isModifiedEvent(event: MouseEvent<HTMLAnchorElement>) {
+  return event.metaKey || event.altKey || event.ctrlKey || event.shiftKey;
+}
+
+export function ButtonLink({
+  variant,
+  size,
+  icon,
+  block,
+  className,
+  children,
+  onClick,
+  reloadDocument,
+  replace,
+  state,
+  target,
+  to,
+  ...rest
+}: ButtonLinkProps) {
+  const navigate = useNavigate();
+
   return (
-    <Link className={classes({ variant, size, block }, className)} {...rest}>
+    <Link
+      className={classes({ variant, size, block }, className)}
+      onClick={(event) => {
+        onClick?.(event);
+        if (
+          event.defaultPrevented ||
+          reloadDocument ||
+          target ||
+          event.button !== 0 ||
+          isModifiedEvent(event)
+        ) {
+          return;
+        }
+        event.preventDefault();
+        navigate(to, { replace, state });
+      }}
+      reloadDocument={reloadDocument}
+      replace={replace}
+      state={state}
+      target={target}
+      to={to}
+      {...rest}
+    >
       {icon ? <Icon name={icon} size={16} /> : null}
       <span>{children}</span>
     </Link>

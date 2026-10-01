@@ -117,6 +117,21 @@ async def test_a_customer_never_sees_another_customer_s_invoice(env):
     assert customer_a.id != customer_b.id
 
 
+async def test_a_merchant_cannot_read_another_merchant_s_customer_summary(env):
+    """The summary is an aggregate, so it has no row of its own to be scoped by.
+
+    Every other payment read is a row the scope filter catches, which is why this one needed a
+    check of its own: without it a guessed customer id answered with another merchant's books.
+    """
+    token_a, _merchant_a, customer_a, invoice_a = await billed(env)
+    await pay(env, token_a, invoice_a, invoice_a["totalAmount"] // 2, "CASH")
+    token_b, _merchant_b, _customer_b, _invoice_b = await billed(env)
+
+    response = await env.get(f"{MERCHANT}/customers/{customer_a.id}/payments/summary", token_b)
+
+    assert response.status_code == 404, response.text
+
+
 async def test_a_customer_cannot_read_another_s_summary(env):
     _t_a, _m_a, customer_a, _invoice_a = await billed(env)
     _t_b, _m_b, customer_b, _invoice_b = await billed(env)

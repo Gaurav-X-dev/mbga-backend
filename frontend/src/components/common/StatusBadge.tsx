@@ -22,9 +22,7 @@ export function UserAvatar({ name, size = "md" }: { name: string | null | undefi
 }
 
 export function BrandMark() {
-  return (
-    <span className="brand-mark" aria-hidden="true">
-      MBGA
-    </span>
-  );
+  // Decorative: the product name sits next to it in text, so a screen reader hearing this twice
+  // would be noise.
+  return <img src="/mbga-logo.png" alt="" className="brand-mark" width={36} height={36} />;
 }

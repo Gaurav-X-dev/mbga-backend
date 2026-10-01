@@ -1,5 +1,8 @@
 import type { AuditLogListParams } from "./audit-logs.api";
+import type { KycListParams } from "./customer-kyc.api";
+import type { DashboardAnalyticsParams } from "./dashboard.api";
 import type { DeliveryMemberListParams } from "./delivery-team.api";
+import type { LoginSessionListParams } from "./sessions.api";
 import type { MerchantListParams } from "./merchants.api";
 import type { RoleListParams } from "./roles.api";
 import type { UserListParams } from "./users.api";
@@ -13,7 +16,23 @@ export const queryKeys = {
 
   adminDashboard: {
     all: ["admin", "dashboard"] as const,
-    summary: () => ["admin", "dashboard", "summary"] as const
+    summary: () => ["admin", "dashboard", "summary"] as const,
+    analytics: (params: DashboardAnalyticsParams) => ["admin", "dashboard", "analytics", params] as const
+  },
+
+  loginSessions: {
+    all: ["admin", "login-sessions"] as const,
+    lists: () => ["admin", "login-sessions", "list"] as const,
+    list: (params: LoginSessionListParams) => ["admin", "login-sessions", "list", params] as const,
+    stats: () => ["admin", "login-sessions", "stats"] as const
+  },
+
+  customerKyc: {
+    all: ["admin", "customer-kyc"] as const,
+    lists: () => ["admin", "customer-kyc", "list"] as const,
+    list: (params: KycListParams) => ["admin", "customer-kyc", "list", params] as const,
+    stats: () => ["admin", "customer-kyc", "stats"] as const,
+    detail: (applicationId: string) => ["admin", "customer-kyc", "detail", applicationId] as const
   },
 
   merchants: {

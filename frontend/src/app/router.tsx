@@ -26,6 +26,14 @@ const RolesPage = page(() => import("../features/roles/RolesPage"), "RolesPage")
 const RoleDetailPage = page(() => import("../features/roles/RoleDetailPage"), "RoleDetailPage");
 const PermissionsPage = page(() => import("../features/permissions/PermissionsPage"), "PermissionsPage");
 const AuditLogsPage = page(() => import("../features/audit-logs/AuditLogsPage"), "AuditLogsPage");
+const CustomerKycPage = page(() => import("../features/customers/CustomerKycPage"), "CustomerKycPage");
+const CustomerKycDetailPage = page(
+  () => import("../features/customers/CustomerKycDetailPage"),
+  "CustomerKycDetailPage"
+);
+const ApprovalsPage = page(() => import("../features/approvals/ApprovalsPage"), "ApprovalsPage");
+const ApiExplorerPage = page(() => import("../features/api-explorer/ApiExplorerPage"), "ApiExplorerPage");
+const LoginSessionsPage = page(() => import("../features/sessions/LoginSessionsPage"), "LoginSessionsPage");
 const ProfilePage = page(() => import("../features/profile/ProfilePage"), "ProfilePage");
 const MerchantDashboardPage = page(
   () => import("../features/merchant-dashboard/MerchantDashboardPage"),
@@ -69,14 +77,18 @@ export const routes: RouteObject[] = [
             element: guarded([PERMISSIONS.merchantsCreate], <MerchantCreatePage />)
           },
           { path: "merchants/:merchantId", element: guarded(PERMISSIONS.merchantsView, <MerchantDetailPage />) },
-          { path: "customers", element: <FeatureUnavailablePage feature="admin-customers" /> },
+          { path: "customers", element: <CustomerKycPage /> },
+          { path: "customers/:applicationId", element: <CustomerKycDetailPage /> },
+          { path: "approvals", element: <ApprovalsPage /> },
           { path: "users", element: guarded(PERMISSIONS.usersView, <UsersPage />) },
           { path: "users/:userId", element: guarded(PERMISSIONS.usersView, <UserDetailPage />) },
           { path: "roles", element: guarded(PERMISSIONS.rolesView, <RolesPage />) },
           { path: "roles/:roleId", element: guarded(PERMISSIONS.rolesView, <RoleDetailPage />) },
           { path: "permissions", element: guarded(PERMISSIONS.permissionsView, <PermissionsPage />) },
+          { path: "login-sessions", element: guarded(PERMISSIONS.usersRevokeSessions, <LoginSessionsPage />) },
           { path: "audit-logs", element: guarded(PERMISSIONS.auditLogsView, <AuditLogsPage />) },
           { path: "profile", element: <ProfilePage /> },
+          { path: "api-console", element: <ApiExplorerPage /> },
           { path: "*", element: <NotFoundContent /> }
         ]
       },

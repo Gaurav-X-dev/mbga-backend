@@ -12,7 +12,13 @@ const STATUS: Record<string, StatusMeta> = {
   INACTIVE: { label: "Inactive", tone: "neutral" },
   BLOCKED: { label: "Blocked", tone: "danger" },
   REJECTED: { label: "Rejected", tone: "danger" },
-  SUSPENDED: { label: "Suspended", tone: "danger" }
+  SUSPENDED: { label: "Suspended", tone: "danger" },
+  NEEDS_CORRECTION: { label: "Needs correction", tone: "info" },
+  EXPIRED: { label: "Expired", tone: "neutral" },
+  REVOKED: { label: "Revoked", tone: "danger" },
+  DRAFT: { label: "Draft", tone: "neutral" },
+  VERIFIED: { label: "Verified", tone: "success" },
+  MISSING: { label: "Missing", tone: "danger" }
 };
 
 export function statusMeta(status: string | null | undefined): StatusMeta {
@@ -159,6 +165,33 @@ export const AUDIT_ENTITY_OPTIONS = Object.entries(ENTITY_LABELS).map(([value, l
 export function auditEntityLabel(entityType: string | null | undefined): string {
   if (!entityType) return "—";
   return ENTITY_LABELS[entityType] ?? humanize(entityType);
+}
+
+export type AuditSeverity = "high" | "medium" | "low";
+
+/**
+ * The backend records what happened, not how much it matters, so severity is derived here:
+ * anything that locks someone out or widens access is high, other changes to access are
+ * medium, and record edits are low.
+ */
+export function auditSeverity(eventType: string): AuditSeverity {
+  if (/\.blocked$|sessions_revoked|protected_rejected|role\.deleted|permissions_replaced|channels_replaced|permission_assigned/.test(eventType)) {
+    return "high";
+  }
+  if (/^user_role\.|^role\.|\.activated$|\.active$|permission_removed/.test(eventType)) return "medium";
+  return "low";
+}
+
+export const AUDIT_SEVERITY_META: Record<AuditSeverity, { label: string; tone: Tone }> = {
+  high: { label: "High", tone: "danger" },
+  medium: { label: "Medium", tone: "warning" },
+  low: { label: "Low", tone: "neutral" }
+};
+
+/** The verb of an audit event ("merchant.created" -> "Created"). */
+export function auditActionLabel(eventType: string): string {
+  const action = eventType.split(".").pop() ?? eventType;
+  return humanize(action);
 }
 
 /** Backend descriptions are often just "System permission: <name>"; only show ones that add information. */

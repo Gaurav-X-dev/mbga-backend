@@ -151,15 +151,22 @@ export function ConfirmationDialog({
   );
 }
 
+/** Alias with the name used across the design system. */
+export const ConfirmDialog = ConfirmationDialog;
+
 type DrawerProps = {
   open: boolean;
   title: ReactNode;
+  subtitle?: ReactNode;
+  /** Badges or status shown beside the title. */
+  meta?: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  size?: "md" | "lg";
 };
 
-export function Drawer({ open, title, onClose, children, footer }: DrawerProps) {
+export function Drawer({ open, title, subtitle, meta, onClose, children, footer, size = "md" }: DrawerProps) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useFocusTrap(ref, open, onClose);
@@ -171,11 +178,22 @@ export function Drawer({ open, title, onClose, children, footer }: DrawerProps) 
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div ref={ref} className="drawer" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+      <div
+        ref={ref}
+        className={`drawer${size === "lg" ? " drawer--lg" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+      >
         <div className="drawer__header">
-          <h2 id={titleId} className="drawer__title">
-            {title}
-          </h2>
+          <div className="drawer__titles">
+            <h2 id={titleId} className="drawer__title">
+              {title}
+            </h2>
+            {subtitle ? <p className="drawer__subtitle">{subtitle}</p> : null}
+            {meta ? <div className="drawer__meta">{meta}</div> : null}
+          </div>
           <IconButton icon="x" label="Close" onClick={onClose} />
         </div>
         <div className="drawer__body">{children}</div>
@@ -183,5 +201,20 @@ export function Drawer({ open, title, onClose, children, footer }: DrawerProps) 
       </div>
     </div>,
     document.body
+  );
+}
+
+export const DetailDrawer = Drawer;
+
+/** Titled block inside a drawer body. */
+export function DrawerSection({ title, children, actions }: { title: ReactNode; children: ReactNode; actions?: ReactNode }) {
+  return (
+    <section className="drawer-section">
+      <div className="drawer-section__header">
+        <h3>{title}</h3>
+        {actions}
+      </div>
+      {children}
+    </section>
   );
 }

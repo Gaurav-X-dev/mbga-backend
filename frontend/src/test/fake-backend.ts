@@ -49,7 +49,11 @@ export const ADMIN_PERMISSIONS = [
   "roles.assign_permissions",
   "roles.assign_channels",
   "permissions.view",
-  "audit_logs.view"
+  "audit_logs.view",
+  "customers.review",
+  "customer_documents.review",
+  "authentication.view_sessions",
+  "authentication.revoke_sessions"
 ];
 
 export const MANAGER_PERMISSIONS = [
@@ -110,6 +114,48 @@ export function createFakeBackend() {
   const auditLogs = [
     { id: "log-2", event_type: "merchant.created", actor_user_id: "user-1", entity_type: "merchant", entity_id: "merchant-x", message: "Merchant created", created_at: "2026-09-16T08:30:00Z" },
     { id: "log-1", event_type: "role.deactivated", actor_user_id: null, entity_type: "role", entity_id: "role-area", message: "Role deactivated", created_at: "2026-09-15T08:30:00Z" }
+  ];
+
+  const kycApplications = [
+    {
+      id: "kyc-1",
+      customer_id: "customer-1",
+      customer_name: "Anita Sharma",
+      customer_mobile: "+919823456710",
+      customer_type: "Domestic",
+      city: "Kanpur",
+      merchant_id: "merchant-x",
+      merchant_name: "Madhav Bharat Gas Agency",
+      status: "PENDING",
+      submitted_at: "2026-09-16T07:40:00Z",
+      reviewed_at: null,
+      reviewed_by_name: null,
+      rejection_reason: null,
+      document_count: 3,
+      verified_document_count: 1
+    }
+  ];
+
+  const loginSessions: Array<Record<string, unknown>> = [
+    {
+      id: "session-1",
+      user_id: "user-1",
+      user_name: "Asha Admin",
+      user_mobile: "+919999900001",
+      user_role: "super_admin",
+      login_channel: "ADMIN",
+      status: "ACTIVE",
+      device_name: "Chrome on Windows",
+      device_type: "desktop",
+      user_agent: "Mozilla/5.0",
+      app_version: null,
+      ip_address: "103.74.19.42",
+      created_at: "2026-09-16T09:05:00Z",
+      last_activity_at: "2026-09-16T11:26:00Z",
+      expires_at: "2026-09-23T09:05:00Z",
+      revoked_at: null,
+      revoked_reason: null
+    }
   ];
 
   function addUser(user: Omit<FakeUser, "id">) {
@@ -517,6 +563,86 @@ export function createFakeBackend() {
         ? []
         : auditLogs.filter((log) => !params.entity_type || log.entity_type === params.entity_type);
       return respond(config, 200, { items, page: 1, page_size: 25, total: items.length, total_pages: items.length ? 1 : 0 });
+    }
+
+    if (path === "/admin/dashboard/analytics") {
+      requirePermission(config, "ADMIN", "dashboard.view");
+      return respond(config, 200, {
+        merchant_growth: [
+          { label: "Aug", month: "2026-08-01", onboarded: 0, merchants: merchants.length },
+          { label: "Sep", month: "2026-09-01", onboarded: merchants.length, merchants: merchants.length }
+        ],
+        otp_attempts: [{ label: "16 Sep", day: "2026-09-16", success: 4, failed: 1 }],
+        user_activity: [{ label: "Wed", day: "2026-09-16", sign_ins: 3 }],
+        login_channels: [
+          { channel: "Admin", sessions: 2 },
+          { channel: "Merchant", sessions: 1 },
+          { channel: "Customer", sessions: 0 },
+          { channel: "Delivery", sessions: 0 }
+        ],
+        kyc_status: [{ status: "PENDING", count: 1 }],
+        otp_today_total: 5,
+        otp_today_success_rate: 80,
+        kyc_pending: 1
+      });
+    }
+
+    if (path === "/admin/kyc/applications/stats") {
+      requirePermission(config, "ADMIN", "customers.review");
+      return respond(config, 200, { pending: kycApplications.length, approved: 0, rejected: 0, total: kycApplications.length });
+    }
+
+    if (path === "/admin/kyc/applications") {
+      requirePermission(config, "ADMIN", "customers.review");
+      const items = options.emptyLists ? [] : kycApplications;
+      return respond(config, 200, { items, total: items.length, limit: 20, offset: 0 });
+    }
+
+    const kycDetail = path.match(/^\/admin\/kyc\/applications\/([^/]+)$/);
+    if (kycDetail) {
+      requirePermission(config, "ADMIN", "customers.review");
+      const application = kycApplications.find((item) => item.id === kycDetail[1]);
+      if (!application) return respond(config, 404, { detail: "Application not found" });
+      return respond(config, 200, {
+        id: application.id,
+        status: application.status,
+        submitted_at: application.submitted_at,
+        reviewed_at: null,
+        reviewed_by_name: null,
+        rejection_reason: null,
+        customer: {
+          id: application.customer_id,
+          name: application.customer_name,
+          mobile_number: application.customer_mobile,
+          customer_type: application.customer_type,
+          address_city: application.city,
+          merchant_id: application.merchant_id
+        },
+        documents: [],
+        delivery_sites: []
+      });
+    }
+
+    if (path === "/admin/auth/sessions/stats") {
+      requirePermission(config, "ADMIN", "authentication.view_sessions");
+      return respond(config, 200, { active: loginSessions.length, expired: 0, revoked: 0, ended_last_24h: 0 });
+    }
+
+    if (path === "/admin/auth/sessions") {
+      requirePermission(config, "ADMIN", "authentication.view_sessions");
+      const items = options.emptyLists ? [] : loginSessions;
+      return respond(config, 200, { items, total: items.length, limit: 20, offset: 0 });
+    }
+
+    const revokeSession = path.match(/^\/admin\/auth\/sessions\/([^/]+)\/revoke$/);
+    if (revokeSession && config.method?.toLowerCase() === "post") {
+      requirePermission(config, "ADMIN", "authentication.revoke_sessions");
+      const session = loginSessions.find((item) => item.id === revokeSession[1]);
+      if (!session) return respond(config, 404, { detail: "Session not found" });
+      session.status = "REVOKED";
+      session.revoked_at = "2026-09-16T12:00:00Z";
+      session.revoked_reason = "ADMIN_REVOKED";
+      return respond(config, 200, session);
     }
 
     return respond(config, 404, { detail: "Not Found" });

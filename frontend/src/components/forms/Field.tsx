@@ -99,12 +99,35 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   );
 });
 
+/** Digits of an Indian mobile number, without the country code. */
+const MOBILE_DIGITS = 10;
+
 /**
- * Indian mobile number with a fixed +91 prefix. The user types 10 digits;
- * callers normalise with `normalizeMobileNumber` before sending.
+ * Keep only what a mobile number can contain, and only as much of it as fits.
+ *
+ * Paste is the case worth handling: a number copied from a contact card arrives as
+ * "+91 98765 43210" or "091-98765-43210", and silently truncating that to the first ten
+ * characters produces a different number rather than an error - which is the worst outcome,
+ * because it looks like it worked.
+ */
+function toLocalDigits(raw: string): string {
+  let digits = raw.replace(/\D/g, "");
+  // A pasted country code, with or without the leading zero some contact apps add.
+  if (digits.length > MOBILE_DIGITS && digits.startsWith("091")) digits = digits.slice(3);
+  if (digits.length > MOBILE_DIGITS && digits.startsWith("91")) digits = digits.slice(2);
+  if (digits.length > MOBILE_DIGITS && digits.startsWith("0")) digits = digits.slice(1);
+  return digits.slice(0, MOBILE_DIGITS);
+}
+
+/**
+ * Indian mobile number with a fixed +91 prefix.
+ *
+ * The field enforces "ten digits" itself rather than leaving it to each caller: a letter or an
+ * eleventh digit simply never reaches the value. Validation still runs on submit - this stops
+ * the mistake being made, it does not replace the check.
  */
 export const PhoneInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function PhoneInput(
-  { className, ...rest },
+  { className, onChange, ...rest },
   ref
 ) {
   return (
@@ -115,11 +138,17 @@ export const PhoneInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLI
       <input
         ref={ref}
         type="tel"
-        inputMode="tel"
+        inputMode="numeric"
         autoComplete="tel-national"
         placeholder="98765 43210"
-        maxLength={16}
+        /* Long enough for a pasted "+91 98765 43210"; the handler below cuts it to ten digits. */
+        maxLength={18}
         className={["input", className].filter(Boolean).join(" ")}
+        onChange={(event) => {
+          const cleaned = toLocalDigits(event.target.value);
+          if (event.target.value !== cleaned) event.target.value = cleaned;
+          onChange?.(event);
+        }}
         {...rest}
       />
     </div>

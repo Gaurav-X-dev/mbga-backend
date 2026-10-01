@@ -48,6 +48,15 @@ export const MERCHANT_FIELD_LABELS: Record<string, string> = {
 
 export const MERCHANT_CREATE_FIELDS = Object.keys(MERCHANT_FIELD_LABELS);
 
+export type MerchantFormSection = "business" | "contact" | "region";
+
+/** Which fields each form section owns - the create wizard validates one section at a time. */
+export const MERCHANT_SECTION_FIELDS: Record<MerchantFormSection, Array<keyof MerchantCreateValues>> = {
+  business: ["business_name", "merchant_code", "gst_number"],
+  contact: ["contact_person_name", "mobile_number", "email"],
+  region: ["address_line_1", "address_line_2", "city", "state", "postal_code"]
+};
+
 export const emptyMerchantCreate: MerchantCreateValues = {
   merchant_code: "",
   business_name: "",

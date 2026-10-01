@@ -23,7 +23,7 @@ export function ProfilePage() {
   const home = channel === "admin" ? "/admin/dashboard" : "/merchant/dashboard";
 
   return (
-    <div className="page">
+    <div className="page profile-page">
       <PageHeader
         title="My account"
         description="Your sign-in details and access."

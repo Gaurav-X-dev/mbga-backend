@@ -6,6 +6,9 @@ import { tokenStorage } from "./auth/token-storage";
 import { createFakeBackend, installFakeBackend, uninstallFakeBackend, type FakeBackend } from "./test/fake-backend";
 import { renderApp } from "./test/render";
 
+/** The admin dashboard greets the signed-in user by time of day. */
+const ADMIN_HOME = /^Good (morning|afternoon|evening)/;
+
 async function enterOtp(user: UserEvent, code: string) {
   const first = await screen.findByLabelText("Digit 1 of 4");
   await user.click(first);
@@ -66,7 +69,7 @@ describe("sign in", () => {
     await user.click(within(group).getAllByRole("textbox")[0]);
     await user.paste("1234");
     expect(await screen.findByRole("alert")).toHaveTextContent("The verification code is incorrect. Please try again.");
-    expect(screen.queryByRole("heading", { name: "Dashboard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: ADMIN_HOME })).not.toBeInTheDocument();
   });
 
   it("uses exactly four boxes, masks the number and supports paste", async () => {
@@ -81,7 +84,7 @@ describe("sign in", () => {
     expect(screen.getByText(/Resend code in 0:3\d|Resend code in 0:29/)).toBeInTheDocument();
     await user.click(within(group).getAllByRole("textbox")[0]);
     await user.paste("1234");
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: ADMIN_HOME })).toBeInTheDocument();
     expect(backend.calls).toContain("POST /admin/auth/otp/verify");
   });
 
@@ -92,7 +95,7 @@ describe("sign in", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The verification code is incorrect. Please try again.");
     expect(screen.getByLabelText("Digit 1 of 4")).toHaveValue("");
     await enterOtp(user, "1234");
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: ADMIN_HOME })).toBeInTheDocument();
   });
 
   it("asks for a new code when the code has expired", async () => {
@@ -108,7 +111,7 @@ describe("sign in", () => {
     await user.click(screen.getByRole("button", { name: "Request a new code" }));
     expect(await screen.findByText("We sent a new verification code.")).toBeInTheDocument();
     await enterOtp(user, "1234");
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: ADMIN_HOME })).toBeInTheDocument();
   });
 
   it("tells an Admin who picked the Merchant panel that they have no access there", async () => {
@@ -135,7 +138,7 @@ describe("sign in", () => {
     const user = userEvent.setup();
     const { router } = renderApp("/admin/merchants");
     await signIn(user, "Admin panel", "9999900001");
-    expect(await screen.findByRole("heading", { name: "Merchants", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Merchant Network", level: 1 })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/admin/merchants");
   });
 
@@ -144,7 +147,7 @@ describe("sign in", () => {
     window.localStorage.setItem("unrelated", "keep-me");
     renderApp("/login");
     await signIn(user, "Admin panel", "9999900001");
-    await screen.findByRole("heading", { name: "Dashboard" });
+    await screen.findByRole("heading", { name: ADMIN_HOME });
     expect(tokenStorage.get()?.channel).toBe("admin");
     await signOut(user);
     expect(await screen.findByText("You have signed out.")).toBeInTheDocument();
@@ -157,7 +160,7 @@ describe("sign in", () => {
     const user = userEvent.setup();
     renderApp("/login");
     await signIn(user, "Admin panel", "9999900001");
-    await screen.findByRole("heading", { name: "Dashboard" });
+    await screen.findByRole("heading", { name: ADMIN_HOME });
     await user.click(screen.getByRole("button", { name: /Open account menu/ }));
     await user.click(await screen.findByRole("menuitem", { name: "Sign out from all devices" }));
     const dialog = await screen.findByRole("alertdialog", { name: "Sign out from all devices?" });
@@ -182,22 +185,24 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
 
     // Admin signs in and adds a merchant.
     await signIn(user, "Admin panel", "9999900001");
-    await screen.findByRole("heading", { name: "Dashboard" });
-    await user.click(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: /Merchants/ }));
+    await screen.findByRole("heading", { name: ADMIN_HOME });
+    await user.click(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: /Merchant Network/ }));
     expect(await screen.findByRole("heading", { name: "No merchants yet" })).toBeInTheDocument();
-    await user.click(screen.getAllByRole("link", { name: "Add merchant" })[0]);
+    await user.click(screen.getAllByRole("link", { name: "Add Merchant" })[0]);
     await screen.findByRole("heading", { name: "Add merchant" });
 
-    // Validation first.
-    await user.click(screen.getByRole("button", { name: "Continue to review" }));
+    // The wizard validates each step before moving on.
+    await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByText("Enter the business name.")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Please check the highlighted information.");
 
     await user.type(screen.getByLabelText(/Business name/), "Sharma Gas Agency");
     await user.type(screen.getByLabelText(/Merchant code/), "sharma-gas-01");
-    await user.type(screen.getByLabelText(/Contact person name/), "Rakesh Sharma");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(await screen.findByLabelText(/Contact person name/), "Rakesh Sharma");
     await user.type(screen.getByLabelText(/^Mobile number/), "9111111111");
-    await user.type(screen.getByLabelText(/^City/), "Kanpur");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(await screen.findByLabelText(/^City/), "Kanpur");
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
     expect(await screen.findByRole("heading", { name: "Review and create" })).toBeInTheDocument();
     expect(screen.getByText("SHARMA-GAS-01")).toBeInTheDocument();
@@ -217,18 +222,22 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
     expect((await screen.findAllByRole("link", { name: "Sharma Gas Agency" }))[0]).toBeInTheDocument();
 
     // A duplicate code is reported on the field.
-    await user.click(screen.getAllByRole("link", { name: "Add merchant" })[0]);
+    await user.click(screen.getAllByRole("link", { name: "Add Merchant" })[0]);
     await user.type(await screen.findByLabelText(/Business name/), "Another Agency");
     await user.type(screen.getByLabelText(/Merchant code/), "SHARMA-GAS-01");
-    await user.type(screen.getByLabelText(/Contact person name/), "Other Person");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(await screen.findByLabelText(/Contact person name/), "Other Person");
     await user.type(screen.getByLabelText(/^Mobile number/), "9222222222");
-    await user.click(screen.getByRole("button", { name: "Continue to review" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(await screen.findByRole("button", { name: "Continue to review" }));
     await user.click(await screen.findByRole("button", { name: "Create merchant" }));
+    // The server's field error sends the user back to the step that owns the field.
     expect(await screen.findByText("This merchant code is already in use. Choose a different code.", { selector: ".field__error span" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Merchant code/)).toHaveAttribute("aria-invalid", "true");
     await user.click(screen.getByRole("link", { name: "Cancel" }));
     const leave = await screen.findByRole("alertdialog", { name: "Leave without saving?" });
     await user.click(within(leave).getByRole("button", { name: "Leave page" }));
-    await screen.findByRole("heading", { name: "Merchants", level: 1 });
+    await screen.findByRole("heading", { name: "Merchant Network", level: 1 });
 
     await signOut(user);
 
@@ -239,7 +248,10 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
     expect(within(nav).queryByRole("link", { name: /Users/ })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("link", { name: /^Merchants/ })).not.toBeInTheDocument();
     await user.click(within(nav).getByRole("link", { name: /Delivery team/ }));
-    // Wait until the list has loaded before using its actions.
+    // Wait for the list page itself, not just its empty state: the merchant dashboard shows the
+    // same "No team members yet" card, so matching on that alone can pass while the route is
+    // still switching — and a click sent then is lost with the outgoing page.
+    await screen.findByRole("heading", { name: "Delivery team", level: 1 });
     await screen.findByRole("heading", { name: "No team members yet" });
     const addTeamMemberLink = screen
       .getAllByRole("link", { name: "Add team member" })
@@ -286,9 +298,9 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
     const user = userEvent.setup();
     renderApp("/login");
     await signIn(user, "Admin panel", "9999900001");
-    await screen.findByRole("heading", { name: "Dashboard" });
+    await screen.findByRole("heading", { name: ADMIN_HOME });
     backend.options.forbidAll = true;
-    await user.click(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: /Merchants/ }));
+    await user.click(within(screen.getByRole("navigation", { name: "Main" })).getByRole("link", { name: /Merchant Network/ }));
     expect(await screen.findByText("You don’t have access to this")).toBeInTheDocument();
     expect(screen.getByText("You don’t have permission to perform this action.")).toBeInTheDocument();
   });
