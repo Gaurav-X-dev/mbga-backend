@@ -184,21 +184,49 @@ async def test_a_wrong_code_does_not_complete_the_delivery(env):
     assert [row for row in still.json() if row["id"] == slip["id"]][0]["status"] == "pending"
 
 
-async def test_a_part_delivery_is_refused_rather_than_miscounted(env):
-    """The ledger books the whole load at handover.
+async def test_a_part_delivery_books_only_what_was_handed_over(env):
+    """The ledger books the handover, not the load.
 
-    Accepting a smaller number here would take the full quantity off the shelf while the driver
-    still had cylinders on the van - so it is refused, with a message that says what to do.
+    A driver who gives the customer two of the four on his van still has two of them, and they
+    are still the merchant's - so two come off the shelf and two do not. Booking the whole
+    allocation here is how a godown's count drifts with nothing to explain it.
     """
-    _staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 4))
+    staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 4))
+    before_filled, before_empty, _ = await counts(env, staff)
 
     response = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
         {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": 2}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
+    assert response.status_code == 200, response.text
 
-    assert response.status_code == 200
+    done = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-customer-otp",
+        token,
+        {"otp": slip["devConfirmationCode"]},
+    )
+
+    assert done.status_code == 200, done.text
+    # The receipt states the handover, so it says two rather than the four that were loaded.
+    assert done.json()["totalDeliveredQuantity"] == 2
+    after_filled, after_empty, _damaged = await counts(env, staff)
+    assert after_filled == before_filled - 2
+    assert after_empty == before_empty
+
+
+async def test_a_driver_cannot_hand_over_more_than_the_van_carries(env):
+    """The extra cylinders would have to come from somewhere the slip cannot account for."""
+    _staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 4))
+
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
+        token,
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": 6}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "DELIVERY_QUANTITY_EXCEEDS_ALLOCATION"
 
 
 async def test_a_slip_the_office_has_not_dispatched_cannot_be_handed_over(env):

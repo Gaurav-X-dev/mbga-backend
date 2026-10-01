@@ -162,10 +162,10 @@ class DriverService:
     ) -> ConfirmDeliveryResponseData:
         slip = await self._mine(slip_id)
         self._require_dispatched(slip)
-        
-        delivered_qty = sum(item.quantity for item in payload.delivered_items)
+
         empty_qty = sum(item.quantity for item in payload.collected_empties)
 
+        await self._record_delivered(slip, payload.delivered_items)
         slip.empties_collected = empty_qty
         slip.note = (payload.driver_notes or "").strip() or None
         slip.updated_at = datetime.now(UTC)
@@ -177,6 +177,63 @@ class DriverService:
             otp_channel="IN_APP_NOTIFICATION",
             message="OTP has been sent to customer's app notification"
         )
+
+    async def _record_delivered(self, slip: DeliverySlip, delivered: list[Any]) -> None:
+        """Write the driver's own counts onto the slip's lines.
+
+        This is read back by `DeliveryService.confirm` when the customer's code completes the
+        handover, and it is what the godown's books are then reduced by. Recording it here rather
+        than passing it through the confirmation keeps one source of truth for a figure that is
+        stated in one request and acted on in another.
+
+        The driver's list is a **complete** statement of the handover: a line he does not mention
+        was brought back, so it is recorded as zero rather than left to fall back to the
+        allocation. Handing over more than the van was loaded with is refused - the extra
+        cylinders would have to come from somewhere the slip cannot account for.
+        """
+        rows = {
+            row.cylinder_type: row
+            for row in await self.session.scalars(
+                select(DeliverySlipItem).where(DeliverySlipItem.slip_id == slip.id)
+            )
+        }
+        counts: dict[str, int] = {}
+        for item in delivered:
+            row = rows.get(item.cylinder_type)
+            if row is None:
+                raise ApiError(
+                    "DELIVERY_ITEM_NOT_ON_SLIP",
+                    http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"{item.cylinder_type} is not on order {slip.order_number}.",
+                )
+            counts[item.cylinder_type] = counts.get(item.cylinder_type, 0) + item.quantity
+
+        for cylinder_type, quantity in counts.items():
+            allocated = rows[cylinder_type].quantity
+            if quantity > allocated:
+                raise ApiError(
+                    "DELIVERY_QUANTITY_EXCEEDS_ALLOCATION",
+                    http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"The van carries {allocated} of {cylinder_type}, not {quantity}.",
+                )
+
+        for cylinder_type, row in rows.items():
+            row.delivered_quantity = counts.get(cylinder_type, 0)
+
+    async def _delivered_total(self, slip: DeliverySlip) -> int:
+        """How many cylinders actually changed hands on this slip.
+
+        Falls back to the allocation when no per-line figure was recorded, which is the case for a
+        slip the office confirmed itself.
+        """
+        rows = list(
+            await self.session.scalars(
+                select(DeliverySlipItem).where(DeliverySlipItem.slip_id == slip.id)
+            )
+        )
+        if any(row.delivered_quantity is not None for row in rows):
+            return sum(row.delivered_quantity or 0 for row in rows)
+        return slip.cylinders_allocated
 
     async def verify_customer_otp(self, slip_id: str, otp: str) -> VerifyCustomerOtpResponseData:
         slip = await self._mine(slip_id)
@@ -192,23 +249,27 @@ class DriverService:
             ),
         )
         await self.session.refresh(slip)
-        
+
         # Build multi-item receipt
         items = await self._items(slip.id)
-        
+        # The receipt states the handover, so it counts what was handed over. On a part delivery
+        # that is less than the slip allocated, and the empties are due against the cylinders the
+        # customer actually received rather than the ones that went back on the van.
+        delivered_total = await self._delivered_total(slip)
+
         return VerifyCustomerOtpResponseData(
             delivery_id=slip.id,
             order_number=slip.order_number,
             status=DriverDeliveryStatus.COMPLETED,
             completed_at=(slip.delivered_at or datetime.now(UTC)).isoformat().replace("+00:00", "Z"),
-            total_delivered_quantity=slip.cylinders_allocated,
+            total_delivered_quantity=delivered_total,
             delivered_items=items,
             total_empty_collected_quantity=slip.empties_collected,
             empty_collected_items=items, # Simplified for mock
             empty_due_summary=EmptyDueSummary(
-                expected_total=slip.cylinders_allocated,
+                expected_total=delivered_total,
                 collected_total=slip.empties_collected,
-                added_to_customer_pending_due=max(0, slip.cylinders_allocated - slip.empties_collected)
+                added_to_customer_pending_due=max(0, delivered_total - slip.empties_collected)
             ),
             payment=PaymentEntry(
                 method="cash", split="full", amount_collected=1000.0, payable_amount=1000.0, pending_balance=0.0

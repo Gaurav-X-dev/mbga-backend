@@ -145,6 +145,11 @@ class DeliverySlipItem(Base):
     slip_id: Mapped[str] = mapped_column(ForeignKey("delivery_slips.id"), index=True)
     cylinder_type: Mapped[str] = mapped_column(String(40))
     quantity: Mapped[int] = mapped_column(Integer)
+    # What the driver actually handed over, recorded at the gate. `None` means nothing was
+    # recorded - the office confirmed the slip itself, or it predates the driver app - and the
+    # ledger then books the whole allocation. Kept separate from `quantity` because the
+    # allocation is what the van stays answerable for while it is out.
+    delivered_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # Display order, so the slip lists cylinders the way the order did.
     position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 

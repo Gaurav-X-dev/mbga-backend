@@ -285,19 +285,21 @@ class DeliveryService:
         slip.updated_at = now
 
         # The cylinders have now actually changed hands, so this is where they come off the
-        # books. Before this moment they were on a van and still the merchant's.
-        lines = await self._lines(slip.id)
+        # books. Before this moment they were on a van and still the merchant's - and anything
+        # the driver brings back is still on it, so only what he handed over is booked.
+        lines = await self._delivered_lines(slip.id)
         ledger = StockLedger(self.session, self.merchant_id)
-        await ledger.deliver(
-            lines,
-            reference_id=slip.id,
-            recorded_by_user_id=self.actor.user_id,
-            recorded_by_name=self.actor.display_name,
-            now=now,
-        )
+        if lines:
+            await ledger.deliver(
+                lines,
+                reference_id=slip.id,
+                recorded_by_user_id=self.actor.user_id,
+                recorded_by_name=self.actor.display_name,
+                now=now,
+            )
         if collected:
             await ledger.collect_empties(
-                {_primary_type(lines): collected},
+                {_primary_type(lines or await self._lines(slip.id)): collected},
                 reference_id=slip.id,
                 recorded_by_user_id=self.actor.user_id,
                 recorded_by_name=self.actor.display_name,
@@ -572,7 +574,7 @@ class DeliveryService:
         }
 
     async def _lines(self, slip_id: str) -> dict[CylinderType, int]:
-        """The slip's cylinders, as the ledger wants them."""
+        """The slip's cylinders as allocated, which is what the van is answerable for."""
         rows = list(
             await self.session.scalars(
                 select(DeliverySlipItem)
@@ -581,6 +583,29 @@ class DeliveryService:
             )
         )
         return {CylinderType(row.cylinder_type): row.quantity for row in rows}
+
+    async def _delivered_lines(self, slip_id: str) -> dict[CylinderType, int]:
+        """What actually changed hands, which is what comes off the books.
+
+        Falls back to the allocation per line, because `delivered_quantity` is only set by the
+        driver app: the office's own confirmation endpoint records no per-line counts, and a slip
+        from before that column existed has none either. A line delivered as zero is kept out
+        entirely rather than passed to the ledger as a no-op movement.
+        """
+        rows = list(
+            await self.session.scalars(
+                select(DeliverySlipItem)
+                .where(DeliverySlipItem.slip_id == slip_id)
+                .order_by(DeliverySlipItem.position)
+            )
+        )
+        lines = {
+            CylinderType(row.cylinder_type): (
+                row.quantity if row.delivered_quantity is None else row.delivered_quantity
+            )
+            for row in rows
+        }
+        return {kind: quantity for kind, quantity in lines.items() if quantity > 0}
 
     async def _items_view(self, slip_id: str) -> list[DeliveryItemResponse]:
         rows = list(
