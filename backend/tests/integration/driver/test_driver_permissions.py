@@ -82,7 +82,7 @@ async def test_the_seeded_driver_role_is_enough_on_its_own(env):
 
     listed = await env.get(f"{DRIVER_DELIVERIES}/today", token)
     started = await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/start", token, {"latitude": 26.45, "longitude": 80.33}
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location", token, {"latitude": 26.45, "longitude": 80.33}
     )
 
     assert listed.status_code == 200, listed.text

@@ -95,10 +95,10 @@ async def test_the_van_holds_what_the_dispatched_slips_carry(env):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["fullCylinderCount"] == 4
-    assert body["activeDeliveries"] == 1
-    assert body["fullCylinders"][0]["cylinderType"] == "LPG_19KG"
-    assert body["fullCylinders"][0]["quantity"] == 4
+    assert body["totalFullCylinders"] == 4
+    assert body["activeDeliveriesCount"] == 1
+    assert body["stockByType"][0]["cylinderType"] == "LPG_19KG"
+    assert body["stockByType"][0]["fullCount"] == 4
 
 
 async def test_the_van_empties_once_the_delivery_is_confirmed(env):
@@ -116,8 +116,8 @@ async def test_the_van_empties_once_the_delivery_is_confirmed(env):
 
     body = (await env.get(f"{DRIVER}/inventory", token)).json()
 
-    assert body["fullCylinderCount"] == 0
-    assert body["activeDeliveries"] == 0
+    assert body["totalFullCylinders"] == 0
+    assert body["activeDeliveriesCount"] == 0
 
 
 async def test_a_driver_with_nothing_out_has_an_empty_van(env):
@@ -126,9 +126,9 @@ async def test_a_driver_with_nothing_out_has_an_empty_van(env):
 
     body = (await env.get(f"{DRIVER}/inventory", token)).json()
 
-    assert body["fullCylinders"] == []
-    assert body["fullCylinderCount"] == 0
-    assert body["emptyCylinderCount"] == 0
+    assert body["stockByType"] == []
+    assert body["totalFullCylinders"] == 0
+    assert body["totalEmptyCylinders"] == 0
 
 
 async def test_one_drivers_van_never_shows_anothers_load(env):
@@ -137,5 +137,5 @@ async def test_one_drivers_van_never_shows_anothers_load(env):
 
     body = (await env.get(f"{DRIVER}/inventory", token_b)).json()
 
-    assert body["fullCylinderCount"] == 2
-    assert body["activeDeliveries"] == 1
+    assert body["totalFullCylinders"] == 2
+    assert body["activeDeliveriesCount"] == 1
