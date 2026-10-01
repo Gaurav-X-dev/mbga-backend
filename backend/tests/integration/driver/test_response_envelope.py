@@ -72,7 +72,7 @@ async def test_an_error_carries_the_code_the_app_renders(env):
     assert response.status_code == 404
     body = response.json()
     assert body["success"] is False
-    assert body["error"]["code"] == "DELIVERY_NOT_FOUND"
+    assert body["error"]["code"] == "NOT_FOUND"
     assert body["error"]["statusCode"] == 404
     assert body["error"]["message"]
 
@@ -82,7 +82,7 @@ async def test_a_validation_error_is_still_readable(env):
 
     with envelope_on():
         response = await env.post(
-            f"{DRIVER_DELIVERIES}/{slip['id']}/start", token, {"latitude": 999, "longitude": 0}
+            f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location", token, {"latitude": "foo", "longitude": 0}
         )
 
     assert response.status_code == 422

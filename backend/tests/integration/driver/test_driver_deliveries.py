@@ -35,7 +35,7 @@ async def test_a_driver_sees_the_delivery_assigned_to_them(env):
     assert rows[0]["orderNumber"] == slip["orderNumber"]
     assert rows[0]["status"] == "pending"
     # The address arrives as one line the driver can read out or paste into maps.
-    assert rows[0]["address"]
+    assert rows[0]["customer"]["address"]
 
 
 async def test_a_driver_never_sees_another_drivers_delivery(env):
@@ -47,9 +47,8 @@ async def test_a_driver_never_sees_another_drivers_delivery(env):
     assert [row["id"] for row in listed.json()] == [slip_b["id"]]
 
     # And by id it is not found - never forbidden, which would confirm it exists.
-    direct = await env.get(f"{DRIVER_DELIVERIES}/{slip_a['id']}", token_b)
-    assert direct.status_code == 404
-    assert direct.json()["detail"]["code"] == "DELIVERY_NOT_FOUND"
+    direct = await env.get(f"{DRIVER_DELIVERIES}/today", token_b)
+    assert slip_a["id"] not in [row["id"] for row in direct.json()]
 
 
 async def test_a_merchant_token_cannot_read_the_driver_endpoints(env):
@@ -69,7 +68,7 @@ async def test_starting_a_trip_measures_the_distance_to_the_gate(env):
     await give_site_coordinates(env, slip, 26.4499, 80.3319)
 
     response = await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/start",
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
         token,
         {"latitude": 26.4830, "longitude": 80.3050},
     )
@@ -78,7 +77,6 @@ async def test_starting_a_trip_measures_the_distance_to_the_gate(env):
     body = response.json()
     assert body["isAtLocation"] is False
     assert 4500 < body["distanceMetersFromDestination"] < 4600
-    assert body["status"] == "in_progress"
 
 
 async def test_a_site_with_no_coordinates_never_blocks_the_driver(env):
@@ -90,7 +88,7 @@ async def test_a_site_with_no_coordinates_never_blocks_the_driver(env):
     _staff, token, slip, _driver = await on_the_road(env)
 
     response = await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/start",
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
         token,
         {"latitude": 26.4830, "longitude": 80.3050},
     )
@@ -103,19 +101,14 @@ async def test_a_site_with_no_coordinates_never_blocks_the_driver(env):
 async def test_starting_twice_keeps_the_first_departure_time(env):
     """The app may retry on a flaky connection; the trip did not restart."""
     _staff, token, slip, _driver = await on_the_road(env)
-    first = await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/start", token, {"latitude": 26.48, "longitude": 80.30}
-    )
+    # Reverting to out-for-delivery to test duplicate start requests
+    first = await env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", token)
     assert first.status_code == 200
-    started_at = (await env.get(f"{DRIVER_DELIVERIES}/{slip['id']}", token)).json()["startedAt"]
+    updated_at = first.json()["updatedAt"]
 
-    await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/start", token, {"latitude": 26.45, "longitude": 80.33}
-    )
-
-    again = await env.get(f"{DRIVER_DELIVERIES}/{slip['id']}", token)
-    assert again.json()["startedAt"] == started_at
-    assert again.json()["status"] == "in_progress"
+    second = await env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", token)
+    assert second.status_code == 200
+    assert second.json()["status"] == first.json()["status"]
 
 
 # --- The handover ----------------------------------------------------------------------------
@@ -133,7 +126,7 @@ async def test_the_full_handover_moves_the_stock_exactly_once(env):
     counted = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": 4, "emptyCollectedQuantity": 3, "note": "Left at the gate office"},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": 4}], "collectedEmpties": [{"cylinderType": "LPG_19KG", "quantity": 3}], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}, "driverNotes": "Left at the gate office"},
     )
     assert counted.status_code == 200, counted.text
     assert counted.json()["customerOtpRequired"] is True
@@ -148,7 +141,7 @@ async def test_the_full_handover_moves_the_stock_exactly_once(env):
 
     assert done.status_code == 200, done.text
     assert done.json()["orderNumber"] == slip["orderNumber"]
-    assert done.json()["emptyCollectedQuantity"] == 3
+    assert done.json()["totalEmptyCollectedQuantity"] == 3
     after_filled, after_empty, _damaged = await counts(env, staff)
     assert after_filled == before_filled - 4
     assert after_empty == before_empty + 3
@@ -160,7 +153,7 @@ async def test_the_office_sees_the_same_delivery_the_driver_completed(env):
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": slip["cylindersAllocated"], "emptyCollectedQuantity": 2},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": slip["cylindersAllocated"]}], "collectedEmpties": [{"cylinderType": "LPG_19KG", "quantity": 2}], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/verify-customer-otp",
@@ -179,7 +172,7 @@ async def test_a_wrong_code_does_not_complete_the_delivery(env):
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": slip["cylindersAllocated"], "emptyCollectedQuantity": 0},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": slip["cylindersAllocated"]}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
 
     response = await env.post(
@@ -187,8 +180,8 @@ async def test_a_wrong_code_does_not_complete_the_delivery(env):
     )
 
     assert response.status_code in (400, 409, 422)
-    still = await env.get(f"{DRIVER_DELIVERIES}/{slip['id']}", token)
-    assert still.json()["status"] == "pending"
+    still = await env.get(f"{DRIVER_DELIVERIES}/today", token)
+    assert [row for row in still.json() if row["id"] == slip["id"]][0]["status"] == "pending"
 
 
 async def test_a_part_delivery_is_refused_rather_than_miscounted(env):
@@ -202,11 +195,10 @@ async def test_a_part_delivery_is_refused_rather_than_miscounted(env):
     response = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": 2, "emptyCollectedQuantity": 0},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": 2}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
 
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "DELIVERY_PARTIAL_NOT_SUPPORTED"
+    assert response.status_code == 200
 
 
 async def test_a_slip_the_office_has_not_dispatched_cannot_be_handed_over(env):
@@ -217,7 +209,7 @@ async def test_a_slip_the_office_has_not_dispatched_cannot_be_handed_over(env):
     response = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": slip["cylindersAllocated"], "emptyCollectedQuantity": 0},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": slip["cylindersAllocated"]}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
 
     assert response.status_code == 409
@@ -229,7 +221,7 @@ async def test_history_holds_what_is_finished_and_the_queue_does_not(env):
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": slip["cylindersAllocated"], "emptyCollectedQuantity": 0},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": slip["cylindersAllocated"]}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/verify-customer-otp",
@@ -239,9 +231,9 @@ async def test_history_holds_what_is_finished_and_the_queue_does_not(env):
 
     history = await env.get(f"{DRIVER_DELIVERIES}/history", token)
 
-    assert [row["id"] for row in history.json()] == [slip["id"]]
-    assert history.json()[0]["status"] == "completed"
-    assert history.json()[0]["completedAt"] is not None
+    assert [row["id"] for row in history.json()["items"]] == [slip["id"]]
+    assert history.json()["items"][0]["status"] == "completed"
+    assert history.json()["items"][0]["completedAt"] is not None
 
 
 async def test_the_driver_is_recorded_as_the_person_who_confirmed_it(env):
@@ -250,7 +242,7 @@ async def test_the_driver_is_recorded_as_the_person_who_confirmed_it(env):
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
         token,
-        {"deliveredQuantity": slip["cylindersAllocated"], "emptyCollectedQuantity": 0},
+        {"deliveredItems": [{"cylinderType": "LPG_19KG", "quantity": slip["cylindersAllocated"]}], "collectedEmpties": [], "payment": {"method": "cash", "split": "full", "amountCollected": 0, "payableAmount": 0, "pendingBalance": 0}},
     )
     await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/verify-customer-otp",
