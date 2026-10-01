@@ -371,6 +371,47 @@ async def test_a_failed_slip_cannot_be_dispatched(env):
     assert "Raise a new slip" in response.json()["detail"]["message"]
 
 
+async def test_a_van_that_comes_back_can_go_out_again(env):
+    """The failure message tells the office to raise a new slip, so it has to be possible.
+
+    Failing a dispatched slip leaves the order `OUT_FOR_DELIVERY` on purpose - it really did go
+    out, and reversing that would lose it - but the order is then carried by nothing. Without a
+    second slip it could never be delivered or cancelled, and a van coming back loaded is an
+    ordinary day rather than an edge case.
+    """
+    token, _merchant, order, slip, driver, _code = await on_the_road(env)
+    await env.post(f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Customer shop was shut"})
+
+    again = await env.post(
+        DELIVERIES,
+        token,
+        {"orderId": order["id"], "vehicleNumber": "MP09 GH 9999", "driverUserId": driver.id},
+    )
+
+    assert again.status_code == 201, again.text
+    assert again.json()["id"] != slip["id"]
+    dispatched = await env.post(f"{DELIVERIES}/{again.json()['id']}/dispatch", token)
+    assert dispatched.status_code == 200, dispatched.text
+    assert dispatched.json()["status"] == "DISPATCHED"
+
+
+async def test_only_one_slip_carries_an_order_at_a_time(env):
+    """Reopening a returned van must not also let two slips carry the same order.
+
+    The status check now admits `OUT_FOR_DELIVERY`, so this is the guard that keeps it honest.
+    """
+    token, _merchant, order, _slip, driver, _code = await on_the_road(env)
+
+    response = await env.post(
+        DELIVERIES,
+        token,
+        {"orderId": order["id"], "vehicleNumber": "MP09 GH 9999", "driverUserId": driver.id},
+    )
+
+    assert response.status_code == 409
+    assert code_of(response) == "DELIVERY_ALREADY_EXISTS"
+
+
 async def test_a_failed_slip_cannot_be_confirmed(env):
     token, _merchant, _order, slip, _driver, code = await on_the_road(env)
     await env.post(f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Shop closed"})

@@ -69,7 +69,13 @@ ALL_STATUSES = "ALL"
 #: `CONFIRMED` alone, now that `PREPARING` is gone: raising a slip no longer moves the order at
 #: all. It sits confirmed until the van is actually dispatched, which is the first moment anything
 #: has physically happened.
-SLIPPABLE_ORDER_STATUSES: frozenset[str] = frozenset({"CONFIRMED"})
+#: `OUT_FOR_DELIVERY` is here too, and only because a van can come back loaded. Failing a slip
+#: deliberately leaves the order out - it really did go out, and walking it backwards would lose
+#: that - so without this the office could never raise the replacement slip that `fail()`'s own
+#: docstring tells them to, and the order would sit undeliverable for ever. It is safe because the
+#: caller refuses first when any slip is still live, so reaching this check means nothing is
+#: carrying the order.
+SLIPPABLE_ORDER_STATUSES: frozenset[str] = frozenset({"CONFIRMED", "OUT_FOR_DELIVERY"})
 
 # --- The proof-of-delivery code --------------------------------------------------------------
 #

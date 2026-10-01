@@ -246,7 +246,12 @@ class DeliveryService:
             note=f"Vehicle {slip.vehicle_number} · {slip.driver_name}",
             now=now,
         )
-        self.notifications.queue(
+        # Repeatable, because an order can legitimately go out twice: a van that comes back
+        # loaded is failed and a second slip raised, and the customer then needs a fresh
+        # notification - not least because the replacement slip carries a **new** code, and the
+        # one they were already shown no longer confirms anything. Keyed on the order, since
+        # tapping the notification opens the order, so a plain insert would collide.
+        await self.notifications.queue_repeatable(
             delivery_events.out_for_delivery(
                 slip.customer_id,
                 order.id,
@@ -351,8 +356,9 @@ class DeliveryService:
         the count here rather than sitting on the books for ever.
 
         The order stays OUT_FOR_DELIVERY either way. The transition table forbids reversing it,
-        and silently walking an order backwards would lose the fact that it once went out; the
-        office decides whether to reschedule or cancel.
+        and silently walking an order backwards would lose the fact that it once went out. The
+        office reschedules by raising another slip against it, which `_slippable_order` allows
+        precisely because this one is no longer live.
         """
         slip = await self._owned(slip_id)
         if slip.status not in {DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value}:
@@ -469,7 +475,8 @@ class DeliveryService:
         )
         if order is None:
             raise ApiError("ORDER_NOT_FOUND", http_status.HTTP_404_NOT_FOUND)
-        validation.check_order_state(order)
+        # Asked before the status check, not after, because the status check now admits an order
+        # that is still OUT_FOR_DELIVERY - which is only safe once we know nothing is carrying it.
         existing = await self.session.scalar(
             self._scope(select(DeliverySlip)).where(
                 DeliverySlip.order_id == order.id,
@@ -484,6 +491,7 @@ class DeliveryService:
                 http_status.HTTP_409_CONFLICT,
                 f"Order {order.order_number} is already on slip {existing.slip_number}.",
             )
+        validation.check_order_state(order)
         return order
 
     async def _site_coordinates(self, order: Order) -> tuple[float | None, float | None]:
