@@ -160,13 +160,13 @@ class DriverService:
     async def cancel_delivery(
         self, slip_id: str, payload: CancelDeliveryRequest
     ) -> CancelDeliveryResponseData:
-        """Cancel a dispatched delivery after the customer shares the trip OTP."""
+        """Close a delivery that did not happen. No customer OTP - see `DeliveryService.fail`."""
         slip = await self._mine(slip_id)
         self._require_dispatched(slip)
         service = DeliveryService(self.session, self._merchant_actor(slip), self.settings)
         await service.fail(
             slip.id,
-            FailDeliveryRequest(otp=payload.otp, reason=payload.reason),
+            FailDeliveryRequest(reason=payload.reason),
         )
         await self.session.refresh(slip)
         return CancelDeliveryResponseData(

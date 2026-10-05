@@ -102,7 +102,14 @@ class OutForDeliveryResponseData(BaseModel):
 
 
 class CancelDeliveryRequest(BaseModel):
-    otp: str = Field(min_length=4, max_length=10)
+    """Close a delivery that did not happen.
+
+    No OTP. The commonest reason a run fails is that the customer was not there - the shop was
+    shut, nobody came to the gate - and asking that customer for a code to record it would make
+    the one case this exists for the one case it cannot handle. The driver is accountable by the
+    reason they type, which goes on the slip and into the trail.
+    """
+
     reason: str = Field(min_length=1, max_length=500)
     model_config = _CAMEL
 

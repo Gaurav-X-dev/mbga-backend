@@ -134,13 +134,16 @@ class ConfirmDeliveryRequest(BaseModel):
 
 
 class FailDeliveryRequest(BaseModel):
-    """Cancel a dispatched delivery after verifying the customer's OTP.
+    """Cancel a dispatched delivery.
 
     The delivery app owns this operation. The slip becomes `FAILED` and the order becomes
     `CANCELLED`; another attempt starts with a new order rather than rescheduling this one.
+
+    No customer OTP. A run usually fails *because* the customer was not there, so requiring their
+    code would leave exactly those deliveries uncloseable - the van back at the godown and the
+    order still claiming to be on it.
     """
 
-    otp: str = Field(min_length=4, max_length=10)
     reason: str = Field(min_length=1, max_length=MAX_NOTE_LENGTH)
 
     model_config = _CAMEL

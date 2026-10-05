@@ -461,9 +461,15 @@ class DeliveryService:
         left the books: the counts only drop at handover. The van is simply released, and the
         cylinders were the merchant's the whole time.
 
-        The customer's OTP is required for the same reason it is required for a successful
-        handover: the driver cannot close the customer's order unilaterally. A failed delivery is
-        final for the order; a later attempt starts as a new order.
+        **No customer OTP**, unlike a successful handover. The code proves the customer received
+        the cylinders, and nobody can produce it when the reason for failing is that the customer
+        was not there - which is what most failed runs are. Requiring it would leave exactly those
+        deliveries uncloseable: the van back at the godown and the order still claiming to be out.
+
+        The driver is accountable by the reason they type instead. It goes onto the slip, into the
+        order's trail with their name and app, and into the customer's notification.
+
+        A failed delivery is final for the order; a later attempt starts as a new order.
         """
         slip = await self._owned(slip_id)
         self._require_status(
@@ -471,7 +477,6 @@ class DeliveryService:
             DeliveryStatus.FAILED,
             ready=(DeliveryStatus.DISPATCHED, DeliveryStatus.ON_LOCATION),
         )
-        await self._check_code(slip, payload.otp)
         now = datetime.now(UTC)
 
         slip.status = DeliveryStatus.FAILED.value

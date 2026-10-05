@@ -331,8 +331,13 @@ async def test_the_driver_is_recorded_as_the_person_who_confirmed_it(env):
     assert row.started_at is None or row.delivered_at is not None
 
 
-async def test_driver_cancels_with_customer_otp(env):
-    """A failed run closes both the slip and order; it cannot be rescheduled."""
+async def test_a_driver_closes_a_failed_run(env):
+    """A failed run closes both the slip and order; it cannot be rescheduled.
+
+    No customer OTP, because the usual reason a run fails is that the customer was not there -
+    requiring their code would leave exactly those deliveries uncloseable. The reason the driver
+    types is what goes on the record instead.
+    """
     staff, token, slip, _driver = await on_the_road(env)
 
     arrived = await env.post(
@@ -345,7 +350,7 @@ async def test_driver_cancels_with_customer_otp(env):
     response = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/cancel",
         token,
-        {"otp": slip["devConfirmationCode"], "reason": "Customer refused delivery"},
+        {"reason": "Customer refused delivery"},
     )
 
     assert response.status_code == 200, response.text
@@ -366,17 +371,36 @@ async def test_driver_cancels_with_customer_otp(env):
     assert "DELIVERY_FAILED" in [row.event_type for row in events]
 
 
-async def test_wrong_otp_cannot_cancel_delivery(env):
+async def test_a_reason_is_required_to_close_a_failed_run(env):
+    """The OTP is gone, so the reason is the only thing on the record - it cannot be blank.
+
+    Without it a driver could close any delivery with an empty request, and the order's trail
+    would say it was cancelled with nothing saying why.
+    """
     staff, token, slip, _driver = await on_the_road(env)
 
-    response = await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/cancel",
-        token,
-        {"otp": "0000", "reason": "Customer refused delivery"},
-    )
+    response = await env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/cancel", token, {"reason": ""})
 
     assert response.status_code == 422
     board = await env.get(f"{DELIVERIES}/{slip['id']}", staff)
     assert board.json()["status"] == "DISPATCHED"
     order = await env.scalar(select(Order).where(Order.id == slip["orderId"]))
+    assert order.status == "OUT_FOR_DELIVERY"
+
+
+async def test_one_driver_cannot_close_anothers_delivery(env):
+    """The OTP used to be a second gate on this. Only the assignment stands now.
+
+    A delivery that is not this driver's is a 404 rather than a 403: ids are guessable, and the
+    server will not confirm one exists.
+    """
+    _staff_a, _token_a, slip_a, _driver_a = await on_the_road(env)
+    _staff_b, token_b, _slip_b, _driver_b = await on_the_road(env)
+
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip_a['id']}/cancel", token_b, {"reason": "Not mine to close"}
+    )
+
+    assert response.status_code == 404
+    order = await env.scalar(select(Order).where(Order.id == slip_a["orderId"]))
     assert order.status == "OUT_FOR_DELIVERY"
