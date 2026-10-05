@@ -83,6 +83,7 @@ async def test_a_failed_delivery_bills_nobody(env):
     from tests.integration.deliveries.conftest import (
         dispatch_staff,
         make_customer,
+        make_driver,
         price_cylinders,
         refill,
     )
@@ -93,15 +94,29 @@ async def test_a_failed_delivery_bills_nobody(env):
     customer = await make_customer(env, merchant)
     await refill(env, token, "LPG_19KG", 60)
     order = await place_order_at(env, token, customer.id, ("LPG_19KG", 2))
-    created = await env.post(
-        DELIVERIES, token, {"orderId": order["id"], "vehicleNumber": "MP09 GH 4521",
-                            "driverName": "Ramesh"}
+    driver = await make_driver(env, merchant)
+    confirmed = await env.post(
+        f"/api/v1/merchant/orders/{order['id']}/confirm",
+        token,
+        {"delivery": {"vehicleNumber": "MP09 GH 4521", "driverUserId": driver.id}},
     )
-    assert created.status_code == 201, created.text
-    slip = created.json()
-    await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token, {})
+    assert confirmed.status_code == 200, confirmed.text
+    slip = (
+        await env.get(f"{DELIVERIES}/{confirmed.json()['deliverySlipId']}", token)
+    ).json()
+    login = await env.sign_in("/api/v1/delivery/auth", driver.mobile_number)
+    driver_token = login["token"]["access_token"]
+    started = await env.post(
+        f"/api/v1/delivery/deliveries/{slip['id']}/out-for-delivery", driver_token, {}
+    )
+    assert started.status_code == 200, started.text
     failed = await env.post(
-        f"{DELIVERIES}/{slip['id']}/fail", token, {"reason": "Customer refused delivery"}
+        f"/api/v1/delivery/deliveries/{slip['id']}/cancel",
+        driver_token,
+        {
+            "otp": started.json()["devConfirmationCode"],
+            "reason": "Customer refused delivery",
+        },
     )
     assert failed.status_code == 200, failed.text
 

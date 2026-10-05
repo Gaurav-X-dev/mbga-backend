@@ -62,9 +62,16 @@ async def on_the_road(auth_env, *lines, quantity: int = 60):
     staff_token, _merchant, _order, slip, driver = await ready_to_dispatch(
         auth_env, *lines, quantity=quantity
     )
-    dispatched = await auth_env.post(f"{DELIVERIES}/{slip['id']}/dispatch", staff_token, {})
+    token = await driver_token(auth_env, driver)
+    dispatched = await auth_env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", token, {}
+    )
     assert dispatched.status_code == 200, dispatched.text
-    return staff_token, await driver_token(auth_env, driver), dispatched.json(), driver
+    refreshed = await auth_env.get(f"{DELIVERIES}/{slip['id']}", staff_token)
+    assert refreshed.status_code == 200, refreshed.text
+    body = refreshed.json()
+    body["devConfirmationCode"] = dispatched.json()["devConfirmationCode"]
+    return staff_token, token, body, driver
 
 
 async def give_site_coordinates(auth_env, slip, latitude: float, longitude: float) -> None:

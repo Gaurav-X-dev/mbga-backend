@@ -62,6 +62,13 @@ def test_a_dispatched_slip_cannot_go_back_to_scheduled():
     assert DeliveryStatus.SCHEDULED.value not in STATUS_TRANSITIONS[DeliveryStatus.DISPATCHED.value]
 
 
+def test_a_dispatched_slip_can_reach_and_finish_at_the_location():
+    assert DeliveryStatus.ON_LOCATION.value in STATUS_TRANSITIONS[DeliveryStatus.DISPATCHED.value]
+    assert STATUS_TRANSITIONS[DeliveryStatus.ON_LOCATION.value] == frozenset(
+        {DeliveryStatus.DELIVERED.value, DeliveryStatus.FAILED.value}
+    )
+
+
 def test_terminal_states_are_dead_ends():
     """A delivered slip is a receipt; a failed one is a record. Neither is editable."""
     assert STATUS_TRANSITIONS[DeliveryStatus.DELIVERED.value] == frozenset()

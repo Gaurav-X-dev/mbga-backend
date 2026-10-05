@@ -28,15 +28,16 @@ async def test_the_status_catalogue_is_sorted_and_complete(env):
         "PLACED",
         "CONFIRMED",
         "OUT_FOR_DELIVERY",
+        "ON_LOCATION",
         "DELIVERED",
         "CANCELLED",
     ]
-    # 1..4 along the timeline, and 99 for the terminal failure state so it never appears as a
+    # 1..5 along the timeline, and 99 for the terminal failure state so it never appears as a
     # step. There is no PREPARING: dispatching the slip takes a confirmed order straight out.
-    assert [s["sequence"] for s in statuses] == [1, 2, 3, 4, 99]
+    assert [s["sequence"] for s in statuses] == [1, 2, 3, 4, 5, 99]
     # The app renders its timeline from this, so every field it reads must be present.
     assert all({"code", "label", "sequence", "tone", "description", "isTerminal"} <= set(s) for s in statuses)
-    assert [s["isTerminal"] for s in statuses] == [False, False, False, True, True]
+    assert [s["isTerminal"] for s in statuses] == [False, False, False, False, True, True]
 
 
 # --- Cut-off (§6.2) --------------------------------------------------------------------------

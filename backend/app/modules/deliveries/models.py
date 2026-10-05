@@ -115,7 +115,8 @@ class DeliverySlip(Base):
     confirmation_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     status: Mapped[str] = mapped_column(String(20), index=True)
-    # Why a slip failed. Read by whoever reschedules it, so it is free text rather than a code.
+    # Why a slip failed. The cancelled order is final, but staff still need the reason for the
+    # customer conversation and for deciding whether to accept a fresh order.
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 

@@ -30,7 +30,12 @@ STAFF_PERMISSIONS = ("orders.view", "orders.create", "orders.update", "orders.ca
 
 
 async def confirm(env, token: str, order_id: str):
-    return await post(env, f"{ORDERS}/{order_id}/confirm", token)
+    return await post(
+        env,
+        f"{ORDERS}/{order_id}/confirm",
+        token,
+        {"delivery": {"vehicleNumber": "MP09 GH 4521", "driverName": "Ramesh Kumar"}},
+    )
 
 
 async def status_of(env, order_id: str) -> str:
@@ -206,23 +211,23 @@ async def test_a_customer_cannot_confirm_their_own_order(env):
 
 
 async def test_confirming_is_what_lets_a_van_be_scheduled(env):
-    """The whole point. Before this route existed the dispatch module was unreachable."""
+    """Confirming creates the assignment; the retired schedule endpoint stays unavailable."""
     token, merchant, _user = await order_staff(
         env, permissions=(*STAFF_PERMISSIONS, "delivery.view", "delivery.confirm", "inventory.view", "inventory.adjust")
     )
     customer = await make_customer(env, merchant)
     order = await created_order(env, token, customer.id)
-    slip_body = {"orderId": order["id"], "vehicleNumber": "MP09 GH 4521", "driverName": "Ramesh Kumar"}
+    confirmed = await confirm(env, token, order["id"])
+    retired = await post(
+        env,
+        "/api/v1/merchant/deliveries",
+        token,
+        {"orderId": order["id"], "vehicleNumber": "MP09 GH 4521", "driverName": "Ramesh Kumar"},
+    )
 
-    refused = await post(env, "/api/v1/merchant/deliveries", token, slip_body)
-    await confirm(env, token, order["id"])
-    allowed = await post(env, "/api/v1/merchant/deliveries", token, slip_body)
-
-    assert refused.status_code == 409, "a placed order cannot have a van loaded for it"
-    assert code_of(refused) == "ORDER_NOT_DISPATCHABLE"
-    assert allowed.status_code == 201, allowed.text
-    # The order stays CONFIRMED: raising a slip is planning, and nothing has physically happened
-    # until the van is dispatched.
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["deliverySlipId"]
+    assert retired.status_code == 405
     assert await status_of(env, order["id"]) == "CONFIRMED"
 
 
@@ -259,16 +264,21 @@ async def test_the_whole_chain_runs_in_order(env):
     customer = await make_customer(env, merchant)
     order = await created_order(env, token, customer.id)
 
-    await confirm(env, token, order["id"])
-    slip = await post(
+    driver, _merchant, _profile = await env.create_delivery_user(merchant)
+    confirmed = await post(
         env,
-        "/api/v1/merchant/deliveries",
+        f"{ORDERS}/{order['id']}/confirm",
         token,
-        {"orderId": order["id"], "vehicleNumber": "MP09 GH 4521", "driverName": "Ramesh Kumar"},
+        {"delivery": {"vehicleNumber": "MP09 GH 4521", "driverUserId": driver.id}},
     )
-    assert slip.status_code == 201, slip.text
+    assert confirmed.status_code == 200, confirmed.text
     await post(env, "/api/v1/merchant/inventory/movements", token, {"type": "RECEIVED_FILLED", "cylinderType": "LPG_19KG", "quantity": 20})
-    dispatched = await post(env, f"/api/v1/merchant/deliveries/{slip.json()['id']}/dispatch", token)
+    login = await env.sign_in("/api/v1/delivery/auth", driver.mobile_number)
+    dispatched = await post(
+        env,
+        f"/api/v1/delivery/deliveries/{confirmed.json()['deliverySlipId']}/out-for-delivery",
+        login["token"]["access_token"],
+    )
     assert dispatched.status_code == 200, dispatched.text
 
     assert [status for status, _by, _note in await trail(env, order["id"])] == [
@@ -276,6 +286,64 @@ async def test_the_whole_chain_runs_in_order(env):
         "CONFIRMED",
         "OUT_FOR_DELIVERY",
     ]
+
+
+async def test_bulk_confirm_assigns_and_starts_one_driver_round(env):
+    """The same driver may carry several orders on the same vehicle/date round."""
+    token, merchant, _user = await order_staff(
+        env,
+        permissions=(
+            *STAFF_PERMISSIONS,
+            "delivery.view",
+            "inventory.view",
+            "inventory.adjust",
+        ),
+    )
+    first_customer = await make_customer(env, merchant)
+    second_customer = await make_customer(env, merchant)
+    first = await created_order(env, token, first_customer.id)
+    second = await created_order(env, token, second_customer.id)
+    driver, _merchant, _profile = await env.create_delivery_user(merchant)
+
+    confirmed = await post(
+        env,
+        f"{ORDERS}/confirm",
+        token,
+        {
+            "orderIds": [first["id"], second["id"]],
+            "delivery": {
+                "vehicleNumber": "MP09 GH 4521",
+                "driverUserId": driver.id,
+            },
+        },
+    )
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["confirmed"] == 2
+    slip_ids = [row["deliverySlipId"] for row in confirmed.json()["orders"]]
+    assert len(set(slip_ids)) == 2
+    driver_events = await notifications_for(env, driver.id)
+    assert len([event for event, _body in driver_events if event == "DELIVERY_ASSIGNED"]) == 2
+
+    stocked = await post(
+        env,
+        "/api/v1/merchant/inventory/movements",
+        token,
+        {"type": "RECEIVED_FILLED", "cylinderType": "LPG_19KG", "quantity": 20},
+    )
+    assert stocked.status_code == 201, stocked.text
+    login = await env.sign_in("/api/v1/delivery/auth", driver.mobile_number)
+    started = await post(
+        env,
+        "/api/v1/delivery/deliveries/out-for-delivery",
+        login["token"]["access_token"],
+        {"deliveryIds": slip_ids},
+    )
+
+    assert started.status_code == 200, started.text
+    assert {row["deliveryId"] for row in started.json()} == set(slip_ids)
+    assert await status_of(env, first["id"]) == "OUT_FOR_DELIVERY"
+    assert await status_of(env, second["id"]) == "OUT_FOR_DELIVERY"
 
 
 # --- A status the catalogue has retired ----------------------------------------------------------

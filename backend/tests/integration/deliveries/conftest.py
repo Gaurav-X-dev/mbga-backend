@@ -42,6 +42,7 @@ FULL = (
     "orders.view",
     "orders.create",
     "orders.cancel",
+    "orders.update",
     "inventory.view",
     "inventory.adjust",
     "pricing.view",
@@ -179,14 +180,18 @@ async def ready_to_dispatch(auth_env, *lines, quantity: int = 60, with_driver: b
         await refill(auth_env, token, cylinder, quantity)
     order = await place_order(auth_env, token, customer.id, *lines)
     driver = await make_driver(auth_env, merchant) if with_driver else None
-    body = {"orderId": order["id"], "vehicleNumber": "MP09 GH 4521"}
+    delivery = {"vehicleNumber": "MP09 GH 4521"}
     if driver is not None:
-        body["driverUserId"] = driver.id
+        delivery["driverUserId"] = driver.id
     else:
-        body["driverName"] = "Hired van driver"
-    created = await auth_env.post(DELIVERIES, token, body)
-    assert created.status_code == 201, created.text
-    return token, merchant, order, created.json(), driver
+        delivery["driverName"] = "Hired van driver"
+    confirmed = await auth_env.post(
+        f"{ORDERS}/{order['id']}/confirm", token, {"delivery": delivery}
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    slip = await auth_env.get(f"{DELIVERIES}/{confirmed.json()['deliverySlipId']}", token)
+    assert slip.status_code == 200, slip.text
+    return token, merchant, order, slip.json(), driver
 
 
 async def slip_of(auth_env, token: str, slip_id: str) -> dict:

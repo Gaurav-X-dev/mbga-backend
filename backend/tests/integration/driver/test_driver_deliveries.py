@@ -7,9 +7,11 @@ it instead.
 """
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.modules.deliveries.models import DeliverySlip
+from app.modules.orders.models import Order, OrderStatusHistory
+from app.shared.notifications.models import NotificationOutbox
 from tests.integration.deliveries.conftest import DELIVERIES, counts, ready_to_dispatch
 from tests.integration.driver.conftest import (
     DRIVER_DELIVERIES,
@@ -33,7 +35,7 @@ async def test_a_driver_sees_the_delivery_assigned_to_them(env):
     rows = response.json()
     assert [row["id"] for row in rows] == [slip["id"]]
     assert rows[0]["orderNumber"] == slip["orderNumber"]
-    assert rows[0]["status"] == "pending"
+    assert rows[0]["status"] == "out_for_delivery"
     # The address arrives as one line the driver can read out or paste into maps.
     assert rows[0]["customer"]["address"]
 
@@ -63,7 +65,7 @@ async def test_a_merchant_token_cannot_read_the_driver_endpoints(env):
 
 
 async def test_starting_a_trip_measures_the_distance_to_the_gate(env):
-    _staff, token, slip, _driver = await on_the_road(env)
+    staff, token, slip, _driver = await on_the_road(env)
     # Kanpur Central, and the driver a little under 5 km away at the zoo.
     await give_site_coordinates(env, slip, 26.4499, 80.3319)
 
@@ -75,8 +77,46 @@ async def test_starting_a_trip_measures_the_distance_to_the_gate(env):
 
     assert response.status_code == 200, response.text
     body = response.json()
+    assert body["deliveryStatus"] == "ON_LOCATION"
+    assert body["orderStatus"] == "ON_LOCATION"
+    assert body["arrivedAt"]
     assert body["isAtLocation"] is False
     assert 4500 < body["distanceMetersFromDestination"] < 4600
+
+    board = await env.get(f"{DELIVERIES}/{slip['id']}", staff)
+    assert board.json()["status"] == "ON_LOCATION"
+    order = await env.scalar(select(Order).where(Order.id == slip["orderId"]))
+    assert order.status == "ON_LOCATION"
+    queue = await env.get(f"{DRIVER_DELIVERIES}/today", token)
+    assert next(row for row in queue.json() if row["id"] == slip["id"])["status"] == "on_location"
+
+    # A flaky handset retry neither duplicates the timeline nor sends duplicate notifications.
+    repeated = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
+        token,
+        {"latitude": 26.4830, "longitude": 80.3050},
+    )
+    assert repeated.status_code == 200
+    history_count = await env.scalar(
+        select(func.count())
+        .select_from(OrderStatusHistory)
+        .where(
+            OrderStatusHistory.order_id == slip["orderId"],
+            OrderStatusHistory.status == "ON_LOCATION",
+        )
+    )
+    assert history_count == 1
+    event_count = await env.scalar(
+        select(func.count())
+        .select_from(NotificationOutbox)
+        .where(
+            NotificationOutbox.entity_id == slip["orderId"],
+            NotificationOutbox.event_type.in_(
+                ["DELIVERY_ON_LOCATION_CUSTOMER", "DELIVERY_ON_LOCATION_MERCHANT"]
+            ),
+        )
+    )
+    assert event_count == 2
 
 
 async def test_a_site_with_no_coordinates_never_blocks_the_driver(env):
@@ -104,7 +144,6 @@ async def test_starting_twice_keeps_the_first_departure_time(env):
     # Reverting to out-for-delivery to test duplicate start requests
     first = await env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", token)
     assert first.status_code == 200
-    updated_at = first.json()["updatedAt"]
 
     second = await env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", token)
     assert second.status_code == 200
@@ -122,6 +161,14 @@ async def test_the_full_handover_moves_the_stock_exactly_once(env):
     """
     staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 4))
     before_filled, before_empty, _ = await counts(env, staff)
+
+    arrived = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
+        token,
+        {"latitude": 26.4830, "longitude": 80.3050},
+    )
+    assert arrived.status_code == 200
+    assert arrived.json()["deliveryStatus"] == "ON_LOCATION"
 
     counted = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
@@ -181,7 +228,7 @@ async def test_a_wrong_code_does_not_complete_the_delivery(env):
 
     assert response.status_code in (400, 409, 422)
     still = await env.get(f"{DRIVER_DELIVERIES}/today", token)
-    assert [row for row in still.json() if row["id"] == slip["id"]][0]["status"] == "pending"
+    assert next(row for row in still.json() if row["id"] == slip["id"])["status"] == "out_for_delivery"
 
 
 async def test_a_part_delivery_books_only_what_was_handed_over(env):
@@ -282,3 +329,54 @@ async def test_the_driver_is_recorded_as_the_person_who_confirmed_it(env):
 
     assert row.confirmed_by_name == driver.full_name
     assert row.started_at is None or row.delivered_at is not None
+
+
+async def test_driver_cancels_with_customer_otp(env):
+    """A failed run closes both the slip and order; it cannot be rescheduled."""
+    staff, token, slip, _driver = await on_the_road(env)
+
+    arrived = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
+        token,
+        {"latitude": 26.4830, "longitude": 80.3050},
+    )
+    assert arrived.status_code == 200
+
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/cancel",
+        token,
+        {"otp": slip["devConfirmationCode"], "reason": "Customer refused delivery"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["deliveryStatus"] == "FAILED"
+    assert response.json()["orderStatus"] == "CANCELLED"
+    board = await env.get(f"{DELIVERIES}/{slip['id']}", staff)
+    assert board.json()["status"] == "FAILED"
+    order = await env.scalar(select(Order).where(Order.id == slip["orderId"]))
+    assert order.status == "CANCELLED"
+    events = list(
+        await env.execute(
+            select(NotificationOutbox.event_type).where(
+                NotificationOutbox.entity_id.in_([slip["id"], slip["orderId"]])
+            )
+        )
+    )
+    assert "ORDER_CANCELLED" in [row.event_type for row in events]
+    assert "DELIVERY_FAILED" in [row.event_type for row in events]
+
+
+async def test_wrong_otp_cannot_cancel_delivery(env):
+    staff, token, slip, _driver = await on_the_road(env)
+
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/cancel",
+        token,
+        {"otp": "0000", "reason": "Customer refused delivery"},
+    )
+
+    assert response.status_code == 422
+    board = await env.get(f"{DELIVERIES}/{slip['id']}", staff)
+    assert board.json()["status"] == "DISPATCHED"
+    order = await env.scalar(select(Order).where(Order.id == slip["orderId"]))
+    assert order.status == "OUT_FOR_DELIVERY"

@@ -254,10 +254,23 @@ def test_what_the_customer_is_told_stays_keyed_on_the_order():
 
     for event in (
         deliveries.out_for_delivery("cust-1", "ord-1", "ORD-1"),
+        deliveries.on_location_customer("cust-1", "ord-1", "ORD-1"),
         deliveries.delivered("cust-1", "ord-1", "ORD-1"),
     ):
         assert event.recipient_kind == RecipientKind.CUSTOMER.value
         assert event.entity_type == "order"
+
+
+def test_on_location_notifies_customer_and_merchant():
+    from app.modules.notifications.events import deliveries
+
+    customer = deliveries.on_location_customer("cust-1", "ord-1", "ORD-1", "Mohan")
+    merchant = deliveries.on_location_merchant("merch-1", "ord-1", "ORD-1", "Mohan")
+
+    assert customer.recipient_kind == RecipientKind.CUSTOMER.value
+    assert customer.title == "Driver has arrived"
+    assert merchant.recipient_kind == RecipientKind.MERCHANT.value
+    assert merchant.title == "Driver on location"
 
 
 def test_every_app_has_something_addressed_to_it():

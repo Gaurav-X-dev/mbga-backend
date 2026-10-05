@@ -10,9 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings
 from app.modules.customers.models import CustomerProfile
-from app.modules.deliveries.constants import ConfirmationMethod, DeliveryStatus
+from app.modules.deliveries.constants import IN_TRANSIT_STATUSES, DeliveryStatus
 from app.modules.deliveries.models import DeliverySlip, DeliverySlipItem
-from app.modules.deliveries.schemas import ConfirmDeliveryRequest as SlipConfirmRequest
+from app.modules.deliveries.schemas import (
+    ConfirmDeliveryRequest as SlipConfirmRequest,
+)
+from app.modules.deliveries.schemas import FailDeliveryRequest
 from app.modules.deliveries.service import DeliveryService
 from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.driver.constants import (
@@ -23,34 +26,35 @@ from app.modules.driver.constants import (
     DriverDeliveryStatus,
 )
 from app.modules.driver.schemas import (
-    CustomerLocation,
-    CustomerInfoDetail,
-    DeliveryItemResponse,
-    EmptyReturnItem,
     BillingSummary,
-    DriverDeliveryResponse,
-    OutForDeliveryResponseData,
-    VerifyLocationRequest,
-    VerifyLocationResponseData,
-    UpdateItemsRequest,
-    GenerateQrRequest,
-    GenerateQrResponseData,
+    CancelDeliveryRequest,
+    CancelDeliveryResponseData,
+    CompletedDeliveryDetailResponseData,
     ConfirmDeliveryRequest,
     ConfirmDeliveryResponseData,
-    VerifyCustomerOtpResponseData,
+    CustomerInfoDetail,
+    CustomerLocation,
+    DeliveryItemResponse,
+    DriverDeliveryResponse,
+    DriverInventoryLine,
+    DriverInventoryResponseData,
+    DriverProfileResponseData,
     EmptyDueSummary,
-    PaymentEntry,
-    CompletedDeliveryDetailResponseData,
+    EmptyReturnItem,
+    GenerateQrRequest,
+    GenerateQrResponseData,
     HistoryDeliveriesResponseData,
     HistoryDeliveryEntry,
     HistoryPaymentSummary,
-    DriverProfileResponseData,
+    OutForDeliveryResponseData,
+    PaymentEntry,
     ShiftStats,
-    DriverInventoryResponseData,
-    DriverInventoryLine,
+    UpdateItemsRequest,
+    VerifyCustomerOtpResponseData,
+    VerifyLocationRequest,
+    VerifyLocationResponseData,
 )
 from app.modules.orders.constants import ORDER_LABELS
-from app.modules.orders.models import Order, OrderItem
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
 from app.shared.business.actor import BusinessActor
@@ -101,42 +105,108 @@ class DriverService:
     # --- The trip ---------------------------------------------------------------------------
 
     async def out_for_delivery(self, slip_id: str) -> OutForDeliveryResponseData:
-        slip = await self._mine(slip_id)
-        self._require_actionable(slip)
+        """The driver has set off with this delivery.
+
+        This is what moves the order to `OUT_FOR_DELIVERY` and tells the customer their cylinders
+        are on the way. It used to be the office pressing Dispatch, which meant the customer was
+        told while the driver had not opened his phone - and the driver's own press did nothing
+        but write a timestamp.
+        """
+        return (await self._set_off([slip_id]))[0]
+
+    async def out_for_delivery_many(self, slip_ids: list[str]) -> list[OutForDeliveryResponseData]:
+        """A whole round at once: the driver leaves the godown carrying six deliveries.
+
+        All or nothing. Pressing this once is one event - the van left - so six slips that half
+        moved would describe a van that is both out and not, and the stock check behind each one
+        would be answered against a godown the earlier slips in the same call had already
+        emptied.
+        """
+        return await self._set_off(slip_ids)
+
+    async def _set_off(self, slip_ids: list[str]) -> list[OutForDeliveryResponseData]:
+        started: list[OutForDeliveryResponseData] = []
         now = datetime.now(UTC)
-        slip.started_at = slip.started_at or now
-        slip.updated_at = now
+        for slip_id in dict.fromkeys(slip_ids):
+            slip = await self._mine(slip_id)
+            self._require_actionable(slip)
+            # Through the delivery module, which owns what dispatching means: the stock check
+            # against what other vans are already carrying, the customer's code, the order's
+            # status and the notification. The actor carries this driver's id and channel, so
+            # the trail says the delivery app moved it.
+            service = DeliveryService(self.session, self._merchant_actor(slip), self.settings)
+            dev_confirmation_code = None
+            if slip.status == DeliveryStatus.SCHEDULED.value:
+                dispatched = await service.dispatch(slip.id, commit=False)
+                dev_confirmation_code = dispatched.dev_confirmation_code
+            slip.started_at = slip.started_at or now
+            slip.updated_at = now
+            started.append(
+                OutForDeliveryResponseData(
+                    delivery_id=slip.id,
+                    order_number=slip.order_number,
+                    status=(
+                        DriverDeliveryStatus.ON_LOCATION
+                        if slip.status == DeliveryStatus.ON_LOCATION.value
+                        else DriverDeliveryStatus.OUT_FOR_DELIVERY
+                    ),
+                    updated_at=now.isoformat().replace("+00:00", "Z"),
+                    dev_confirmation_code=dev_confirmation_code,
+                )
+            )
         await self.session.commit()
-        return OutForDeliveryResponseData(
+        return started
+
+    async def cancel_delivery(
+        self, slip_id: str, payload: CancelDeliveryRequest
+    ) -> CancelDeliveryResponseData:
+        """Cancel a dispatched delivery after the customer shares the trip OTP."""
+        slip = await self._mine(slip_id)
+        self._require_dispatched(slip)
+        service = DeliveryService(self.session, self._merchant_actor(slip), self.settings)
+        await service.fail(
+            slip.id,
+            FailDeliveryRequest(otp=payload.otp, reason=payload.reason),
+        )
+        await self.session.refresh(slip)
+        return CancelDeliveryResponseData(
             delivery_id=slip.id,
             order_number=slip.order_number,
-            status=DriverDeliveryStatus.OUT_FOR_DELIVERY,
-            updated_at=slip.updated_at.isoformat().replace("+00:00", "Z"),
+            delivery_status=DeliveryStatus.FAILED.value,
+            order_status="CANCELLED",
+            cancelled_at=slip.updated_at.isoformat().replace("+00:00", "Z"),
         )
 
-    async def verify_location(self, slip_id: str, payload: VerifyLocationRequest) -> VerifyLocationResponseData:
+    async def verify_location(
+        self, slip_id: str, payload: VerifyLocationRequest
+    ) -> VerifyLocationResponseData:
         slip = await self._mine(slip_id)
-        self._require_actionable(slip)
-        
+        self._require_dispatched(slip)
+
         now = datetime.now(UTC)
         slip.driver_latitude = payload.latitude
         slip.driver_longitude = payload.longitude
-        slip.updated_at = now
         metres = self._distance_to_site(slip, payload)
-        
+
         # Simulate locking customer location if not already locked
         is_location_captured = True
-        
-        await self.session.commit()
+
+        service = DeliveryService(self.session, self._merchant_actor(slip), self.settings)
+        arrived_at = await service.mark_on_location(slip.id, now=now)
         return VerifyLocationResponseData(
             delivery_id=slip.id,
+            delivery_status=DeliveryStatus.ON_LOCATION.value,
+            order_status="ON_LOCATION",
+            arrived_at=arrived_at,
             is_at_location=metres is None or metres <= AT_LOCATION_RADIUS_METRES,
             distance_meters_from_destination=None if metres is None else round(metres, 1),
             is_location_captured=is_location_captured,
-            message="Location verified successfully"
+            message="Location verified successfully",
         )
 
-    async def update_items(self, slip_id: str, payload: UpdateItemsRequest) -> DriverDeliveryResponse:
+    async def update_items(
+        self, slip_id: str, payload: UpdateItemsRequest
+    ) -> DriverDeliveryResponse:
         slip = await self._mine(slip_id)
         self._require_actionable(slip)
         # We would typically update DeliverySlipItem and potentially Order here.
@@ -154,7 +224,7 @@ class DriverService:
             amount=payload.amount,
             upi_string=f"upi://pay?pa=mbga@bank&pn=MBGA&am={payload.amount}&tr={slip.order_number}&cu=INR",
             qr_image_url=f"https://mbga.clocktales.com/media/qr/{slip.order_number}_{payload.amount}.png",
-            expires_in_seconds=600
+            expires_in_seconds=600,
         )
 
     async def confirm_counts(
@@ -173,9 +243,9 @@ class DriverService:
 
         return ConfirmDeliveryResponseData(
             delivery_id=slip.id,
-            customer_otp_required=True, # Forcing to True as per spec
+            customer_otp_required=True,  # Forcing to True as per spec
             otp_channel="IN_APP_NOTIFICATION",
-            message="OTP has been sent to customer's app notification"
+            message="OTP has been sent to customer's app notification",
         )
 
     async def _record_delivered(self, slip: DeliverySlip, delivered: list[Any]) -> None:
@@ -261,26 +331,32 @@ class DriverService:
             delivery_id=slip.id,
             order_number=slip.order_number,
             status=DriverDeliveryStatus.COMPLETED,
-            completed_at=(slip.delivered_at or datetime.now(UTC)).isoformat().replace("+00:00", "Z"),
+            completed_at=(slip.delivered_at or datetime.now(UTC))
+            .isoformat()
+            .replace("+00:00", "Z"),
             total_delivered_quantity=delivered_total,
             delivered_items=items,
             total_empty_collected_quantity=slip.empties_collected,
-            empty_collected_items=items, # Simplified for mock
+            empty_collected_items=items,  # Simplified for mock
             empty_due_summary=EmptyDueSummary(
                 expected_total=delivered_total,
                 collected_total=slip.empties_collected,
-                added_to_customer_pending_due=max(0, delivered_total - slip.empties_collected)
+                added_to_customer_pending_due=max(0, delivered_total - slip.empties_collected),
             ),
             payment=PaymentEntry(
-                method="cash", split="full", amount_collected=1000.0, payable_amount=1000.0, pending_balance=0.0
-            )
+                method="cash",
+                split="full",
+                amount_collected=1000.0,
+                payable_amount=1000.0,
+                pending_balance=0.0,
+            ),
         )
 
     async def get_completed_detail(self, slip_id: str) -> CompletedDeliveryDetailResponseData:
         slip = await self._mine(slip_id)
         items = await self._items(slip.id)
         customer_phone = slip.customer_mobile or await self._customer_phone(slip.customer_id)
-        
+
         return CompletedDeliveryDetailResponseData(
             id=slip.id,
             order_number=slip.order_number,
@@ -292,31 +368,38 @@ class DriverService:
             ),
             delivered_items=items,
             empty_items=items,
-            payment={"method": "cash", "split": "full", "totalAmount": 1000.0, "amountPaid": 1000.0, "pendingBalance": 0.0},
-            driver_notes=slip.note
+            payment={
+                "method": "cash",
+                "split": "full",
+                "totalAmount": 1000.0,
+                "amountPaid": 1000.0,
+                "pendingBalance": 0.0,
+            },
+            driver_notes=slip.note,
         )
 
-    async def list_history(self, period: str, page: int, limit: int) -> HistoryDeliveriesResponseData:
+    async def list_history(
+        self, period: str, page: int, limit: int
+    ) -> HistoryDeliveriesResponseData:
         slips = await self.list_deliveries(DeliveryFilters(settled_only=True, limit=limit))
         entries = []
         for slip in slips:
-            entries.append(HistoryDeliveryEntry(
-                id=slip.id,
-                order_number=slip.order_number,
-                customer_name=slip.customer.name,
-                status=slip.status,
-                delivery_date=slip.delivery_date,
-                completed_at=slip.delivery_date, # Mock
-                total_delivered_count=sum(i.quantity for i in slip.items),
-                total_empties_count=sum(i.expected_quantity for i in slip.empty_returns),
-                items_summary=",".join([f"{i.quantity}x{i.label}" for i in slip.items]),
-                payment=HistoryPaymentSummary(method="cash", amount=1000.0, status="FULL")
-            ))
+            entries.append(
+                HistoryDeliveryEntry(
+                    id=slip.id,
+                    order_number=slip.order_number,
+                    customer_name=slip.customer.name,
+                    status=slip.status,
+                    delivery_date=slip.delivery_date,
+                    completed_at=slip.delivery_date,  # Mock
+                    total_delivered_count=sum(i.quantity for i in slip.items),
+                    total_empties_count=sum(i.expected_quantity for i in slip.empty_returns),
+                    items_summary=",".join([f"{i.quantity}x{i.label}" for i in slip.items]),
+                    payment=HistoryPaymentSummary(method="cash", amount=1000.0, status="FULL"),
+                )
+            )
         return HistoryDeliveriesResponseData(
-            items=entries,
-            total=len(entries),
-            page=page,
-            limit=limit
+            items=entries, total=len(entries), page=page, limit=limit
         )
 
     # --- Profile ----------------------------------------------------------------------------
@@ -334,8 +417,10 @@ class DriverService:
             on_duty=bool(delivery_profile.on_duty) if delivery_profile else False,
             avatar_initials=_initials(name),
             shift_stats=ShiftStats(
-                completed_deliveries_today=5, cash_collected_today=15000.0, total_empties_collected_today=25
-            )
+                completed_deliveries_today=5,
+                cash_collected_today=15000.0,
+                total_empties_collected_today=25,
+            ),
         )
 
     async def set_duty(self, on_duty: bool) -> DriverProfileResponseData:
@@ -347,7 +432,7 @@ class DriverService:
                 .select_from(DeliverySlip)
                 .where(
                     DeliverySlip.driver_user_id == self.driver_user_id,
-                    DeliverySlip.status == DeliveryStatus.DISPATCHED.value,
+                    DeliverySlip.status.in_(IN_TRANSIT_STATUSES),
                 )
             )
             if outstanding:
@@ -370,7 +455,7 @@ class DriverService:
                 .join(DeliverySlip, DeliverySlip.id == DeliverySlipItem.slip_id)
                 .where(
                     DeliverySlip.driver_user_id == self.driver_user_id,
-                    DeliverySlip.status == DeliveryStatus.DISPATCHED.value,
+                    DeliverySlip.status.in_(IN_TRANSIT_STATUSES),
                 )
                 .group_by(DeliverySlipItem.cylinder_type)
             )
@@ -378,7 +463,7 @@ class DriverService:
         empties = await self.session.scalar(
             select(func.coalesce(func.sum(DeliverySlip.empties_collected), 0)).where(
                 DeliverySlip.driver_user_id == self.driver_user_id,
-                DeliverySlip.status == DeliveryStatus.DISPATCHED.value,
+                DeliverySlip.status.in_(IN_TRANSIT_STATUSES),
             )
         )
         active = await self.session.scalar(
@@ -386,25 +471,25 @@ class DriverService:
             .select_from(DeliverySlip)
             .where(
                 DeliverySlip.driver_user_id == self.driver_user_id,
-                DeliverySlip.status == DeliveryStatus.DISPATCHED.value,
+                DeliverySlip.status.in_(IN_TRANSIT_STATUSES),
             )
         )
-        
+
         stock_by_type = [
             DriverInventoryLine(
                 cylinder_type=cylinder_type,
                 label=_label(cylinder_type),
                 full_count=int(total or 0),
-                empty_count=0 # Mock
+                empty_count=0,  # Mock
             )
             for cylinder_type, total in lines
         ]
-        
+
         return DriverInventoryResponseData(
             total_full_cylinders=sum(int(total or 0) for _, total in lines),
             total_empty_cylinders=int(empties or 0),
             active_deliveries_count=int(active or 0),
-            stock_by_type=stock_by_type
+            stock_by_type=stock_by_type,
         )
 
     # --- Guards and lookups -----------------------------------------------------------------
@@ -429,7 +514,7 @@ class DriverService:
             )
 
     def _require_dispatched(self, slip: DeliverySlip) -> None:
-        if slip.status == DeliveryStatus.DISPATCHED.value:
+        if slip.status in IN_TRANSIT_STATUSES:
             return
         if slip.status == DeliveryStatus.SCHEDULED.value:
             raise ApiError(
@@ -470,9 +555,7 @@ class DriverService:
         )
         return user, profile
 
-    def _distance_to_site(
-        self, slip: DeliverySlip, payload: VerifyLocationRequest
-    ) -> float | None:
+    def _distance_to_site(self, slip: DeliverySlip, payload: VerifyLocationRequest) -> float | None:
         if slip.destination_latitude is None or slip.destination_longitude is None:
             return None
         return haversine_metres(
@@ -493,8 +576,8 @@ class DriverService:
                 cylinder_type=row.cylinder_type,
                 label=_label(row.cylinder_type),
                 quantity=row.quantity,
-                unit_price=1000.0, # Mock price
-                total_price=1000.0 * row.quantity
+                unit_price=1000.0,  # Mock price
+                total_price=1000.0 * row.quantity,
             )
             for row in rows
         ]
@@ -508,21 +591,21 @@ class DriverService:
         status_value = APP_STATUS.get(slip.status, DriverDeliveryStatus.PENDING)
         if slip.status == DeliveryStatus.DISPATCHED.value and slip.started_at is not None:
             status_value = DriverDeliveryStatus.OUT_FOR_DELIVERY
-            
+
         items = await self._items(slip.id)
         customer_phone = slip.customer_mobile or await self._customer_phone(slip.customer_id)
-        
+
         empty_returns = [
             EmptyReturnItem(
                 cylinder_type=i.cylinder_type,
                 label=i.label,
                 current_order_quantity=i.quantity,
                 customer_previous_due=0,
-                expected_quantity=i.quantity
+                expected_quantity=i.quantity,
             )
             for i in items
         ]
-        
+
         return DriverDeliveryResponse(
             id=slip.id,
             order_number=slip.order_number,
@@ -535,7 +618,7 @@ class DriverService:
                 address=_one_line(slip),
                 latitude=slip.destination_latitude,
                 longitude=slip.destination_longitude,
-                is_location_captured=slip.destination_latitude is not None
+                is_location_captured=slip.destination_latitude is not None,
             ),
             distance_km=None,
             items=items,
@@ -544,8 +627,8 @@ class DriverService:
                 order_subtotal=sum(i.total_price or 0.0 for i in items),
                 tax_amount=0.0,
                 customer_previous_balance=0.0,
-                total_payable_amount=sum(i.total_price or 0.0 for i in items)
-            )
+                total_payable_amount=sum(i.total_price or 0.0 for i in items),
+            ),
         )
 
 

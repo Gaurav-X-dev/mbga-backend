@@ -1,6 +1,5 @@
 """The delivery app's routes (API_REFERENCE §6-§10). Delivery channel only."""
 
-from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -10,22 +9,25 @@ from app.config.app import Settings, get_settings
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.dependencies import ActorDep
 from app.modules.driver.schemas import (
+    CancelDeliveryRequest,
+    CancelDeliveryResponseData,
+    CompletedDeliveryDetailResponseData,
     ConfirmDeliveryRequest,
     ConfirmDeliveryResponseData,
-    CompletedDeliveryDetailResponseData,
     DriverDeliveryResponse,
     DriverInventoryResponseData,
     DriverProfileResponseData,
+    GenerateQrRequest,
+    GenerateQrResponseData,
     HistoryDeliveriesResponseData,
+    OutForDeliveryBulkRequest,
     OutForDeliveryResponseData,
     UpdateDutyRequest,
+    UpdateItemsRequest,
     VerifyCustomerOtpRequest,
     VerifyCustomerOtpResponseData,
     VerifyLocationRequest,
     VerifyLocationResponseData,
-    UpdateItemsRequest,
-    GenerateQrRequest,
-    GenerateQrResponseData,
 )
 from app.modules.driver.service import DeliveryFilters, DriverService
 from app.shared.authorization.dependencies import require_login_channel, require_permission
@@ -56,6 +58,7 @@ driver_router = APIRouter(prefix="/driver", tags=["Delivery Driver"])
 
 # --- Deliveries ------------------------------------------------------------------------------
 
+
 @deliveries_router.get(
     "/today",
     response_model=list[DriverDeliveryResponse],
@@ -65,6 +68,24 @@ driver_router = APIRouter(prefix="/driver", tags=["Delivery Driver"])
 async def todays_deliveries(service: ServiceDep) -> list[DriverDeliveryResponse]:
     data = await service.list_deliveries(DeliveryFilters(scheduled_on=business_today()))
     return data
+
+
+@deliveries_router.post(
+    "/out-for-delivery",
+    response_model=list[OutForDeliveryResponseData],
+    dependencies=_write_guards,
+    responses=error_responses(401, 403, 404, 409, 422),
+    summary="Set off with a whole round",
+)
+async def out_for_delivery_many(
+    payload: OutForDeliveryBulkRequest, service: ServiceDep
+) -> list[OutForDeliveryResponseData]:
+    """The van has left the godown carrying all of these.
+
+    All or nothing: one press is one event, so slips that half moved would describe a van that is
+    both out and not. Each order moves to `OUT_FOR_DELIVERY` and each customer is told.
+    """
+    return await service.out_for_delivery_many(payload.delivery_ids)
 
 
 @deliveries_router.post(
@@ -80,14 +101,36 @@ async def out_for_delivery(
 
 
 @deliveries_router.post(
+    "/{deliveryId}/cancel",
+    response_model=CancelDeliveryResponseData,
+    dependencies=_write_guards,
+    responses=error_responses(401, 403, 404, 409, 422),
+    summary="Cancel an unsuccessful delivery with customer OTP",
+)
+async def cancel_delivery(
+    delivery_id: DeliveryIdPath,
+    payload: CancelDeliveryRequest,
+    service: ServiceDep,
+) -> CancelDeliveryResponseData:
+    """Close the dispatched slip as failed and its order as cancelled.
+
+    The same OTP sent when the driver set off proves that the customer acknowledged the outcome.
+    A later delivery requires a new order; there is no reschedule action.
+    """
+    return await service.cancel_delivery(delivery_id, payload)
+
+
+@deliveries_router.post(
     "/{deliveryId}/verify-location",
     response_model=VerifyLocationResponseData,
     dependencies=_write_guards,
     responses=error_responses(401, 403, 404, 409, 422),
+    summary="I am on location",
 )
 async def verify_location(
     delivery_id: DeliveryIdPath, payload: VerifyLocationRequest, service: ServiceDep
 ) -> VerifyLocationResponseData:
+    """Capture the driver's GPS fix and publish ON_LOCATION to all three apps."""
     return await service.verify_location(delivery_id, payload)
 
 
@@ -168,6 +211,7 @@ async def delivery_history(
 
 # --- Driver ---------------------------------------------------------------------------------
 
+
 @driver_router.get(
     "/inventory",
     response_model=DriverInventoryResponseData,
@@ -184,9 +228,7 @@ async def van_inventory(service: ServiceDep) -> DriverInventoryResponseData:
     dependencies=_write_guards,
     responses=error_responses(401, 403, 404, 409),
 )
-async def set_duty(
-    payload: UpdateDutyRequest, service: ServiceDep
-) -> DriverProfileResponseData:
+async def set_duty(payload: UpdateDutyRequest, service: ServiceDep) -> DriverProfileResponseData:
     return await service.set_duty(payload.on_duty)
 
 

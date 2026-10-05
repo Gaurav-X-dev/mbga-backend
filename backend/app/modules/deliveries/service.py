@@ -36,6 +36,8 @@ from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 from app.modules.deliveries import codes, validation
 from app.modules.deliveries.constants import (
     ALL_STATUSES,
+    IN_TRANSIT_STATUSES,
+    LIVE_STATUSES,
     MAX_CODE_ATTEMPTS,
     STATUS_RANK,
     ConfirmationMethod,
@@ -53,10 +55,11 @@ from app.modules.deliveries.schemas import (
 from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.inventory.ledger import StockLedger
 from app.modules.notifications.events import deliveries as delivery_events
+from app.modules.notifications.events import orders as order_events
 from app.modules.notifications.events import payments as payment_events
 from app.modules.orders import transitions
 from app.modules.orders.constants import ORDER_LABELS, OrderStatus
-from app.modules.orders.models import Order, OrderItem
+from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
 from app.modules.payments.invoicing import InvoiceRaiser
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
@@ -118,21 +121,38 @@ class DeliveryService:
 
     # --- Raising a slip ---------------------------------------------------------------------
 
-    async def create(self, payload: CreateDeliverySlipRequest) -> DeliverySlipResponse:
+    async def create(
+        self, payload: CreateDeliverySlipRequest, *, commit: bool = True
+    ) -> DeliverySlipResponse:
         """Raise a slip against a confirmed order (an addition - see the schema's docstring).
 
         Nothing leaves the godown here and no stock moves: this is the loading instruction. The
-        stock check happens at dispatch, deliberately, because a slip is often raised the evening
-        before and the refill truck comes in the morning.
+        stock check happens when the driver sets off, deliberately, because a slip is often
+        raised the evening before and the refill truck comes in the morning.
+
+        `commit=False` for the caller that confirms an order and assigns it in one step: the two
+        belong in one transaction, so an order whose van could not be assigned is not left
+        accepted with nobody on it.
         """
         order = await self._slippable_order(payload.order_id)
-        driver = await self._crew_member(payload.driver_user_id, role="driver")
-        helper = await self._crew_member(payload.helper_user_id, role="helper")
+        vehicle = validation.check_vehicle_number(payload.vehicle_number)
+        scheduled_date = _scheduled(payload.scheduled_date, order)
+        driver = await self._crew_member(
+            payload.driver_user_id,
+            role="driver",
+            vehicle_number=vehicle,
+            scheduled_date=scheduled_date,
+        )
+        helper = await self._crew_member(
+            payload.helper_user_id,
+            role="helper",
+            vehicle_number=vehicle,
+            scheduled_date=scheduled_date,
+        )
         driver_name = validation.resolve_driver_name(
             payload, await self._account_name(driver, payload.driver_user_id)
         )
         method = validation.check_confirmation_method(payload.confirmation_method)
-        vehicle = validation.check_vehicle_number(payload.vehicle_number)
 
         now = datetime.now(UTC)
         items = await self._order_items(order.id)
@@ -166,7 +186,7 @@ class DeliveryService:
             helper_name=validation.resolve_helper_name(
                 payload, await self._account_name(helper, payload.helper_user_id)
             ),
-            scheduled_date=_scheduled(payload.scheduled_date, order),
+            scheduled_date=scheduled_date,
             empties_collected=0,
             confirmation_method=method.value,
             # Minted at dispatch, not here: a slip raised the evening before should not carry a
@@ -199,13 +219,24 @@ class DeliveryService:
         order.delivery_slip_id = slip.id
         order.updated_at = now
         self._notify_assignment(slip)
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            # The caller owns the transaction, but the slip has to exist before anything reads
+            # it back - the view below among them.
+            await self.session.flush()
         return await self._view(slip)
 
     # --- Dispatch ---------------------------------------------------------------------------
 
-    async def dispatch(self, slip_id: str) -> DeliverySlipResponse:
-        """Mark a slip dispatched (spec §10.3).
+    async def dispatch(self, slip_id: str, *, commit: bool = True) -> DeliverySlipResponse:
+        """Mark a slip dispatched - the van has set off (spec §10.3).
+
+        Called by the **delivery app**, not the office: the customer's "on the way" notification
+        goes out from here, and the office pressing it meant a customer was told their cylinders
+        were on the road while the driver had not opened his phone. `commit=False` is for the
+        driver setting off with a whole round at once, where the slips move together or not at
+        all.
 
         The stock is **checked but not deducted**. Cylinders on a van are still the merchant's -
         the delivery can fail and bring them back - so the counts move at handover instead, in
@@ -229,7 +260,9 @@ class DeliveryService:
 
         # The code the customer will read out at the gate. Minted here, told to them in the
         # notification below, and kept only as a hash.
-        code = codes.generate() if slip.confirmation_method == ConfirmationMethod.OTP.value else None
+        code = (
+            codes.generate() if slip.confirmation_method == ConfirmationMethod.OTP.value else None
+        )
         slip.status = DeliveryStatus.DISPATCHED.value
         slip.dispatched_at = now
         slip.dispatched_by_name = self.actor.display_name
@@ -248,11 +281,8 @@ class DeliveryService:
             note=f"Vehicle {slip.vehicle_number} · {slip.driver_name}",
             now=now,
         )
-        # Repeatable, because an order can legitimately go out twice: a van that comes back
-        # loaded is failed and a second slip raised, and the customer then needs a fresh
-        # notification - not least because the replacement slip carries a **new** code, and the
-        # one they were already shown no longer confirms anything. Keyed on the order, since
-        # tapping the notification opens the order, so a plain insert would collide.
+        # Kept repeatable for safe retries and legacy orders that may already have more than one
+        # slip. New failed deliveries cancel the order and cannot be rescheduled.
         await self.notifications.queue_repeatable(
             delivery_events.out_for_delivery(
                 slip.customer_id,
@@ -262,8 +292,80 @@ class DeliveryService:
                 confirmation_code=code,
             )
         )
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return await self._view(slip, reveal_code=code)
+
+    async def mark_on_location(
+        self, slip_id: str, *, now: datetime | None = None, commit: bool = True
+    ) -> datetime:
+        """Mark the driver as arrived and tell both the customer and merchant.
+
+        Idempotent because a handset may retry after losing the response. The slip and order move
+        together, the order history is appended once, and both notifications share that same
+        transaction.
+        """
+        slip = await self._owned(slip_id)
+        if slip.status == DeliveryStatus.ON_LOCATION.value:
+            arrived_at = await self.session.scalar(
+                select(OrderStatusHistory.changed_at)
+                .where(
+                    OrderStatusHistory.order_id == slip.order_id,
+                    OrderStatusHistory.status == OrderStatus.ON_LOCATION.value,
+                )
+                .order_by(OrderStatusHistory.changed_at.desc(), OrderStatusHistory.id.desc())
+                .limit(1)
+            )
+            if commit:
+                await self.session.commit()
+            else:
+                await self.session.flush()
+            return arrived_at or slip.updated_at
+        self._require_status(
+            slip,
+            DeliveryStatus.ON_LOCATION,
+            ready=DeliveryStatus.DISPATCHED,
+        )
+        order = await self._order_of(slip, lock=True)
+        moment = now or datetime.now(UTC)
+        slip.status = DeliveryStatus.ON_LOCATION.value
+        slip.updated_at = moment
+        moved = transitions.advance(
+            self.session,
+            order,
+            OrderStatus.ON_LOCATION,
+            by_name=self.actor.display_name,
+            by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
+            note=f"Driver {slip.driver_name} reached the delivery location.",
+            now=moment,
+        )
+        if moved:
+            self.notifications.queue(
+                delivery_events.on_location_customer(
+                    slip.customer_id,
+                    order.id,
+                    slip.order_number,
+                    driver_name=slip.driver_name,
+                )
+            )
+            self.notifications.queue(
+                delivery_events.on_location_merchant(
+                    self.merchant_id,
+                    order.id,
+                    slip.order_number,
+                    driver_name=slip.driver_name,
+                    customer_name=slip.customer_name,
+                )
+            )
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
+        return moment
 
     # --- Confirmation -----------------------------------------------------------------------
 
@@ -275,7 +377,11 @@ class DeliveryService:
         slip is not confirmed by the eleventh guess.
         """
         slip = await self._owned(slip_id)
-        self._require_status(slip, DeliveryStatus.DELIVERED, ready=DeliveryStatus.DISPATCHED)
+        self._require_status(
+            slip,
+            DeliveryStatus.DELIVERED,
+            ready=(DeliveryStatus.DISPATCHED, DeliveryStatus.ON_LOCATION),
+        )
         collected = validation.check_empties(payload.empties_collected, slip.cylinders_allocated)
         await self._check_code(slip, payload.otp)
 
@@ -355,39 +461,47 @@ class DeliveryService:
         left the books: the counts only drop at handover. The van is simply released, and the
         cylinders were the merchant's the whole time.
 
-        `returnedToStock: false` is the other case - the cylinders were left with the customer
-        even though the handover was never confirmed. Those are genuinely gone, so they come off
-        the count here rather than sitting on the books for ever.
-
-        The order stays OUT_FOR_DELIVERY either way. The transition table forbids reversing it,
-        and silently walking an order backwards would lose the fact that it once went out. The
-        office reschedules by raising another slip against it, which `_slippable_order` allows
-        precisely because this one is no longer live.
+        The customer's OTP is required for the same reason it is required for a successful
+        handover: the driver cannot close the customer's order unilaterally. A failed delivery is
+        final for the order; a later attempt starts as a new order.
         """
         slip = await self._owned(slip_id)
-        if slip.status not in {DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value}:
-            raise self._settled(slip)
+        self._require_status(
+            slip,
+            DeliveryStatus.FAILED,
+            ready=(DeliveryStatus.DISPATCHED, DeliveryStatus.ON_LOCATION),
+        )
+        await self._check_code(slip, payload.otp)
         now = datetime.now(UTC)
-        was_dispatched = slip.status == DeliveryStatus.DISPATCHED.value
-
-        if was_dispatched and not payload.returned_to_stock:
-            # Left with the customer without a confirmation. They are gone, so the count says so.
-            await StockLedger(self.session, self.merchant_id).deliver(
-                await self._lines(slip.id),
-                reference_id=slip.id,
-                recorded_by_user_id=self.actor.user_id,
-                recorded_by_name=self.actor.display_name,
-                now=now,
-            )
 
         slip.status = DeliveryStatus.FAILED.value
         slip.failure_reason = payload.reason.strip()
         slip.confirmation_code_hash = None
         slip.updated_at = now
+        # The order is cancelled with the slip. A failed delivery used to leave it out for
+        # delivery with nothing carrying it - not deliverable, because the slip had failed, and
+        # not cancellable, because the table stopped there - so the order sat for ever claiming
+        # to be on a van. Cancelling tells the customer where they stand and lets them order
+        # again, which is a worse day than a redelivery but an honest one.
+        order = await self._order_of(slip, lock=True)
+        transitions.advance(
+            self.session,
+            order,
+            OrderStatus.CANCELLED,
+            by_name=self.actor.display_name,
+            by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
+            note=f"Delivery failed: {payload.reason.strip()}",
+            now=now,
+        )
         self.notifications.queue(
             delivery_events.delivery_failed(
                 self.merchant_id, slip.order_id, slip.order_number, reason=payload.reason.strip()
             )
+        )
+        self.notifications.queue(
+            order_events.order_cancelled_customer(slip.customer_id, order.id, slip.order_number)
         )
         if slip.driver_user_id:
             self.notifications.queue(
@@ -401,14 +515,19 @@ class DeliveryService:
     # --- Guards -----------------------------------------------------------------------------
 
     def _require_status(
-        self, slip: DeliverySlip, target: DeliveryStatus, *, ready: DeliveryStatus
+        self,
+        slip: DeliverySlip,
+        target: DeliveryStatus,
+        *,
+        ready: DeliveryStatus | tuple[DeliveryStatus, ...],
     ) -> None:
         """Refuse with the reason the app shows, not a generic conflict.
 
         Spec §10.4 asks for two distinct messages - "already confirmed" and "not been dispatched
         yet" - because they call for opposite actions from whoever is holding the phone.
         """
-        if slip.status == ready.value:
+        ready_statuses = (ready,) if isinstance(ready, DeliveryStatus) else ready
+        if slip.status in {item.value for item in ready_statuses}:
             return
         if slip.status == target.value:
             raise ApiError(
@@ -419,7 +538,7 @@ class DeliveryService:
         raise ApiError(
             "DELIVERY_NOT_READY",
             http_status.HTTP_409_CONFLICT,
-            validation.not_ready_message(slip.slip_number, slip.status, ready),
+            validation.not_ready_message(slip.slip_number, slip.status, ready_statuses[0]),
         )
 
     def _settled(self, slip: DeliverySlip) -> ApiError:
@@ -484,9 +603,7 @@ class DeliveryService:
         existing = await self.session.scalar(
             self._scope(select(DeliverySlip)).where(
                 DeliverySlip.order_id == order.id,
-                DeliverySlip.status.in_(
-                    [DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value]
-                ),
+                DeliverySlip.status.in_(LIVE_STATUSES),
             )
         )
         if existing is not None:
@@ -532,7 +649,14 @@ class DeliveryService:
             raise _not_found()
         return order
 
-    async def _crew_member(self, user_id: str | None, *, role: str) -> DeliveryProfile | None:
+    async def _crew_member(
+        self,
+        user_id: str | None,
+        *,
+        role: str,
+        vehicle_number: str,
+        scheduled_date: date,
+    ) -> DeliveryProfile | None:
         """A delivery profile of this merchant, active and approved, or a coded refusal.
 
         Checked rather than trusted: a slip naming a blocked driver, or one belonging to another
@@ -552,27 +676,45 @@ class DeliveryService:
             )
             .with_for_update()
         )
-        return validation.check_crew(profile, role=role, busy=await self._is_busy(user_id))
+        return validation.check_crew(
+            profile,
+            role=role,
+            busy=await self._has_conflicting_assignment(
+                user_id,
+                role=role,
+                vehicle_number=vehicle_number,
+                scheduled_date=scheduled_date,
+            ),
+        )
 
-    async def _is_busy(self, user_id: str) -> bool:
-        """Whether this person is already carrying a slip nobody has settled.
+    async def _has_conflicting_assignment(
+        self, user_id: str, *, role: str, vehicle_number: str, scheduled_date: date
+    ) -> bool:
+        """Whether this person is assigned to a different live delivery round.
 
-        `SCHEDULED` counts with `DISPATCHED`: the crew is spoken for from the moment the office
-        assigns them, and a second slip for the same person is a double-booking that surfaces as
-        two vans waiting for one driver.
+        A round contains several order slips, so another slip on the same vehicle and date is
+        compatible. A different vehicle/date or switching between driver and helper is a real
+        conflict.
         """
-        live = [DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value]
-        existing = await self.session.scalar(
-            select(DeliverySlip.id).where(
-                DeliverySlip.merchant_id == self.merchant_id,
-                DeliverySlip.status.in_(live),
-                or_(
-                    DeliverySlip.driver_user_id == user_id,
-                    DeliverySlip.helper_user_id == user_id,
-                ),
+        assignments = list(
+            await self.session.scalars(
+                select(DeliverySlip).where(
+                    DeliverySlip.merchant_id == self.merchant_id,
+                    DeliverySlip.status.in_(LIVE_STATUSES),
+                    or_(
+                        DeliverySlip.driver_user_id == user_id,
+                        DeliverySlip.helper_user_id == user_id,
+                    ),
+                )
             )
         )
-        return existing is not None
+        role_field = "driver_user_id" if role == "driver" else "helper_user_id"
+        return any(
+            getattr(slip, role_field) != user_id
+            or slip.vehicle_number != vehicle_number
+            or slip.scheduled_date != scheduled_date
+            for slip in assignments
+        )
 
     async def _account_name(self, profile, user_id: str | None) -> str | None:
         """The crew member's real name, for the slip and for the customer's notification.
@@ -609,7 +751,7 @@ class DeliveryService:
             .join(DeliverySlip, DeliverySlip.id == DeliverySlipItem.slip_id)
             .where(
                 DeliverySlip.merchant_id == self.merchant_id,
-                DeliverySlip.status == DeliveryStatus.DISPATCHED.value,
+                DeliverySlip.status.in_(IN_TRANSIT_STATUSES),
             )
             .group_by(DeliverySlipItem.cylinder_type)
         )
@@ -733,7 +875,9 @@ class DeliveryService:
 
     # --- Views ------------------------------------------------------------------------------
 
-    async def _view(self, slip: DeliverySlip, *, reveal_code: str | None = None) -> DeliverySlipResponse:
+    async def _view(
+        self, slip: DeliverySlip, *, reveal_code: str | None = None
+    ) -> DeliverySlipResponse:
         # The money comes off the order rather than the slip: one billing record, one set of
         # numbers. The order's prices were frozen at placement, so this cannot drift.
         money = await self.session.execute(

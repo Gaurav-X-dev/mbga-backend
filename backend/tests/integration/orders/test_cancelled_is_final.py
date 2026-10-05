@@ -18,7 +18,8 @@ import pytest
 from sqlalchemy import select
 
 from app.modules.orders.models import Order, OrderStatusHistory
-from tests.integration.deliveries.conftest import DELIVERIES, ready_to_dispatch
+from tests.integration.deliveries.conftest import ready_to_dispatch
+from tests.integration.driver.conftest import DRIVER_DELIVERIES, driver_token
 from tests.integration.orders.conftest import ORDERS, code_of, post
 
 pytestmark = [pytest.mark.integration, pytest.mark.mysql]
@@ -38,10 +39,13 @@ async def status_of(env, order_id: str) -> str:
 
 async def test_a_cancelled_order_cannot_be_dispatched(env):
     """The headline case: the van must not go out for an order that was called off."""
-    token, _merchant, order, slip, _driver = await ready_to_dispatch(env)
+    token, _merchant, order, slip, driver = await ready_to_dispatch(env)
     assert (await cancel(env, token, order["id"])).status_code == 200
+    delivery_token = await driver_token(env, driver)
 
-    response = await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", delivery_token
+    )
 
     assert response.status_code == 409
     assert code_of(response) == "ORDER_ALREADY_CANCELLED"
@@ -54,10 +58,13 @@ async def test_the_refusal_tells_a_stale_screen_to_reload(env):
     `INVALID_ORDER_STATUS` would say the move was illegal. This says the order is gone, which is
     the difference between offering a retry and reloading it as cancelled.
     """
-    token, _merchant, order, slip, _driver = await ready_to_dispatch(env)
+    token, _merchant, order, slip, driver = await ready_to_dispatch(env)
     await cancel(env, token, order["id"])
+    delivery_token = await driver_token(env, driver)
 
-    response = await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", delivery_token
+    )
 
     body = response.json()["detail"]
     assert body["code"] == "ORDER_ALREADY_CANCELLED"
@@ -75,11 +82,12 @@ async def test_cancelling_and_dispatching_at_once_leaves_one_winner(env):
     and that the order's final status is the one that request produced. Before the lock both
     could succeed, and the trail then held `CANCELLED` followed by `OUT_FOR_DELIVERY`.
     """
-    token, _merchant, order, slip, _driver = await ready_to_dispatch(env)
+    token, _merchant, order, slip, driver = await ready_to_dispatch(env)
+    delivery_token = await driver_token(env, driver)
 
     cancelling, dispatching = await asyncio.gather(
         cancel(env, token, order["id"]),
-        env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token),
+        env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", delivery_token),
         return_exceptions=True,
     )
 
@@ -100,8 +108,9 @@ async def test_cancelling_and_dispatching_at_once_leaves_one_winner(env):
 
 async def test_the_trail_names_the_app_and_the_role(env):
     """Without these the trail cannot answer which app moved an order, only that someone did."""
-    token, _merchant, order, slip, _driver = await ready_to_dispatch(env)
-    await env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token)
+    _token, _merchant, order, slip, driver = await ready_to_dispatch(env)
+    delivery_token = await driver_token(env, driver)
+    await env.post(f"{DRIVER_DELIVERIES}/{slip['id']}/out-for-delivery", delivery_token)
 
     async with env.sessions() as db:
         rows = (
@@ -116,7 +125,7 @@ async def test_the_trail_names_the_app_and_the_role(env):
     assert dispatched, [row.status for row in rows]
     moved = dispatched[-1]
     assert moved.previous_status == "CONFIRMED"
-    assert moved.source == "MERCHANT_APP"
+    assert moved.source == "DELIVERY_APP"
     assert moved.changed_by_role
     assert moved.changed_by_user_id
 

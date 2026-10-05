@@ -23,6 +23,7 @@ class OrderStatus(StrEnum):
     # step nobody worked in: allocating the cylinders *is* dispatching the van. A confirmed order
     # goes straight out for delivery when its slip is dispatched.
     OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY"
+    ON_LOCATION = "ON_LOCATION"
     DELIVERED = "DELIVERED"
     CANCELLED = "CANCELLED"
 
@@ -53,7 +54,15 @@ class StatusMeta:
 
     __slots__ = ("code", "description", "is_terminal", "label", "sequence", "tone")
 
-    def __init__(self, code: OrderStatus, label: str, sequence: int, tone: StatusTone, description: str, is_terminal: bool) -> None:
+    def __init__(
+        self,
+        code: OrderStatus,
+        label: str,
+        sequence: int,
+        tone: StatusTone,
+        description: str,
+        is_terminal: bool,
+    ) -> None:
         self.code = code
         self.label = label
         self.sequence = sequence
@@ -65,12 +74,45 @@ class StatusMeta:
 # Spec §6.1, verbatim. The apps render their timeline from this and hard-code no transitions,
 # so this table - not the app - is what a new status has to be added to.
 STATUS_CATALOGUE: tuple[StatusMeta, ...] = (
-    StatusMeta(OrderStatus.PLACED, "Order Placed", 1, StatusTone.INFO, "We have received your order.", False),
-    StatusMeta(OrderStatus.CONFIRMED, "Confirmed", 2, StatusTone.INFO, "Confirmed and scheduled for delivery.", False),
-    StatusMeta(OrderStatus.OUT_FOR_DELIVERY, "Out for Delivery", 3, StatusTone.WARNING, "Your cylinders are on the way.", False),
-    StatusMeta(OrderStatus.DELIVERED, "Delivered", 4, StatusTone.SUCCESS, "Delivered and confirmed.", True),
+    StatusMeta(
+        OrderStatus.PLACED,
+        "Order Placed",
+        1,
+        StatusTone.INFO,
+        "We have received your order.",
+        False,
+    ),
+    StatusMeta(
+        OrderStatus.CONFIRMED,
+        "Confirmed",
+        2,
+        StatusTone.INFO,
+        "Confirmed and scheduled for delivery.",
+        False,
+    ),
+    StatusMeta(
+        OrderStatus.OUT_FOR_DELIVERY,
+        "Out for Delivery",
+        3,
+        StatusTone.WARNING,
+        "Your cylinders are on the way.",
+        False,
+    ),
+    StatusMeta(
+        OrderStatus.ON_LOCATION,
+        "Driver On Location",
+        4,
+        StatusTone.WARNING,
+        "Your driver has reached the delivery location.",
+        False,
+    ),
+    StatusMeta(
+        OrderStatus.DELIVERED, "Delivered", 5, StatusTone.SUCCESS, "Delivered and confirmed.", True
+    ),
     # 99 keeps terminal failure states out of the timeline's numbered progression.
-    StatusMeta(OrderStatus.CANCELLED, "Cancelled", 99, StatusTone.ERROR, "This order was cancelled.", True),
+    StatusMeta(
+        OrderStatus.CANCELLED, "Cancelled", 99, StatusTone.ERROR, "This order was cancelled.", True
+    ),
 )
 
 STATUS_BY_CODE: dict[str, StatusMeta] = {meta.code.value: meta for meta in STATUS_CATALOGUE}
@@ -93,9 +135,14 @@ def status_label(code: str) -> str:
         return meta.label
     return RETIRED_STATUS_LABELS.get(code, code.replace("_", " ").title())
 
+
 #: `status=ACTIVE` on the list endpoint means every non-terminal status (spec §6.5).
-ACTIVE_STATUSES: tuple[str, ...] = tuple(meta.code.value for meta in STATUS_CATALOGUE if not meta.is_terminal)
-TERMINAL_STATUSES: frozenset[str] = frozenset(meta.code.value for meta in STATUS_CATALOGUE if meta.is_terminal)
+ACTIVE_STATUSES: tuple[str, ...] = tuple(
+    meta.code.value for meta in STATUS_CATALOGUE if not meta.is_terminal
+)
+TERMINAL_STATUSES: frozenset[str] = frozenset(
+    meta.code.value for meta in STATUS_CATALOGUE if meta.is_terminal
+)
 
 #: The filter word meaning "do not filter by status".
 ALL_STATUSES = "ALL"
@@ -106,13 +153,27 @@ ACTIVE_FILTER = "ACTIVE"
 # testable on its own.
 STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     OrderStatus.PLACED.value: frozenset({OrderStatus.CONFIRMED.value, OrderStatus.CANCELLED.value}),
-    # Straight onto the van: dispatching the slip is the only thing that moves it, and that
-    # happens the moment the cylinders are loaded.
+    # Confirming an order assigns it, so a confirmed order already has a van and crew. It moves
+    # when the **driver** sets off, not when the office presses anything: the customer's "on the
+    # way" goes out from there, and it used to be sent while the driver had not opened his phone.
     OrderStatus.CONFIRMED.value: frozenset(
         {OrderStatus.OUT_FOR_DELIVERY.value, OrderStatus.CANCELLED.value}
     ),
-    # Once it is on the van, cancelling is a delivery failure, not an order cancellation.
-    OrderStatus.OUT_FOR_DELIVERY.value: frozenset({OrderStatus.DELIVERED.value}),
+    # A van that comes back loaded cancels the order rather than stranding it. The alternative
+    # was an order nothing could move: not deliverable, because its slip had failed, and not
+    # cancellable, because the table stopped there. The customer is told and places a new order,
+    # which is a worse day for them than a redelivery but an honest one - and far better than an
+    # order that sits for ever claiming to be out.
+    OrderStatus.OUT_FOR_DELIVERY.value: frozenset(
+        {
+            OrderStatus.ON_LOCATION.value,
+            OrderStatus.DELIVERED.value,
+            OrderStatus.CANCELLED.value,
+        }
+    ),
+    OrderStatus.ON_LOCATION.value: frozenset(
+        {OrderStatus.DELIVERED.value, OrderStatus.CANCELLED.value}
+    ),
     OrderStatus.DELIVERED.value: frozenset(),
     OrderStatus.CANCELLED.value: frozenset(),
 }

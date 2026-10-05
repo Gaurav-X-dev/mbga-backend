@@ -73,6 +73,48 @@ def delivered(
     )
 
 
+def on_location_customer(
+    customer_id: str,
+    order_id: str,
+    order_number: str,
+    driver_name: str | None = None,
+) -> NotificationEvent:
+    """To the customer: the driver has reached their delivery location."""
+    who = driver_name or "The driver"
+    return NotificationEvent(
+        event_type="DELIVERY_ON_LOCATION_CUSTOMER",
+        recipient_kind=CUSTOMER,
+        recipient_id=customer_id,
+        entity_type=ORDER,
+        entity_id=order_id,
+        title="Driver has arrived",
+        body=f"{who} has reached the delivery location for order {order_number}.",
+        severity=INFO,
+    )
+
+
+def on_location_merchant(
+    merchant_id: str,
+    order_id: str,
+    order_number: str,
+    driver_name: str | None = None,
+    customer_name: str | None = None,
+) -> NotificationEvent:
+    """To staff: the assigned driver has reached the customer's location."""
+    who = driver_name or "The driver"
+    customer = f" for {customer_name}" if customer_name else ""
+    return NotificationEvent(
+        event_type="DELIVERY_ON_LOCATION_MERCHANT",
+        recipient_kind=MERCHANT,
+        recipient_id=merchant_id,
+        entity_type=ORDER,
+        entity_id=order_id,
+        title="Driver on location",
+        body=f"{who} has reached the delivery location{customer} for order {order_number}.",
+        severity=INFO,
+    )
+
+
 # --- To the driver, on the delivery app ---------------------------------------------------
 #
 # Addressed to the person (`recipient_kind = "user"`), never to the merchant bucket: a job
@@ -157,11 +199,7 @@ def cancelled_in_transit(
 def delivery_failed(
     merchant_id: str, order_id: str, order_number: str, reason: str | None = None
 ) -> NotificationEvent:
-    """To staff: it came back. Somebody has to reschedule it.
-
-    Addressed to the merchant, not the customer: a failed delivery needs an internal
-    decision before the customer is told anything.
-    """
+    """To staff: the run failed and the order was cancelled."""
     why = f" {reason}" if reason else ""
     return NotificationEvent(
         event_type="DELIVERY_FAILED",
@@ -170,6 +208,6 @@ def delivery_failed(
         entity_type=ORDER,
         entity_id=order_id,
         title="Delivery failed",
-        body=f"Order {order_number} could not be delivered and needs rescheduling.{why}",
+        body=f"Order {order_number} could not be delivered and was cancelled.{why}",
         severity=WARNING,
     )

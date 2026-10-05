@@ -193,9 +193,17 @@ async def test_authentication_events_are_audited_without_secrets(env):
     assert rejected and rejected[-1].reason_code == "NUMBER_NOT_REGISTERED" and rejected[-1].result == "FAILURE"
 
     secrets = [login["token"]["access_token"], login["token"]["refresh_token"], TEST_OTP, driver.mobile_number, driver.mobile_number[3:], "audit-phone"]
-    for row in rows:
-        stored = " ".join(str(value) for value in (row.message, row.reason_code, row.masked_mobile, row.device_hash, row.entity_id) if value)
-        assert not any(secret in stored for secret in secrets)
+    # This driver's rows, not every `auth.%` row in the table. The secrets belong to this test,
+    # so another test's row cannot leak them - and scanning all of them made the assertion fail
+    # on a coincidence: `TEST_OTP` is four digits, `entity_id` is a UUID, and in a full run one
+    # of a few hundred UUIDs contained "4826". The check is "did *we* store a secret", which is
+    # what `mine` is.
+    #
+    # `entity_id` is excluded for the same reason: it is a generated id rather than anything
+    # derived from the credentials, so a substring of it says nothing about a leak.
+    for row in mine:
+        stored = " ".join(str(value) for value in (row.message, row.reason_code, row.masked_mobile, row.device_hash) if value)
+        assert not any(secret in stored for secret in secrets), f"{row.event_type} stored a secret"
     login_row = next(row for row in mine if row.event_type == "auth.login_succeeded")
     assert login_row.login_channel == "DELIVERY"
     assert login_row.ip_address and login_row.device_hash and len(login_row.device_hash) == 64

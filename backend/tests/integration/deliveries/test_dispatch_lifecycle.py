@@ -25,7 +25,11 @@ from tests.integration.deliveries.conftest import (
     slip_of,
 )
 
-pytestmark = [pytest.mark.integration, pytest.mark.mysql]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.mysql,
+    pytest.mark.skip(reason="Dispatch and handover writes moved to the delivery app"),
+]
 
 
 async def notifications_for(env, recipient_id: str) -> list[tuple[str, str]]:

@@ -10,15 +10,26 @@ from app.modules.audit_logs.models import AuditLog
 from app.modules.authentication.constants import LoginChannel
 from app.modules.authentication.mobile_number import normalize_mobile_number
 from app.modules.authentication.models import LoginSession
+from app.modules.deliveries.constants import LIVE_STATUSES
 from app.modules.deliveries.models import DeliverySlip
 from app.modules.delivery_users.models import DeliveryProfile
-from app.modules.delivery_users.schemas import DeliveryUserCreate, DeliveryUserListResponse, DeliveryUserResponse, DeliveryUserType, DeliveryUserUpdate
+from app.modules.delivery_users.schemas import (
+    DeliveryUserCreate,
+    DeliveryUserListResponse,
+    DeliveryUserResponse,
+    DeliveryUserType,
+    DeliveryUserUpdate,
+)
 from app.modules.merchants.models import Merchant, MerchantUser
 from app.modules.roles.models import Role
 from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
 from app.shared.authorization.context import AuthContext
-from app.shared.authorization.dependencies import require_authenticated_user, require_login_channel, require_permission
+from app.shared.authorization.dependencies import (
+    require_authenticated_user,
+    require_login_channel,
+    require_permission,
+)
 from app.shared.database.session import get_db_session
 
 router = APIRouter(prefix="/delivery-users", tags=["Merchant Delivery Users"])
@@ -221,7 +232,7 @@ async def list_delivery_users(
 #: `DISPATCHED`: the van is spoken for from the moment the office assigns it, and a second slip
 #: raised against the same crew for the same day is a double-booking nobody discovers until two
 #: vans are waiting for one driver.
-_LIVE_SLIP_STATUSES = ("SCHEDULED", "DISPATCHED")
+_LIVE_SLIP_STATUSES = tuple(LIVE_STATUSES)
 
 
 @router.get(

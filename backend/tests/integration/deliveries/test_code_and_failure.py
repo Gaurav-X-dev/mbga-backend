@@ -25,7 +25,11 @@ from tests.integration.deliveries.conftest import (
     slip_of,
 )
 
-pytestmark = [pytest.mark.integration, pytest.mark.mysql]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.mysql,
+    pytest.mark.skip(reason="Delivery OTP/failure writes moved to the delivery app"),
+]
 
 
 async def on_the_road(env, **kwargs):

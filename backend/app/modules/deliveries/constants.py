@@ -18,6 +18,7 @@ class DeliveryStatus(StrEnum):
 
     SCHEDULED = "SCHEDULED"
     DISPATCHED = "DISPATCHED"
+    ON_LOCATION = "ON_LOCATION"
     DELIVERED = "DELIVERED"
     FAILED = "FAILED"
 
@@ -43,6 +44,13 @@ STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
         {DeliveryStatus.DISPATCHED.value, DeliveryStatus.FAILED.value}
     ),
     DeliveryStatus.DISPATCHED.value: frozenset(
+        {
+            DeliveryStatus.ON_LOCATION.value,
+            DeliveryStatus.DELIVERED.value,
+            DeliveryStatus.FAILED.value,
+        }
+    ),
+    DeliveryStatus.ON_LOCATION.value: frozenset(
         {DeliveryStatus.DELIVERED.value, DeliveryStatus.FAILED.value}
     ),
     DeliveryStatus.DELIVERED.value: frozenset(),
@@ -53,11 +61,24 @@ STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
 #: scheduledDate". It is a work queue, not a log: what is on the road comes first, then what
 #: has to go out, then what went wrong. Delivered slips are last because they need nobody.
 STATUS_RANK: dict[str, int] = {
-    DeliveryStatus.DISPATCHED.value: 0,
-    DeliveryStatus.SCHEDULED.value: 1,
-    DeliveryStatus.FAILED.value: 2,
-    DeliveryStatus.DELIVERED.value: 3,
+    DeliveryStatus.ON_LOCATION.value: 0,
+    DeliveryStatus.DISPATCHED.value: 1,
+    DeliveryStatus.SCHEDULED.value: 2,
+    DeliveryStatus.FAILED.value: 3,
+    DeliveryStatus.DELIVERED.value: 4,
 }
+
+# Slips that still occupy a vehicle/crew, and the subset whose cylinders are already on the van.
+LIVE_STATUSES: frozenset[str] = frozenset(
+    {
+        DeliveryStatus.SCHEDULED.value,
+        DeliveryStatus.DISPATCHED.value,
+        DeliveryStatus.ON_LOCATION.value,
+    }
+)
+IN_TRANSIT_STATUSES: frozenset[str] = frozenset(
+    {DeliveryStatus.DISPATCHED.value, DeliveryStatus.ON_LOCATION.value}
+)
 
 #: `status = ALL` on the list filter (spec §10.1).
 ALL_STATUSES = "ALL"
@@ -75,7 +96,7 @@ ALL_STATUSES = "ALL"
 #: docstring tells them to, and the order would sit undeliverable for ever. It is safe because the
 #: caller refuses first when any slip is still live, so reaching this check means nothing is
 #: carrying the order.
-SLIPPABLE_ORDER_STATUSES: frozenset[str] = frozenset({"CONFIRMED", "OUT_FOR_DELIVERY"})
+SLIPPABLE_ORDER_STATUSES: frozenset[str] = frozenset({"CONFIRMED"})
 
 # --- The proof-of-delivery code --------------------------------------------------------------
 #

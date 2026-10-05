@@ -22,12 +22,15 @@ from fastapi import status
 from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.app import Settings
 from app.modules.authentication.account_state import CUSTOMER_APPROVED
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import Address
 from app.modules.customers.constants import CustomerType, KycStatus
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.deliveries.schemas import CreateDeliverySlipRequest
+from app.modules.deliveries.service import DeliveryService
 from app.modules.notifications.events.orders import order_confirmed
 from app.modules.orders import reorder as reorder_rules
 from app.modules.orders import transitions, validation
@@ -38,14 +41,12 @@ from app.modules.orders.constants import (
     REGISTERED_ADDRESS_LABEL,
     STATUS_BY_CODE,
     STATUS_CATALOGUE,
-    STATUS_TRANSITIONS,
     OrderMode,
     OrderSource,
     OrderStatus,
     status_label,
 )
 from app.modules.orders.cutoff import Cutoff, evaluate
-from app.modules.platform_settings import service as platform_settings
 from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
 from app.modules.orders.notifications import (
     order_cancelled_customer,
@@ -57,8 +58,12 @@ from app.modules.orders.numbering import OrderNumberAllocator
 from app.modules.orders.quoting import Quote, QuoteEngine
 from app.modules.orders.reorder import ReorderPlan, ReorderPlanner
 from app.modules.orders.schemas import (
+    BulkConfirmRequest,
+    BulkConfirmResponse,
+    ConfirmOrderRequest,
     CreateOrderRequest,
     CutoffResponse,
+    DeliveryAssignment,
     OrderItemResponse,
     OrderQuoteRequest,
     OrderQuoteResponse,
@@ -70,6 +75,7 @@ from app.modules.orders.schemas import (
     RepeatOrderRequest,
     UnavailableLine,
 )
+from app.modules.platform_settings import service as platform_settings
 from app.modules.pricing.constants import CylinderType
 from app.shared.business.actor import BusinessActor
 from app.shared.exceptions.api_error import ApiError
@@ -98,9 +104,10 @@ class OrderFilters:
 class OrderService:
     """Everything the order screens do, for one acting customer or staff member."""
 
-    def __init__(self, session: AsyncSession, actor: BusinessActor) -> None:
+    def __init__(self, session: AsyncSession, actor: BusinessActor, settings: Settings) -> None:
         self.session = session
         self.actor = actor
+        self.settings = settings
         self.merchant_id = actor.require_merchant_id()
 
     # --- Catalogue and cut-off ---------------------------------------------------------
@@ -246,8 +253,14 @@ class OrderService:
         # Queued on this transaction, so an order that rolls back cannot leave a
         # "Order placed" message behind (spec §18.8).
         outbox = NotificationOutboxWriter(self.session)
-        outbox.queue(order_placed_customer(customer.id, order.id, order.order_number, order.total_amount))
-        outbox.queue(order_placed_merchant(self.merchant_id, order.id, order.order_number, customer.name or ""))
+        outbox.queue(
+            order_placed_customer(customer.id, order.id, order.order_number, order.total_amount)
+        )
+        outbox.queue(
+            order_placed_merchant(
+                self.merchant_id, order.id, order.order_number, customer.name or ""
+            )
+        )
 
         # Spec §6.4 side effect: the customer's last-order marker moves.
         customer.updated_at = now
@@ -538,8 +551,8 @@ class OrderService:
     async def get(self, order_id: str) -> OrderResponse:
         return await self._view(await self._owned(order_id))
 
-    async def confirm(self, order_id: str) -> OrderResponse:
-        """Accept a placed order (`PLACED` -> `CONFIRMED`).
+    async def confirm(self, order_id: str, payload: ConfirmOrderRequest) -> OrderResponse:
+        """Accept a placed order (`PLACED` -> `CONFIRMED`), and say who is delivering it.
 
         **Not one of the spec's six order endpoints**, and its absence was a hole rather than a
         simplification: §6.1 defines a `CONFIRMED` status, the apps render it on the tracking
@@ -573,8 +586,74 @@ class OrderService:
                     order.scheduled_delivery_date.isoformat(),
                 )
             )
+        # Inside the same transaction as the confirmation: an order that is accepted but whose
+        # van could not be assigned must not be left confirmed with nobody on it.
+        await self._assign(order, payload.delivery)
         await self.session.commit()
         return await self._view(order)
+
+    async def confirm_many(self, payload: BulkConfirmRequest) -> BulkConfirmResponse:
+        """Confirm several orders onto one van.
+
+        All or nothing, in one transaction. A partial success would leave the operator reading a
+        list to work out which four of six went out, and the crew checks - is this driver free -
+        would be answered against a van that the earlier orders in the same call had already
+        filled. One failure refuses the round, which is the answer the office can act on.
+        """
+        orders = []
+        for order_id in dict.fromkeys(payload.order_ids):
+            order = await self._owned(order_id, lock=True)
+            moved = transitions.advance(
+                self.session,
+                order,
+                OrderStatus.CONFIRMED,
+                by_name=self.actor.display_name,
+                by_user_id=self.actor.user_id,
+                by_role=self.actor.role_label,
+                source=self.actor.source,
+                note=_confirmation_note(order.scheduled_delivery_date),
+            )
+            if moved:
+                NotificationOutboxWriter(self.session).queue(
+                    order_confirmed(
+                        order.customer_id,
+                        order.id,
+                        order.order_number,
+                        order.scheduled_delivery_date.isoformat(),
+                    )
+                )
+            await self._assign(order, payload.delivery)
+            orders.append(order)
+        await self.session.commit()
+        return BulkConfirmResponse(
+            confirmed=len(orders), orders=[await self._view(order) for order in orders]
+        )
+
+    async def _assign(self, order: Order, assignment: DeliveryAssignment) -> None:
+        """Put the order on a van, through the delivery module rather than beside it.
+
+        `DeliveryService.create` already validates the crew against the merchant, refuses one who
+        is blocked or already carrying a slip, allocates the slip number under a lock and
+        notifies the driver. Reaching into `delivery_slips` from here would be a second, quieter
+        copy of all of that - and the copy is what drifts.
+        """
+        if order.delivery_slip_id:
+            # Network retries of confirm are idempotent. Reassignment is deliberately not hidden
+            # inside this endpoint; once a slip exists, changing its crew is a separate business
+            # decision and currently unsupported.
+            return
+        await DeliveryService(self.session, self.actor, self.settings).create(
+            CreateDeliverySlipRequest(
+                orderId=order.id,
+                vehicleNumber=assignment.vehicle_number,
+                driverUserId=assignment.driver_user_id,
+                driverName=assignment.driver_name,
+                helperUserId=assignment.helper_user_id,
+                helperName=assignment.helper_name,
+                scheduledDate=assignment.delivery_date,
+            ),
+            commit=False,
+        )
 
     async def cancel(self, order_id: str, reason: str | None) -> OrderResponse:
         """Cancel an order that has not left the godown.
@@ -585,8 +664,7 @@ class OrderService:
         # Locked, because a dispatch racing this cancellation must queue behind it rather than
         # read the status it had a moment ago and then overwrite CANCELLED.
         order = await self._owned(order_id, lock=True)
-        allowed = STATUS_TRANSITIONS.get(order.status, frozenset())
-        if OrderStatus.CANCELLED.value not in allowed:
+        if order.status not in {OrderStatus.PLACED.value, OrderStatus.CONFIRMED.value}:
             raise ApiError(
                 "ORDER_NOT_CANCELLABLE",
                 status.HTTP_409_CONFLICT,
@@ -650,7 +728,9 @@ class OrderService:
             raise _not_found()
         return order
 
-    async def _orderable_customer(self, customer_id: str, *, require_approved: bool) -> CustomerProfile:
+    async def _orderable_customer(
+        self, customer_id: str, *, require_approved: bool
+    ) -> CustomerProfile:
         """The customer this order is for, and whether they may have one placed.
 
         A customer may only ever name themselves. Staff may name any customer of their own
@@ -708,7 +788,9 @@ class OrderService:
                 # Another customer's site is not "forbidden", it simply is not one of this
                 # customer's sites - which is what the app's picker offers.
                 raise validation.invalid(
-                    "deliverySiteId", "site_not_found", "Choose one of this customer's delivery sites."
+                    "deliverySiteId",
+                    "site_not_found",
+                    "Choose one of this customer's delivery sites.",
                 )
             return site
         if industrial:
@@ -729,7 +811,9 @@ class OrderService:
         )
         if claimed is not None and claimed is not actual:
             raise validation.invalid(
-                "source", "source_mismatch", "This order source does not match the app you are signed in to."
+                "source",
+                "source_mismatch",
+                "This order source does not match the app you are signed in to.",
             )
         return actual
 
@@ -786,7 +870,9 @@ class OrderService:
 
         items: dict[str, list[OrderItem]] = {order_id: [] for order_id in ids}
         for row in await self.session.scalars(
-            select(OrderItem).where(OrderItem.order_id.in_(ids)).order_by(OrderItem.position, OrderItem.id)
+            select(OrderItem)
+            .where(OrderItem.order_id.in_(ids))
+            .order_by(OrderItem.position, OrderItem.id)
         ):
             items[row.order_id].append(row)
 
@@ -857,7 +943,7 @@ def _order_view(
     order: Order, items: list[OrderItem], history: list[OrderStatusHistory]
 ) -> OrderResponse:
     from app.modules.orders.constants import ORDER_LABELS
-    
+
     return OrderResponse(
         id=order.id,
         order_number=order.order_number,

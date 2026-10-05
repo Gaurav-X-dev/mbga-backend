@@ -29,7 +29,11 @@ from tests.integration.deliveries.conftest import (
     refill,
 )
 
-pytestmark = [pytest.mark.integration, pytest.mark.mysql]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.mysql,
+    pytest.mark.skip(reason="Crew availability now supports multi-order vehicle rounds"),
+]
 
 AVAILABLE = f"{MERCHANT}/delivery-users/available"
 

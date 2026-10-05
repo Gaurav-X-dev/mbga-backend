@@ -12,6 +12,7 @@ from app.modules.deliveries.constants import DeliveryStatus
 class DriverDeliveryStatus(StrEnum):
     PENDING = "pending"
     OUT_FOR_DELIVERY = "out_for_delivery"
+    ON_LOCATION = "on_location"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -20,23 +21,29 @@ class DriverDeliveryStatus(StrEnum):
 APP_STATUS: dict[str, DriverDeliveryStatus] = {
     DeliveryStatus.SCHEDULED.value: DriverDeliveryStatus.PENDING,
     DeliveryStatus.DISPATCHED.value: DriverDeliveryStatus.PENDING,
+    DeliveryStatus.ON_LOCATION.value: DriverDeliveryStatus.ON_LOCATION,
     DeliveryStatus.DELIVERED.value: DriverDeliveryStatus.COMPLETED,
     DeliveryStatus.FAILED.value: DriverDeliveryStatus.FAILED,
 }
 
 #: The slips a driver may act on. A delivered or failed slip is a receipt, not work.
 ACTIONABLE_STATUSES: frozenset[str] = frozenset(
-    {DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value}
+    {
+        DeliveryStatus.SCHEDULED.value,
+        DeliveryStatus.DISPATCHED.value,
+        DeliveryStatus.ON_LOCATION.value,
+    }
 )
 
 #: Work queue order on the driver's list: what they have already started comes first, then what
 #: is still to do, then what is finished. Same principle as the dispatch board, different
 #: audience - a driver mid-trip should not have to scroll past this morning's completed drops.
 STATUS_RANK: dict[str, int] = {
-    DeliveryStatus.DISPATCHED.value: 0,
-    DeliveryStatus.SCHEDULED.value: 1,
-    DeliveryStatus.FAILED.value: 2,
-    DeliveryStatus.DELIVERED.value: 3,
+    DeliveryStatus.ON_LOCATION.value: 0,
+    DeliveryStatus.DISPATCHED.value: 1,
+    DeliveryStatus.SCHEDULED.value: 2,
+    DeliveryStatus.FAILED.value: 3,
+    DeliveryStatus.DELIVERED.value: 4,
 }
 
 #: How close counts as "at the gate", in metres. Generous on purpose: a handset fix in a built-up

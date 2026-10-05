@@ -69,6 +69,23 @@ def test_an_order_on_the_van_can_be_delivered():
     assert row.status == "DELIVERED"
 
 
+def test_an_order_on_the_van_can_report_the_driver_at_location():
+    session, row = Recorder(), order(OrderStatus.OUT_FOR_DELIVERY)
+
+    transitions.advance(session, row, OrderStatus.ON_LOCATION)
+
+    assert row.status == "ON_LOCATION"
+    assert session.added[0].previous_status == "OUT_FOR_DELIVERY"
+
+
+def test_an_order_at_location_can_be_delivered():
+    session, row = Recorder(), order(OrderStatus.ON_LOCATION)
+
+    transitions.advance(session, row, OrderStatus.DELIVERED)
+
+    assert row.status == "DELIVERED"
+
+
 def test_the_status_and_the_timestamp_move_together():
     """A status change with a stale `updated_at` makes "what changed recently" a lie."""
     session, row = Recorder(), order(OrderStatus.CONFIRMED)

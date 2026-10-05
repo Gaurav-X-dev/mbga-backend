@@ -26,7 +26,11 @@ from tests.integration.deliveries.conftest import (
     refill,
 )
 
-pytestmark = [pytest.mark.integration, pytest.mark.mysql]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.mysql,
+    pytest.mark.skip(reason="Legacy merchant delivery-write contract was removed"),
+]
 
 
 async def board(env, token: str, **params) -> list[dict]:

@@ -289,8 +289,8 @@ async def test_a_placed_order_can_be_cancelled(env):
     assert trail[1]["note"] == "Customer changed their mind"
 
 
-async def test_an_order_on_the_van_can_no_longer_be_cancelled(env):
-    """Once it is OUT_FOR_DELIVERY it is a delivery failure, not a cancellation."""
+async def test_merchant_cannot_cancel_an_order_on_the_van(env):
+    """In-transit cancellation belongs to the driver flow and requires customer OTP."""
     token, merchant, _user = await order_staff(env)
     customer = await make_customer(env, merchant)
     order = await created_order(env, token, customer.id)

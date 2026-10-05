@@ -1,15 +1,14 @@
 """Request and response models for the delivery app (API_REFERENCE)."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 
-from app.modules.driver.constants import MAX_NOTE_LENGTH, DriverDeliveryStatus
-
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 T = TypeVar("T")
+
 
 class BaseResponse(BaseModel, Generic[T]):
     success: bool = True
@@ -20,14 +19,19 @@ class BaseResponse(BaseModel, Generic[T]):
 class SuccessWrapperResponse(BaseResponse[Any]):
     pass
 
+
 def _as_utc(value: datetime) -> str:
     moment = value if value.tzinfo else value.replace(tzinfo=UTC)
     return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
-UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")]
+
+UtcTime = Annotated[
+    datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")
+]
 
 
 # --- Deliveries ------------------------------------------------------------------------------
+
 
 class CustomerLocation(BaseModel):
     id: str
@@ -39,11 +43,13 @@ class CustomerLocation(BaseModel):
     is_location_captured: bool = Field(alias="isLocationCaptured", default=False)
     model_config = _CAMEL
 
+
 class CustomerInfoDetail(BaseModel):
     name: str
     phone: str
     address: str
     model_config = _CAMEL
+
 
 class DeliveryItemResponse(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
@@ -53,6 +59,7 @@ class DeliveryItemResponse(BaseModel):
     total_price: float | None = Field(default=None, alias="totalPrice")
     model_config = _CAMEL
 
+
 class EmptyReturnItem(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
     label: str
@@ -61,6 +68,7 @@ class EmptyReturnItem(BaseModel):
     expected_quantity: int = Field(alias="expectedQuantity")
     model_config = _CAMEL
 
+
 class BillingSummary(BaseModel):
     order_subtotal: float = Field(alias="orderSubtotal")
     tax_amount: float = Field(alias="taxAmount")
@@ -68,8 +76,10 @@ class BillingSummary(BaseModel):
     total_payable_amount: float = Field(alias="totalPayableAmount")
     model_config = _CAMEL
 
+
 class DriverDeliveryResponse(BaseModel):
     """Step 1: GET /deliveries/today"""
+
     id: str
     order_number: str = Field(alias="orderNumber")
     status: str
@@ -87,6 +97,22 @@ class OutForDeliveryResponseData(BaseModel):
     order_number: str = Field(alias="orderNumber")
     status: str
     updated_at: str = Field(alias="updatedAt")
+    dev_confirmation_code: str | None = Field(default=None, alias="devConfirmationCode")
+    model_config = _CAMEL
+
+
+class CancelDeliveryRequest(BaseModel):
+    otp: str = Field(min_length=4, max_length=10)
+    reason: str = Field(min_length=1, max_length=500)
+    model_config = _CAMEL
+
+
+class CancelDeliveryResponseData(BaseModel):
+    delivery_id: str = Field(alias="deliveryId")
+    order_number: str = Field(alias="orderNumber")
+    delivery_status: str = Field(alias="deliveryStatus")
+    order_status: str = Field(alias="orderStatus")
+    cancelled_at: str = Field(alias="cancelledAt")
     model_config = _CAMEL
 
 
@@ -95,28 +121,38 @@ class VerifyLocationRequest(BaseModel):
     longitude: float
     model_config = _CAMEL
 
+
 class VerifyLocationResponseData(BaseModel):
     delivery_id: str = Field(alias="deliveryId")
+    delivery_status: str = Field(alias="deliveryStatus")
+    order_status: str = Field(alias="orderStatus")
+    arrived_at: UtcTime = Field(alias="arrivedAt")
     is_at_location: bool = Field(alias="isAtLocation")
-    distance_meters_from_destination: float | None = Field(alias="distanceMetersFromDestination", default=None)
+    distance_meters_from_destination: float | None = Field(
+        alias="distanceMetersFromDestination", default=None
+    )
     is_location_captured: bool = Field(alias="isLocationCaptured")
     message: str
     model_config = _CAMEL
+
 
 class UpdateItemEntry(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
     quantity: int
     model_config = _CAMEL
 
+
 class UpdateItemsRequest(BaseModel):
     updated_items: list[UpdateItemEntry] = Field(alias="updatedItems")
     reason: str
     model_config = _CAMEL
 
+
 class GenerateQrRequest(BaseModel):
     amount: float
-    payment_split: str = Field(alias="paymentSplit") # "full" | "partial"
+    payment_split: str = Field(alias="paymentSplit")  # "full" | "partial"
     model_config = _CAMEL
+
 
 class GenerateQrResponseData(BaseModel):
     delivery_id: str = Field(alias="deliveryId")
@@ -127,15 +163,18 @@ class GenerateQrResponseData(BaseModel):
     expires_in_seconds: int = Field(alias="expiresInSeconds")
     model_config = _CAMEL
 
+
 class CollectedEmptyEntry(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
     quantity: int
     model_config = _CAMEL
 
+
 class DeliveredItemEntry(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
     quantity: int
     model_config = _CAMEL
+
 
 class PaymentEntry(BaseModel):
     method: str
@@ -145,12 +184,14 @@ class PaymentEntry(BaseModel):
     pending_balance: float = Field(alias="pendingBalance")
     model_config = _CAMEL
 
+
 class ConfirmDeliveryRequest(BaseModel):
     delivered_items: list[DeliveredItemEntry] = Field(alias="deliveredItems")
     collected_empties: list[CollectedEmptyEntry] = Field(alias="collectedEmpties")
     payment: PaymentEntry
     driver_notes: str | None = Field(alias="driverNotes", default=None)
     model_config = _CAMEL
+
 
 class ConfirmDeliveryResponseData(BaseModel):
     delivery_id: str = Field(alias="deliveryId")
@@ -159,15 +200,18 @@ class ConfirmDeliveryResponseData(BaseModel):
     message: str
     model_config = _CAMEL
 
+
 class VerifyCustomerOtpRequest(BaseModel):
     otp: str
     model_config = _CAMEL
+
 
 class EmptyDueSummary(BaseModel):
     expected_total: int = Field(alias="expectedTotal")
     collected_total: int = Field(alias="collectedTotal")
     added_to_customer_pending_due: int = Field(alias="addedToCustomerPendingDue")
     model_config = _CAMEL
+
 
 class VerifyCustomerOtpResponseData(BaseModel):
     delivery_id: str = Field(alias="deliveryId")
@@ -182,6 +226,7 @@ class VerifyCustomerOtpResponseData(BaseModel):
     payment: PaymentEntry | dict[str, Any] = Field(default_factory=dict)
     model_config = _CAMEL
 
+
 class CompletedDeliveryDetailResponseData(BaseModel):
     id: str
     order_number: str = Field(alias="orderNumber")
@@ -195,11 +240,13 @@ class CompletedDeliveryDetailResponseData(BaseModel):
     driver_notes: str | None = Field(alias="driverNotes", default=None)
     model_config = _CAMEL
 
+
 class HistoryPaymentSummary(BaseModel):
     method: str
     amount: float
     status: str
     model_config = _CAMEL
+
 
 class HistoryDeliveryEntry(BaseModel):
     id: str
@@ -214,6 +261,7 @@ class HistoryDeliveryEntry(BaseModel):
     payment: HistoryPaymentSummary | dict[str, Any] = Field(default_factory=dict)
     model_config = _CAMEL
 
+
 class HistoryDeliveriesResponseData(BaseModel):
     items: list[HistoryDeliveryEntry]
     total: int
@@ -221,13 +269,16 @@ class HistoryDeliveriesResponseData(BaseModel):
     limit: int
     model_config = _CAMEL
 
+
 # --- Driver Profile ---------------------------------------------------------
+
 
 class ShiftStats(BaseModel):
     completed_deliveries_today: int = Field(alias="completedDeliveriesToday")
     cash_collected_today: float = Field(alias="cashCollectedToday")
     total_empties_collected_today: int = Field(alias="totalEmptiesCollectedToday")
     model_config = _CAMEL
+
 
 class DriverProfileResponseData(BaseModel):
     id: str
@@ -240,9 +291,11 @@ class DriverProfileResponseData(BaseModel):
     shift_stats: ShiftStats | None = Field(default=None, alias="shiftStats")
     model_config = _CAMEL
 
+
 class UpdateDutyRequest(BaseModel):
     on_duty: bool = Field(alias="onDuty")
     model_config = _CAMEL
+
 
 class DriverInventoryLine(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
@@ -251,9 +304,21 @@ class DriverInventoryLine(BaseModel):
     empty_count: int = Field(alias="emptyCount")
     model_config = _CAMEL
 
+
 class DriverInventoryResponseData(BaseModel):
     total_full_cylinders: int = Field(alias="totalFullCylinders")
     total_empty_cylinders: int = Field(alias="totalEmptyCylinders")
     active_deliveries_count: int = Field(alias="activeDeliveriesCount")
     stock_by_type: list[DriverInventoryLine] = Field(alias="stockByType")
+    model_config = _CAMEL
+
+
+class OutForDeliveryBulkRequest(BaseModel):
+    """The deliveries the driver is setting off with.
+
+    Capped at fifty: a van carries a round, not a day's book, and an unbounded list is how one
+    request locks every slip a merchant has.
+    """
+
+    delivery_ids: list[str] = Field(alias="deliveryIds", min_length=1, max_length=50)
     model_config = _CAMEL

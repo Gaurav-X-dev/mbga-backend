@@ -28,7 +28,9 @@ def _as_utc(value: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")]
+UtcTime = Annotated[
+    datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")
+]
 
 
 # --- Catalogue and cut-off ------------------------------------------------------------------
@@ -188,6 +190,69 @@ class CancelOrderRequest(BaseModel):
     """Beyond the spec's six endpoints - see the note on the cancel route."""
 
     reason: str | None = Field(default=None, max_length=255)
+
+    model_config = _CAMEL
+
+
+# --- Confirmation and its assignment ----------------------------------------------------------
+
+
+class DeliveryAssignment(BaseModel):
+    """The van and crew an order goes out on, named when the order is confirmed.
+
+    This used to be a screen of its own - "Schedule Delivery" - raised after confirmation and
+    before dispatch. It is folded into the confirmation because they are one decision in the
+    office: accepting an order *is* deciding who takes it. A separate step meant orders sitting
+    confirmed with nobody assigned, which nothing told anyone about.
+
+    Crew are ids rather than typed names wherever they have an account: an id is what addresses
+    the notification to their phone and what lets the backend refuse a blocked driver, where a
+    name is only a label that may match nobody.
+    """
+
+    vehicle_number: str = Field(alias="vehicleNumber", max_length=20)
+    #: From `GET /delivery-users/available`. The backend re-checks it, so a stale dropdown is
+    #: refused rather than believed.
+    driver_user_id: str | None = Field(default=None, alias="driverUserId", max_length=36)
+    #: For a hired van whose driver has no account. One of this or `driverUserId` is required.
+    driver_name: str | None = Field(default=None, alias="driverName", max_length=160)
+    helper_user_id: str | None = Field(default=None, alias="helperUserId", max_length=36)
+    helper_name: str | None = Field(default=None, alias="helperName", max_length=160)
+    #: Defaults to the delivery date the cut-off already decided for the order.
+    delivery_date: date | None = Field(default=None, alias="deliveryDate")
+
+    model_config = _CAMEL
+
+
+class ConfirmOrderRequest(BaseModel):
+    """Accept an order and assign its delivery in the same operation."""
+
+    delivery: DeliveryAssignment
+
+    model_config = _CAMEL
+
+
+class BulkConfirmRequest(BaseModel):
+    """Confirm several orders onto one van in a single decision.
+
+    The office loads a round, not an order: a van going to one industrial estate carries six
+    orders, and naming the same driver six times is six chances to pick the wrong one.
+
+    All or nothing. A partial success would leave the operator reading a list to work out which
+    four of six went, and the one that failed is usually the one worth knowing about.
+    """
+
+    order_ids: list[str] = Field(alias="orderIds", min_length=1, max_length=50)
+    delivery: DeliveryAssignment
+
+    model_config = _CAMEL
+
+
+class BulkConfirmResponse(BaseModel):
+    """What the round now looks like."""
+
+    confirmed: int
+    orders: list["OrderResponse"]
 
     model_config = _CAMEL
 

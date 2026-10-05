@@ -29,7 +29,9 @@ def _as_utc(value: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")]
+UtcTime = Annotated[
+    datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")
+]
 
 
 # --- The slip -------------------------------------------------------------------------------
@@ -99,13 +101,7 @@ class DeliverySlipResponse(BaseModel):
 
 
 class CreateDeliverySlipRequest(BaseModel):
-    """Raise a slip against a confirmed order.
-
-    **Not one of the spec's four delivery endpoints.** §10 lists list, detail, dispatch and
-    confirm, and never says where a slip comes from - the Phase 1 frontend had them seeded in a
-    mock. Without this the module cannot be used at all, so it is added the way `orders.cancel`
-    was, and it is what the "Schedule Delivery" action on a confirmed order calls.
-    """
+    """Internal payload used while confirm-and-assign raises a slip."""
 
     order_id: str = Field(alias="orderId", max_length=36)
     vehicle_number: str = Field(alias="vehicleNumber", max_length=20)
@@ -138,18 +134,13 @@ class ConfirmDeliveryRequest(BaseModel):
 
 
 class FailDeliveryRequest(BaseModel):
-    """Mark a slip failed so it can be rescheduled.
+    """Cancel a dispatched delivery after verifying the customer's OTP.
 
-    Also an addition. `FAILED` is in the spec's `DeliveryStatus`, the list filters on it and
-    §18.8 has a "Delivery failed" notification, but no endpoint sets it - and a van that comes
-    back loaded has to be recordable, or the slip sits `DISPATCHED` for ever and the stock it
-    took out is never returned.
+    The delivery app owns this operation. The slip becomes `FAILED` and the order becomes
+    `CANCELLED`; another attempt starts with a new order rather than rescheduling this one.
     """
 
-    reason: str = Field(max_length=MAX_NOTE_LENGTH)
-    #: Whether the cylinders came back to the godown. True for a refused or missed delivery;
-    #: false when they were left with the customer despite the slip not being confirmed, which
-    #: the office then has to resolve by hand.
-    returned_to_stock: bool = Field(default=True, alias="returnedToStock")
+    otp: str = Field(min_length=4, max_length=10)
+    reason: str = Field(min_length=1, max_length=MAX_NOTE_LENGTH)
 
     model_config = _CAMEL

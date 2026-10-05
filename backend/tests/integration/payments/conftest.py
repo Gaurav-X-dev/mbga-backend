@@ -23,6 +23,7 @@ from tests.integration.deliveries.conftest import (  # noqa: F401
     MERCHANT_AUTH,
     dispatch_staff,
     make_customer,
+    make_driver,
     place_order,
     price_cylinders,
     ready_to_dispatch,
@@ -43,6 +44,7 @@ BOOKS = (
     "orders.view",
     "orders.create",
     "orders.cancel",
+    "orders.update",
     "inventory.view",
     "inventory.adjust",
     "pricing.view",
@@ -60,6 +62,7 @@ READ_ONLY = (
     "delivery.confirm",
     "orders.view",
     "orders.create",
+    "orders.update",
     "inventory.view",
     "inventory.adjust",
     "pricing.view",
@@ -120,20 +123,56 @@ async def billed(auth_env, *lines, permissions: tuple[str, ...] = BOOKS, custome
         auth_env, token, customer.id, *(lines or (("LPG_19KG", 2),)), site_id=site_id
     )
 
-    created = await auth_env.post(
-        DELIVERIES, token, {"orderId": order["id"], "vehicleNumber": "MP09 GH 4521",
-                            "driverName": "Ramesh"}
-    )
-    assert created.status_code == 201, created.text
-    slip = created.json()
-    dispatched = await auth_env.post(f"{DELIVERIES}/{slip['id']}/dispatch", token, {})
-    assert dispatched.status_code == 200, dispatched.text
-    confirmed = await auth_env.post(
-        f"{DELIVERIES}/{slip['id']}/confirm",
+    driver = await make_driver(auth_env, merchant)
+    confirmed_order = await auth_env.post(
+        f"{MERCHANT}/orders/{order['id']}/confirm",
         token,
-        {"otp": dispatched.json()["devConfirmationCode"], "emptiesCollected": 0},
+        {
+            "delivery": {
+                "vehicleNumber": "MP09 GH 4521",
+                "driverUserId": driver.id,
+            }
+        },
     )
-    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed_order.status_code == 200, confirmed_order.text
+    slip_response = await auth_env.get(
+        f"{DELIVERIES}/{confirmed_order.json()['deliverySlipId']}", token
+    )
+    assert slip_response.status_code == 200, slip_response.text
+    slip = slip_response.json()
+
+    login = await auth_env.sign_in("/api/v1/delivery/auth", driver.mobile_number)
+    driver_token = login["token"]["access_token"]
+    driver_deliveries = "/api/v1/delivery/deliveries"
+    dispatched = await auth_env.post(
+        f"{driver_deliveries}/{slip['id']}/out-for-delivery", driver_token, {}
+    )
+    assert dispatched.status_code == 200, dispatched.text
+    counted = await auth_env.post(
+        f"{driver_deliveries}/{slip['id']}/confirm",
+        driver_token,
+        {
+            "deliveredItems": [
+                {"cylinderType": item["cylinderType"], "quantity": item["quantity"]}
+                for item in slip["items"]
+            ],
+            "collectedEmpties": [],
+            "payment": {
+                "method": "cash",
+                "split": "full",
+                "amountCollected": 0,
+                "payableAmount": 0,
+                "pendingBalance": 0,
+            },
+        },
+    )
+    assert counted.status_code == 200, counted.text
+    completed = await auth_env.post(
+        f"{driver_deliveries}/{slip['id']}/verify-customer-otp",
+        driver_token,
+        {"otp": dispatched.json()["devConfirmationCode"]},
+    )
+    assert completed.status_code == 200, completed.text
 
     invoices = await auth_env.get(INVOICES, token, params={"customerId": customer.id})
     assert invoices.status_code == 200, invoices.text

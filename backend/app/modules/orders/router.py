@@ -18,10 +18,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config.app import Settings, get_settings
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.dependencies import ActorDep, CustomerActorDep
 from app.modules.orders.schemas import (
+    BulkConfirmRequest,
+    BulkConfirmResponse,
     CancelOrderRequest,
+    ConfirmOrderRequest,
     CreateOrderRequest,
     CutoffResponse,
     OrderQuoteRequest,
@@ -50,16 +54,25 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
 
     # A customer is authorised by owning the row, not by holding a permission (spec §2.1:
     # "Customers have permissions: []; their access is implied by ownership").
-    read_guards = [channel_only] if is_customer else [channel_only, Depends(require_permission("orders.view"))]
-    write_guards = [channel_only] if is_customer else [channel_only, Depends(require_permission("orders.create"))]
+    read_guards = (
+        [channel_only]
+        if is_customer
+        else [channel_only, Depends(require_permission("orders.view"))]
+    )
+    write_guards = (
+        [channel_only]
+        if is_customer
+        else [channel_only, Depends(require_permission("orders.create"))]
+    )
 
     # FastAPI caches `get_db_session` per request, so the actor dependency and the service
     # share one session and therefore one transaction.
     def build_service(
         actor: actor_dependency,
         session: Annotated[AsyncSession, Depends(get_db_session)],
+        settings: Annotated[Settings, Depends(get_settings)],
     ) -> OrderService:
-        return OrderService(session, actor)
+        return OrderService(session, actor, settings)
 
     ServiceDep = Annotated[OrderService, Depends(build_service)]
 
@@ -118,7 +131,10 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         service: ServiceDep,
         idempotency_key: Annotated[
             str | None,
-            Header(alias="Idempotency-Key", description="Optional. Retrying with the same key returns the first order rather than placing a second."),
+            Header(
+                alias="Idempotency-Key",
+                description="Optional. Retrying with the same key returns the first order rather than placing a second.",
+            ),
         ] = None,
     ) -> OrderResponse:
         """Place an order (spec §6.4).
@@ -138,9 +154,27 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
     )
     async def list_orders(
         service: ServiceDep,
-        customer_id: Annotated[str | None, Query(alias="customerId", description="Staff filter; ignored for a customer, who only ever sees their own.")] = None,
-        order_status: Annotated[str | None, Query(alias="status", description="A status code, `ALL`, or `ACTIVE` for every non-terminal status.")] = None,
-        search: Annotated[str | None, Query(max_length=120, description="Matches order number, customer name or the items summary.")] = None,
+        customer_id: Annotated[
+            str | None,
+            Query(
+                alias="customerId",
+                description="Staff filter; ignored for a customer, who only ever sees their own.",
+            ),
+        ] = None,
+        order_status: Annotated[
+            str | None,
+            Query(
+                alias="status",
+                description="A status code, `ALL`, or `ACTIVE` for every non-terminal status.",
+            ),
+        ] = None,
+        search: Annotated[
+            str | None,
+            Query(
+                max_length=120,
+                description="Matches order number, customer name or the items summary.",
+            ),
+        ] = None,
     ) -> list[OrderResponse]:
         """Newest first. A customer sees only their own orders; staff see the merchant's."""
         return await service.list_orders(
@@ -158,7 +192,10 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         service: ServiceDep,
         customer_id: Annotated[
             str | None,
-            Query(alias="customerId", description="Required for staff. A customer's own app omits it - the session decides."),
+            Query(
+                alias="customerId",
+                description="Required for staff. A customer's own app omits it - the session decides.",
+            ),
         ] = None,
     ) -> ReorderPreviewResponse:
         """The customer's last order, priced today, ready for a one-tap repeat.
@@ -187,7 +224,10 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         payload: RepeatOrderRequest | None = None,
         idempotency_key: Annotated[
             str | None,
-            Header(alias="Idempotency-Key", description="Optional. Retrying with the same key returns the first repeat rather than placing a second."),
+            Header(
+                alias="Idempotency-Key",
+                description="Optional. Retrying with the same key returns the first repeat rather than placing a second.",
+            ),
         ] = None,
     ) -> OrderResponse:
         """Place a repeat of the customer's last order, as `orderMode: REPEAT`.
@@ -243,7 +283,10 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         payload: ReorderRequest | None = None,
         idempotency_key: Annotated[
             str | None,
-            Header(alias="Idempotency-Key", description="Optional. Retrying with the same key returns the first repeat rather than placing a second."),
+            Header(
+                alias="Idempotency-Key",
+                description="Optional. Retrying with the same key returns the first repeat rather than placing a second.",
+            ),
         ] = None,
     ) -> OrderResponse:
         """Place a repeat of this order, as `orderMode: REPEAT`.
@@ -268,23 +311,55 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
             responses=error_responses(401, 403, 404, 409),
             summary="Confirm an order",
         )
-        async def confirm_order(service: ServiceDep, order_id: OrderIdPath) -> OrderResponse:
-            """Accept a placed order, moving it to `CONFIRMED`.
+        async def confirm_order(
+            service: ServiceDep,
+            order_id: OrderIdPath,
+            payload: ConfirmOrderRequest,
+        ) -> OrderResponse:
+            """Accept a placed order, moving it to `CONFIRMED`, and say who delivers it.
 
             **Not one of the spec's six order endpoints**, and its absence was a hole: §6.1
             defines the status, both apps render it on the tracking timeline, and a delivery slip
             may only be raised against a confirmed order. Without this every order stayed
             `PLACED` and no van could be scheduled.
 
-            The customer is notified. A `409` means the order is not `PLACED` any more - already
-            confirmed, or cancelled.
+            `delivery` names the van and crew in the same call. A separate "Schedule Delivery"
+            step is deliberately not exposed: a newly confirmed order cannot be left without a
+            driver assignment.
+
+            The customer is notified on confirmation, and the driver on assignment. A legacy
+            `CONFIRMED` order without a slip may be assigned by retrying this endpoint.
+            A cancelled order is refused with `409`.
             """
-            return await service.confirm(order_id)
+            return await service.confirm(order_id, payload)
+
+        @router.post(
+            "/confirm",
+            response_model=BulkConfirmResponse,
+            dependencies=[channel_only, Depends(require_permission("orders.update"))],
+            responses=error_responses(401, 403, 404, 409, 422),
+            summary="Confirm several orders onto one van",
+        )
+        async def confirm_orders(
+            service: ServiceDep, payload: BulkConfirmRequest
+        ) -> BulkConfirmResponse:
+            """Confirm a whole round in one call.
+
+            The office loads a van, not an order: six orders for one industrial estate go out
+            together, and naming the same driver six times is six chances to pick the wrong one.
+
+            All or nothing. One order that cannot be confirmed - already cancelled, or a driver
+            taken since the screen loaded - refuses the whole call, because a partial success
+            leaves the operator reading a list to work out which four of six actually went.
+            """
+            return await service.confirm_many(payload)
 
     @router.post(
         "/{orderId}/cancel",
         response_model=OrderResponse,
-        dependencies=write_guards if is_customer else [channel_only, Depends(require_permission("orders.cancel"))],
+        dependencies=write_guards
+        if is_customer
+        else [channel_only, Depends(require_permission("orders.cancel"))],
         responses=error_responses(401, 403, 404, 409),
         summary="Cancel an order",
     )
