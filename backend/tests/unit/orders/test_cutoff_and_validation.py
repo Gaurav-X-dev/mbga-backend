@@ -12,7 +12,7 @@ import pytest
 
 from app.modules.orders import validation
 from app.modules.orders.constants import QUANTITY_LIMITS
-from app.modules.orders.cutoff import evaluate
+from app.modules.orders.cutoff import clock_12h, clock_24h, cutoff_hour, evaluate
 from app.modules.orders.schemas import OrderLineRequest
 from app.modules.pricing.constants import CylinderType
 from app.shared.exceptions.api_error import ApiError
@@ -87,6 +87,57 @@ def test_a_late_order_on_the_last_day_of_a_month_rolls_into_the_next():
 def test_the_cutoff_message_is_the_one_the_user_reads():
     assert "same-day" in evaluate(at_ist(2026, 9, 23, 10, 0)).message
     assert "cut-off has passed" in evaluate(at_ist(2026, 9, 23, 17, 0)).message
+
+
+# --- A configurable hour ---------------------------------------------------------------------
+#
+# The hour is `ORDER_CUTOFF_HOUR` rather than a constant, so a merchant extending their day is a
+# line in `.env` and a restart. What has to hold is that *everything* follows it: the moment the
+# day rolls over, the 24-hour string an app parses, and the sentence a customer reads. A screen
+# promising four o'clock while the godown works to six is the failure this guards against.
+
+
+def test_a_later_cutoff_keeps_the_afternoon_on_the_same_day():
+    """17:00 is past four and inside six."""
+    late_afternoon = at_ist(2026, 9, 23, 17, 0)
+
+    assert evaluate(late_afternoon, hour=16).within_cutoff is False
+    assert evaluate(late_afternoon, hour=18).within_cutoff is True
+    assert evaluate(late_afternoon, hour=18).scheduled_delivery_date == date(2026, 9, 23)
+
+
+def test_an_earlier_cutoff_pushes_the_afternoon_to_tomorrow():
+    midday = at_ist(2026, 9, 23, 12, 30)
+
+    assert evaluate(midday, hour=16).scheduled_delivery_date == date(2026, 9, 23)
+    assert evaluate(midday, hour=12).scheduled_delivery_date == date(2026, 9, 24)
+
+
+def test_the_published_time_follows_the_configured_hour():
+    """The apps parse this, so it cannot keep saying 16:00 after the hour moves."""
+    assert evaluate(at_ist(2026, 9, 23, 9, 0), hour=16).cutoff_time == "16:00"
+    assert evaluate(at_ist(2026, 9, 23, 9, 0), hour=18).cutoff_time == "18:00"
+    assert evaluate(at_ist(2026, 9, 23, 7, 0), hour=9).cutoff_time == "09:00"
+
+
+def test_the_message_names_the_configured_hour_in_words():
+    """Derived from the same number, so the sentence cannot drift from the rule."""
+    assert "6:00 PM" in evaluate(at_ist(2026, 9, 23, 9, 0), hour=18).message
+    assert "4:00 PM" in evaluate(at_ist(2026, 9, 23, 9, 0), hour=16).message
+    assert "9:00 AM" in evaluate(at_ist(2026, 9, 23, 7, 0), hour=9).message
+
+
+def test_midday_and_midnight_read_as_people_say_them():
+    """12 is noon and 0 is midnight; neither is "0:00 PM" or "12:00 PM" by accident."""
+    assert clock_12h(12) == "12:00 PM"
+    assert clock_12h(0) == "12:00 AM"
+    assert clock_12h(13) == "1:00 PM"
+    assert clock_12h(11) == "11:00 AM"
+
+
+def test_the_configured_hour_is_what_the_application_uses():
+    """`evaluate()` with no override reads the setting, not a number frozen at import."""
+    assert evaluate(at_ist(2026, 9, 23, 9, 0)).cutoff_time == clock_24h(cutoff_hour())
 
 
 # --- Basket rules (spec §6.3, §18.3) -------------------------------------------------------

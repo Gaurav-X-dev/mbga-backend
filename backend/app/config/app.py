@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # once its developer expects it. See app/shared/middleware/delivery_envelope.py.
     delivery_response_envelope: bool = False
 
+    # The hour, IST, after which an order is delivered the next day instead of today. A whole
+    # hour on a wall clock, because that is how the cut-off is told to a customer and worked to
+    # in the godown; half past anything would have to be explained on every screen.
+    #
+    # A setting rather than a constant because this is an operating decision, not a rule of the
+    # platform: a merchant extending their day to 18:00 should be a line in `.env` and a restart,
+    # not a release. Changing it never rewrites an order - the promise made at placement is
+    # frozen onto the order, so last week's orders keep last week's cut-off.
+    order_cutoff_hour: int = Field(default=16, ge=0, le=23)
+
     database_url: str = "mysql+asyncmy://mbga_user:change_me@mysql:3306/mbga?charset=utf8mb4"
     redis_url: str = "redis://redis:6379/0"
     # Redis backs the permission cache and nothing else - every permission check falls back to
