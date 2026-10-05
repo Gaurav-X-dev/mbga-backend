@@ -10,6 +10,7 @@ from app.modules.audit_logs.models import AuditLog
 from app.modules.authentication.constants import LoginChannel
 from app.modules.authentication.mobile_number import normalize_mobile_number
 from app.modules.authentication.models import LoginSession
+from app.modules.deliveries.models import DeliverySlip
 from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.delivery_users.schemas import DeliveryUserCreate, DeliveryUserListResponse, DeliveryUserResponse, DeliveryUserType, DeliveryUserUpdate
 from app.modules.merchants.models import Merchant, MerchantUser
@@ -214,6 +215,72 @@ async def list_delivery_users(
     rows = (await session.execute(stmt)).all()
     total = int(await session.scalar(select(func.count()).select_from(DeliveryProfile).join(User, User.id == DeliveryProfile.user_id).where(*filters)) or 0)
     return DeliveryUserListResponse(items=[_response(profile, user) for profile, user in rows], total=total, limit=limit, offset=offset)
+
+
+#: Carrying a slip that has not been settled is what "busy" means. `SCHEDULED` counts as much as
+#: `DISPATCHED`: the van is spoken for from the moment the office assigns it, and a second slip
+#: raised against the same crew for the same day is a double-booking nobody discovers until two
+#: vans are waiting for one driver.
+_LIVE_SLIP_STATUSES = ("SCHEDULED", "DISPATCHED")
+
+
+@router.get(
+    "/available",
+    response_model=DeliveryUserListResponse,
+    dependencies=[Depends(require_login_channel(LoginChannel.MERCHANT)), Depends(require_permission("delivery_users.view"))],
+    summary="Crew the office may assign a delivery to right now",
+)
+async def list_available_delivery_users(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    context: Annotated[AuthContext, Depends(require_authenticated_user)],
+    delivery_user_type: Annotated[DeliveryUserType, Query(description="DRIVER or HELPER.")] = DeliveryUserType.DRIVER,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> DeliveryUserListResponse:
+    """The assignment dropdown's list, decided here rather than in the app.
+
+    Eligibility is a business rule, so a screen must not assemble it from a general list and its
+    own idea of what counts: two apps would then disagree, and the one that is wrong offers staff
+    a driver the assignment endpoint refuses.
+
+    **Advisory, not a reservation.** Two people can open this screen at the same moment and both
+    be shown the same free driver. The slip endpoint revalidates every one of these rules under a
+    lock, which is what actually decides; this only keeps the obviously-unassignable out of the
+    list so the common case does not need the refusal.
+    """
+    merchant_id = await _merchant_scope(session, context)
+    busy = (
+        select(DeliverySlip.driver_user_id)
+        .where(
+            DeliverySlip.merchant_id == merchant_id,
+            DeliverySlip.status.in_(_LIVE_SLIP_STATUSES),
+            DeliverySlip.driver_user_id.is_not(None),
+        )
+        .union(
+            select(DeliverySlip.helper_user_id).where(
+                DeliverySlip.merchant_id == merchant_id,
+                DeliverySlip.status.in_(_LIVE_SLIP_STATUSES),
+                DeliverySlip.helper_user_id.is_not(None),
+            )
+        )
+    )
+    statement = (
+        select(DeliveryProfile, User)
+        .join(User, User.id == DeliveryProfile.user_id)
+        .where(
+            DeliveryProfile.merchant_id == merchant_id,
+            DeliveryProfile.delivery_user_type == delivery_user_type.value,
+            DeliveryProfile.status == "ACTIVE",
+            DeliveryProfile.approval_status == "APPROVED",
+            DeliveryProfile.on_duty.is_(True),
+            User.status == "ACTIVE",
+            DeliveryProfile.user_id.not_in(busy),
+        )
+        .order_by(User.full_name)
+        .limit(limit)
+    )
+    rows = (await session.execute(statement)).all()
+    items = [_response(profile, user) for profile, user in rows]
+    return DeliveryUserListResponse(items=items, total=len(items), limit=limit, offset=0)
 
 
 async def _load_scoped_profile(session: AsyncSession, context: AuthContext, delivery_user_id: str) -> tuple[DeliveryProfile, User]:

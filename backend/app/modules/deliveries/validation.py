@@ -87,12 +87,24 @@ def check_confirmation_method(method: ConfirmationMethod) -> ConfirmationMethod:
     return method
 
 
-def check_crew(profile, *, role: str):
-    """The named driver or helper must be this merchant's, active and approved.
+def check_crew(profile, *, role: str, busy: bool = False):
+    """The named driver or helper must be this merchant's, active, approved and free.
 
     `profile` is `None` either because no id was given - handled by the caller - or because the
     id belongs to another merchant, which is reported as a 404 rather than a 403 so staff ids
     cannot be probed across tenants.
+
+    Checked here and not only by the dropdown that offered the name. Two people can open the
+    assignment screen on the same free driver, and the list each of them is holding was true when
+    it was fetched rather than when they pressed Save. This runs against the row as it is now, so
+    the second one is refused instead of double-booking a van.
+
+    **`on_duty` is deliberately not checked here**, although the availability list filters on it.
+    It is the driver's own "I am on shift" toggle, set only by them from the delivery app and
+    `False` by default. Requiring it to assign would mean tomorrow's round could not be planned
+    this evening, and a driver who has not opened the app today could never be given a job - so
+    on duty answers "who can take this now", which is a dropdown's question, not a rule about
+    whether an assignment is valid.
     """
     if profile is None:
         raise ApiError(
@@ -111,6 +123,12 @@ def check_crew(profile, *, role: str):
             f"{role}UserId",
             f"{role}_not_active",
             f"This {role}'s account is not active.",
+        )
+    if busy:
+        raise invalid(
+            f"{role}UserId",
+            f"{role}_already_assigned",
+            f"This {role} is already carrying a delivery that has not been settled.",
         )
     return profile
 

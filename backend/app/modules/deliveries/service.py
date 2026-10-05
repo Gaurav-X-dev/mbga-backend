@@ -541,13 +541,38 @@ class DeliveryService:
         """
         if not user_id:
             return None
+        # Locked: this is the row the availability rules are read from, so two assignments naming
+        # the same driver have to take it in turns. The second then sees the slip the first just
+        # raised and is refused, rather than both reading "free" and both succeeding.
         profile = await self.session.scalar(
-            select(DeliveryProfile).where(
+            select(DeliveryProfile)
+            .where(
                 DeliveryProfile.user_id == user_id,
                 DeliveryProfile.merchant_id == self.merchant_id,
             )
+            .with_for_update()
         )
-        return validation.check_crew(profile, role=role)
+        return validation.check_crew(profile, role=role, busy=await self._is_busy(user_id))
+
+    async def _is_busy(self, user_id: str) -> bool:
+        """Whether this person is already carrying a slip nobody has settled.
+
+        `SCHEDULED` counts with `DISPATCHED`: the crew is spoken for from the moment the office
+        assigns them, and a second slip for the same person is a double-booking that surfaces as
+        two vans waiting for one driver.
+        """
+        live = [DeliveryStatus.SCHEDULED.value, DeliveryStatus.DISPATCHED.value]
+        existing = await self.session.scalar(
+            select(DeliverySlip.id).where(
+                DeliverySlip.merchant_id == self.merchant_id,
+                DeliverySlip.status.in_(live),
+                or_(
+                    DeliverySlip.driver_user_id == user_id,
+                    DeliverySlip.helper_user_id == user_id,
+                ),
+            )
+        )
+        return existing is not None
 
     async def _account_name(self, profile, user_id: str | None) -> str | None:
         """The crew member's real name, for the slip and for the customer's notification.
