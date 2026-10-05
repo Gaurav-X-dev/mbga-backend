@@ -47,6 +47,28 @@ class BusinessActor:
     def is_customer(self) -> bool:
         return self.login_channel == LoginChannel.CUSTOMER
 
+    @property
+    def source(self) -> str:
+        """Which app the change came from, for an audit row.
+
+        Taken from the login channel rather than anything the client sends: the channel is in the
+        URL the token was minted for, so it cannot be claimed. A trail that believed a `source`
+        field from the body would be worthless for the one question it exists to answer - which
+        app moved this order.
+        """
+        return f"{self.login_channel.value}_APP"
+
+    @property
+    def role_label(self) -> str:
+        """What the actor was acting as, beside the user id, for an audit row.
+
+        A merchant's staff type is the useful word where there is one - a dispute asks whether a
+        manager or a dispatcher moved it - and the channel is the honest fallback.
+        """
+        if self.is_merchant_staff and self.staff_type:
+            return self.staff_type
+        return self.login_channel.value
+
     def require_merchant_id(self) -> str:
         """The merchant every query must be scoped to, or 403."""
         if self.merchant_id is None:

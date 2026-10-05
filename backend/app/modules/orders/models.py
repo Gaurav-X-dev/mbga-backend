@@ -137,10 +137,18 @@ class OrderStatusHistory(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
     status: Mapped[str] = mapped_column(String(20))
+    # What it moved *from*. Derivable by reading the previous row, but only if every row is
+    # present and ordered - and the question this trail exists to answer is "what overwrote
+    # CANCELLED", which is exactly the case where one row has to be readable on its own.
+    previous_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Display name of whoever moved it; null when the system did (e.g. placement by a
     # customer, where `by` is the customer themselves and the app shows no actor).
     changed_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     changed_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # What they were acting as, and which app they used. Both come from the session's login
+    # channel rather than the request body, so neither can be claimed by a client.
+    changed_by_role: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(40), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

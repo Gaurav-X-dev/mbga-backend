@@ -540,13 +540,15 @@ class OrderService:
         their own order would mean nothing: the point of the step is the merchant saying they
         have the stock and will deliver it.
         """
-        order = await self._owned(order_id)
+        order = await self._owned(order_id, lock=True)
         moved = transitions.advance(
             self.session,
             order,
             OrderStatus.CONFIRMED,
             by_name=self.actor.display_name,
             by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
             note=_confirmation_note(order.scheduled_delivery_date),
         )
         if moved:
@@ -570,7 +572,9 @@ class OrderService:
         Not one of the spec's six endpoints - see the route's docstring. The transition
         table is what decides, so this cannot cancel something already on the van.
         """
-        order = await self._owned(order_id)
+        # Locked, because a dispatch racing this cancellation must queue behind it rather than
+        # read the status it had a moment ago and then overwrite CANCELLED.
+        order = await self._owned(order_id, lock=True)
         allowed = STATUS_TRANSITIONS.get(order.status, frozenset())
         if OrderStatus.CANCELLED.value not in allowed:
             raise ApiError(
@@ -579,17 +583,19 @@ class OrderService:
                 f"An order that is {STATUS_BY_CODE[order.status].label.lower()} can no longer be cancelled.",
             )
         now = datetime.now(UTC)
-        order.status = OrderStatus.CANCELLED.value
-        order.updated_at = now
-        self.session.add(
-            OrderStatusHistory(
-                order_id=order.id,
-                status=OrderStatus.CANCELLED.value,
-                changed_by_name=self.actor.display_name,
-                changed_by_user_id=self.actor.user_id,
-                note=(reason or "").strip() or None,
-                changed_at=now,
-            )
+        # Through `advance()` like every other move, so the trail row and the legality check come
+        # from one place. The refusal above stays because it says "can no longer be cancelled",
+        # which is the sentence the app shows; `advance()` would phrase it the other way round.
+        transitions.advance(
+            self.session,
+            order,
+            OrderStatus.CANCELLED,
+            by_name=self.actor.display_name,
+            by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
+            note=(reason or "").strip() or None,
+            now=now,
         )
         # Both sides hear it. Staff need it as much as the customer does: without it the
         # godown keeps a cancelled order on the loading list and the cylinders go out.
@@ -617,8 +623,19 @@ class OrderService:
             return statement.where(Order.customer_id == self.actor.require_customer_id())
         return statement
 
-    async def _owned(self, order_id: str) -> Order:
-        order = await self.session.scalar(self._scope(select(Order)).where(Order.id == order_id))
+    async def _owned(self, order_id: str, *, lock: bool = False) -> Order:
+        """The order, optionally locked for a status change.
+
+        `lock` is not an optimisation, it is the correctness of the status itself. Without it two
+        requests that both read `CONFIRMED` - a customer cancelling and a van being dispatched -
+        each pass their own transition check against a snapshot taken before the other committed,
+        and the later writer silently overwrites the earlier. `CANCELLED` is the one that loses,
+        because the dispatch arrives second and the transition table never gets to see it.
+        """
+        statement = self._scope(select(Order)).where(Order.id == order_id)
+        if lock:
+            statement = statement.with_for_update()
+        order = await self.session.scalar(statement)
         if order is None:
             raise _not_found()
         return order

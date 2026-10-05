@@ -140,7 +140,12 @@ async def test_an_order_cannot_be_confirmed_twice(env):
 
 
 async def test_a_cancelled_order_cannot_be_confirmed(env):
-    """Otherwise a confirmation resurrects an order the customer already called off."""
+    """Otherwise a confirmation resurrects an order the customer already called off.
+
+    Refused with `ORDER_ALREADY_CANCELLED` rather than the generic `INVALID_ORDER_STATUS`: every
+    caller that meets a cancelled order wants the same thing, which is to reload it rather than
+    retry, and that is a decision an app can only make from a code it can branch on.
+    """
     token, merchant, _user = await order_staff(env, permissions=STAFF_PERMISSIONS)
     customer = await make_customer(env, merchant)
     order = await created_order(env, token, customer.id)
@@ -150,7 +155,7 @@ async def test_a_cancelled_order_cannot_be_confirmed(env):
     response = await confirm(env, token, order["id"])
 
     assert response.status_code == 409
-    assert code_of(response) == "INVALID_ORDER_STATUS"
+    assert code_of(response) == "ORDER_ALREADY_CANCELLED"
     assert await status_of(env, order["id"]) == "CANCELLED"
 
 

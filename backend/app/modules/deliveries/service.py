@@ -217,7 +217,7 @@ class DeliveryService:
         """
         slip = await self._owned(slip_id)
         self._require_status(slip, DeliveryStatus.DISPATCHED, ready=DeliveryStatus.SCHEDULED)
-        order = await self._order_of(slip)
+        order = await self._order_of(slip, lock=True)
         now = datetime.now(UTC)
 
         # Refuses with spec §10.3's message, and writes nothing either way.
@@ -242,6 +242,8 @@ class DeliveryService:
             OrderStatus.OUT_FOR_DELIVERY,
             by_name=self.actor.display_name,
             by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
             # Spec §10.3's wording, verbatim: it is what a customer ringing up is read back.
             note=f"Vehicle {slip.vehicle_number} · {slip.driver_name}",
             now=now,
@@ -277,7 +279,7 @@ class DeliveryService:
         collected = validation.check_empties(payload.empties_collected, slip.cylinders_allocated)
         await self._check_code(slip, payload.otp)
 
-        order = await self._order_of(slip)
+        order = await self._order_of(slip, lock=True)
         now = datetime.now(UTC)
         slip.status = DeliveryStatus.DELIVERED.value
         slip.delivered_at = now
@@ -316,6 +318,8 @@ class DeliveryService:
             OrderStatus.DELIVERED,
             by_name=self.actor.display_name,
             by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
             note=_delivered_note(collected, slip.cylinders_allocated),
             now=now,
         )
@@ -508,10 +512,20 @@ class DeliveryService:
             return None, None
         return site.latitude, site.longitude
 
-    async def _order_of(self, slip: DeliverySlip) -> Order:
-        order = await self.session.scalar(
-            select(Order).where(Order.id == slip.order_id, Order.merchant_id == self.merchant_id)
+    async def _order_of(self, slip: DeliverySlip, *, lock: bool = False) -> Order:
+        """The slip's order, locked when this call is about to move its status.
+
+        Without the lock a dispatch and a customer's cancellation each read the order before the
+        other commits, both pass their own transition check against that stale row, and whichever
+        writes second wins. The cancellation is the one that loses, because the dispatch is the
+        slower request - which is how a cancelled order comes back as out for delivery.
+        """
+        statement = select(Order).where(
+            Order.id == slip.order_id, Order.merchant_id == self.merchant_id
         )
+        if lock:
+            statement = statement.with_for_update()
+        order = await self.session.scalar(statement)
         if order is None:
             # The slip's own foreign key guarantees the row; if it is gone the data is broken and
             # a 404 on the slip is the honest answer rather than a 500.

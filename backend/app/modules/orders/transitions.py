@@ -32,6 +32,8 @@ def advance(
     *,
     by_name: str | None = None,
     by_user_id: str | None = None,
+    by_role: str | None = None,
+    source: str | None = None,
     note: str | None = None,
     now: datetime | None = None,
 ) -> bool:
@@ -49,9 +51,14 @@ def advance(
         # Idempotent rather than an error: a retried dispatch whose slip already moved the order
         # should not fail on the order it has already moved.
         return False
-    allowed = STATUS_TRANSITIONS.get(order.status, frozenset())
+    previous = order.status
+    if previous == OrderStatus.CANCELLED.value:
+        # Named separately from the generic refusal because this is the one the apps act on: a
+        # delivery screen that has gone stale needs to know to reload the order, not to retry.
+        raise _cancelled(target)
+    allowed = STATUS_TRANSITIONS.get(previous, frozenset())
     if target.value not in allowed:
-        raise _illegal(order.status, target)
+        raise _illegal(previous, target)
 
     moment = now or datetime.now(UTC)
     order.status = target.value
@@ -59,9 +66,12 @@ def advance(
     session.add(
         OrderStatusHistory(
             order_id=order.id,
+            previous_status=previous,
             status=target.value,
             changed_by_name=by_name,
             changed_by_user_id=by_user_id,
+            changed_by_role=by_role,
+            source=source,
             note=(note or "").strip() or None,
             changed_at=moment,
         )
@@ -71,6 +81,22 @@ def advance(
 
 def can_advance(current: str, target: OrderStatus) -> bool:
     return target.value in STATUS_TRANSITIONS.get(current, frozenset())
+
+
+def _cancelled(target: OrderStatus) -> ApiError:
+    """The refusal a stale delivery screen gets, with a code it can branch on.
+
+    A driver whose phone still shows yesterday's queue presses Start on an order the customer
+    cancelled while the screen sat idle. The generic INVALID_ORDER_STATUS would tell the app the
+    move was illegal; this tells it *why*, which is the difference between showing a retry and
+    reloading the order as cancelled.
+    """
+    return ApiError(
+        "ORDER_ALREADY_CANCELLED",
+        http_status.HTTP_409_CONFLICT,
+        f"Order has already been cancelled and cannot be moved to "
+        f"{STATUS_BY_CODE[target.value].label.lower()}.",
+    )
 
 
 def _illegal(current: str, target: OrderStatus) -> ApiError:
