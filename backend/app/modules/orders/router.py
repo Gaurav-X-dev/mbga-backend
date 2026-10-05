@@ -87,7 +87,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
     )
     async def order_cutoff(service: ServiceDep) -> CutoffResponse:
         """When an order placed right now would be delivered, against the configured IST cut-off."""
-        return service.cutoff()
+        return await service.cutoff()
 
     @router.post(
         "/quote",

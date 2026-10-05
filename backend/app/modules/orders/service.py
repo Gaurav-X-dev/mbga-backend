@@ -45,6 +45,7 @@ from app.modules.orders.constants import (
     status_label,
 )
 from app.modules.orders.cutoff import Cutoff, evaluate
+from app.modules.platform_settings import service as platform_settings
 from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
 from app.modules.orders.notifications import (
     order_cancelled_customer,
@@ -119,9 +120,18 @@ class OrderService:
             for meta in sorted(STATUS_CATALOGUE, key=lambda m: m.sequence)
         ]
 
-    @staticmethod
-    def cutoff() -> CutoffResponse:
-        return _cutoff_view(evaluate())
+    async def cutoff(self) -> CutoffResponse:
+        return _cutoff_view(await self._cutoff())
+
+    async def _cutoff(self) -> Cutoff:
+        """The cut-off as it stands right now, against the hour the admin panel has set.
+
+        Read from the database on each call rather than cached: an operator who moves the cut-off
+        at 3pm expects the next order to use it, not to wait for something to expire - and with
+        several API workers a cache means only some of them notice. It is one indexed row beside
+        the work of placing an order.
+        """
+        return evaluate(hour=await platform_settings.order_cutoff_hour(self.session))
 
     # --- Quote -------------------------------------------------------------------------
 
@@ -137,7 +147,7 @@ class OrderService:
             gst_percent=priced.gst_percent,
             subtotal=priced.subtotal,
             gst_amount=priced.gst_amount,
-            cutoff=_cutoff_view(evaluate()),
+            cutoff=_cutoff_view(await self._cutoff()),
         )
 
     # --- Create ------------------------------------------------------------------------
@@ -203,7 +213,7 @@ class OrderService:
         source = self._resolve_source(payload.source)
 
         priced = await self._engine().price(customer.id, lines)
-        moment = evaluate()
+        moment = await self._cutoff()
         now = datetime.now(UTC)
         number = await OrderNumberAllocator(self.session, self.merchant_id).allocate()
 
@@ -335,7 +345,7 @@ class OrderService:
                     raise
                 blocked = blocked or error.detail["message"]
 
-        moment = evaluate()
+        moment = await self._cutoff()
         return ReorderPreviewResponse(
             source_order_id=source.id,
             source_order_number=source.order_number,

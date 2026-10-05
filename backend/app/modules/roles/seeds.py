@@ -122,6 +122,8 @@ SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
     SeedPermission("notifications.view", "View notifications", "notifications", "view"),
     SeedPermission("notifications.manage", "Manage notifications", "notifications", "manage"),
     SeedPermission("audit_logs.view", "View audit logs", "audit_logs", "view"),
+    SeedPermission("platform_settings.view", "View platform settings", "platform_settings", "view"),
+    SeedPermission("platform_settings.manage", "Change platform settings", "platform_settings", "manage"),
 )
 
 

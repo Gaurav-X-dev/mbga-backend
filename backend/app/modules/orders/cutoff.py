@@ -27,7 +27,6 @@ it renderable five and a half hours out in the first place.
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-from app.config.app import get_settings
 from app.shared.date_time.business_calendar import IST
 
 #: How many days after the order's own business day the van goes out. Inside the cut-off there is
@@ -36,15 +35,6 @@ DAYS_WITHIN = 0
 DAYS_AFTER = 1
 
 AFTER_MESSAGE = "Today's cut-off has passed. This order is scheduled for tomorrow."
-
-
-def cutoff_hour() -> int:
-    """The configured hour, IST. `ORDER_CUTOFF_HOUR` in the environment.
-
-    Read per call rather than bound at import, so a deployment that changes it needs a restart
-    and not a release. `get_settings()` is cached, so this is a dictionary lookup.
-    """
-    return get_settings().order_cutoff_hour
 
 
 def clock_24h(hour: int) -> str:
@@ -83,13 +73,15 @@ class Cutoff:
     message: str
 
 
-def evaluate(now: datetime | None = None, *, hour: int | None = None) -> Cutoff:
-    """Evaluate the cut-off for `now` (defaults to this instant).
+def evaluate(now: datetime | None = None, *, hour: int) -> Cutoff:
+    """Evaluate the cut-off for `now` (defaults to this instant) against `hour`.
 
-    `hour` overrides the configured one. Only tests pass it: everything in the application reads
-    the setting, so there is one answer to "when is the cut-off" at any moment.
+    `hour` is required and has no default on purpose. It lives in a row the admin panel edits, so
+    the only way to know it is to read that row - and a default here would let a caller that
+    forgot quietly promise same-day delivery by yesterday's rule. Missing it is a `TypeError` at
+    the call rather than a wrong date on a customer's order.
     """
-    configured = cutoff_hour() if hour is None else hour
+    configured = hour
     moment = (now or datetime.now(UTC)).astimezone(UTC)
     local = moment + IST
     # The business day, not the UTC one: an order placed at 00:30 IST is today's, not yesterday's.

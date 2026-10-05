@@ -9,6 +9,7 @@ from app.modules.dashboard.analytics_router import router as dashboard_analytics
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.merchants.router import router as merchants_router
 from app.modules.permissions.router import router as permissions_router
+from app.modules.platform_settings.router import router as platform_settings_router
 from app.modules.roles.router import router as roles_router
 from app.modules.users.router import router as users_router
 
@@ -22,6 +23,7 @@ router.include_router(merchants_router)
 router.include_router(users_router)
 router.include_router(roles_router)
 router.include_router(permissions_router)
+router.include_router(platform_settings_router)
 router.include_router(audit_logs_router)
 # Who is signed in, across every channel, and the ability to end a session.
 router.include_router(login_sessions_router)

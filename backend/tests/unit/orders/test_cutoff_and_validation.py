@@ -12,7 +12,8 @@ import pytest
 
 from app.modules.orders import validation
 from app.modules.orders.constants import QUANTITY_LIMITS
-from app.modules.orders.cutoff import clock_12h, clock_24h, cutoff_hour, evaluate
+from app.modules.orders.cutoff import clock_12h, clock_24h, evaluate
+from app.modules.platform_settings.models import DEFAULT_ORDER_CUTOFF_HOUR
 from app.modules.orders.schemas import OrderLineRequest
 from app.modules.pricing.constants import CylinderType
 from app.shared.exceptions.api_error import ApiError
@@ -37,7 +38,7 @@ def line(cylinder_type: CylinderType, quantity: int) -> OrderLineRequest:
 
 def test_before_four_pm_promises_the_same_day():
     """There is still a working afternoon left, so the van goes today."""
-    result = evaluate(at_ist(2026, 9, 23, 15, 59))
+    result = evaluate(at_ist(2026, 9, 23, 15, 59), hour=16)
 
     assert result.within_cutoff is True
     # A calendar day, not an instant. There is no delivery slot: the godown never scheduled
@@ -47,7 +48,7 @@ def test_before_four_pm_promises_the_same_day():
 
 def test_at_exactly_four_pm_the_cutoff_has_passed():
     """16:00 is the deadline, not the last minute inside it."""
-    result = evaluate(at_ist(2026, 9, 23, 16, 0))
+    result = evaluate(at_ist(2026, 9, 23, 16, 0), hour=16)
 
     assert result.within_cutoff is False
     assert result.scheduled_delivery_date == date(2026, 9, 24)
@@ -59,7 +60,7 @@ def test_the_cutoff_is_read_on_an_ist_wall_clock():
     Evaluating this in UTC would move the cut-off to 21:30 IST and promise same-day delivery for
     five and a half hours a day that the godown cannot honour.
     """
-    result = evaluate(datetime(2026, 9, 23, 23, 30, tzinfo=UTC))
+    result = evaluate(datetime(2026, 9, 23, 23, 30, tzinfo=UTC), hour=16)
 
     assert result.within_cutoff is True
     assert result.scheduled_delivery_date == date(2026, 9, 24)
@@ -67,26 +68,26 @@ def test_the_cutoff_is_read_on_an_ist_wall_clock():
 
 def test_there_is_no_slot_on_the_cutoff_at_all():
     """A regression guard: the field was removed, not left empty."""
-    assert not hasattr(evaluate(at_ist(2026, 9, 23, 10, 0)), "delivery_slot")
+    assert not hasattr(evaluate(at_ist(2026, 9, 23, 10, 0), hour=16), "delivery_slot")
 
 
 def test_just_after_midnight_ist_is_still_within_the_same_day():
     """The UTC date is still yesterday at 00:30 IST; the promise must follow the wall clock."""
-    result = evaluate(at_ist(2026, 9, 23, 0, 30))
+    result = evaluate(at_ist(2026, 9, 23, 0, 30), hour=16)
 
     assert result.within_cutoff is True
     assert result.scheduled_delivery_date == date(2026, 9, 23)
 
 
 def test_a_late_order_on_the_last_day_of_a_month_rolls_into_the_next():
-    result = evaluate(at_ist(2026, 9, 30, 18, 0))
+    result = evaluate(at_ist(2026, 9, 30, 18, 0), hour=16)
 
     assert result.scheduled_delivery_date == date(2026, 10, 1)
 
 
 def test_the_cutoff_message_is_the_one_the_user_reads():
-    assert "same-day" in evaluate(at_ist(2026, 9, 23, 10, 0)).message
-    assert "cut-off has passed" in evaluate(at_ist(2026, 9, 23, 17, 0)).message
+    assert "same-day" in evaluate(at_ist(2026, 9, 23, 10, 0), hour=16).message
+    assert "cut-off has passed" in evaluate(at_ist(2026, 9, 23, 17, 0), hour=16).message
 
 
 # --- A configurable hour ---------------------------------------------------------------------
@@ -135,9 +136,10 @@ def test_midday_and_midnight_read_as_people_say_them():
     assert clock_12h(11) == "11:00 AM"
 
 
-def test_the_configured_hour_is_what_the_application_uses():
-    """`evaluate()` with no override reads the setting, not a number frozen at import."""
-    assert evaluate(at_ist(2026, 9, 23, 9, 0)).cutoff_time == clock_24h(cutoff_hour())
+def test_the_shipped_default_is_still_four_pm():
+    """What a fresh install starts with, before anybody changes it from the panel."""
+    assert DEFAULT_ORDER_CUTOFF_HOUR == 16
+    assert evaluate(at_ist(2026, 9, 23, 9, 0), hour=16).cutoff_time == clock_24h(DEFAULT_ORDER_CUTOFF_HOUR)
 
 
 # --- Basket rules (spec §6.3, §18.3) -------------------------------------------------------
