@@ -3,9 +3,10 @@
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, update, select
 
-from app.modules.pricing.constants import PricingMonthStatus
+from app.modules.pricing.models import PricingEntry, PricingMonth
+from app.modules.pricing.constants import CylinderType, PricingMonthStatus
 from app.modules.pricing.models import PricingChangeLog, PricingMonth
 from tests.integration.pricing.conftest import (
     PRICING,
@@ -27,8 +28,14 @@ async def test_first_read_opens_the_current_month_with_a_full_standard_card(env)
     assert month["status"] == PricingMonthStatus.ACTIVE.value
     assert month["month"] == month["id"][-7:]
     assert month["effectiveFrom"][:7] == month["month"]
+    # Every type the catalogue has, not a list written down here: a type missing from the opening
+    # card is invisible on every price list for ever, which is what happened to `LPG_10KG`.
     assert {entry["cylinderType"] for entry in month["entries"]} == {
+        kind.value for kind in CylinderType
+    }
+    assert {entry["cylinderType"] for entry in month["entries"]} >= {
         "LPG_5KG",
+        "LPG_10KG",
         "LPG_19KG",
         "LPG_47_5KG_L",
         "LPG_47_5KG_V",
@@ -298,3 +305,4 @@ async def test_pricing_requires_a_session(env):
     response = await env.get(f"{PRICING}/months")
 
     assert response.status_code == 401
+

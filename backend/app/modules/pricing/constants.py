@@ -97,6 +97,7 @@ DEFAULT_GST_PERCENT = Decimal("18.00")
 # them through the mid-month endpoint like any other rate.
 DEFAULT_STANDARD_RATES: dict[CylinderType, tuple[Decimal, Decimal]] = {
     CylinderType.LPG_5KG: (Decimal("445.00"), Decimal("45.00")),
+    CylinderType.LPG_10KG: (Decimal("890.00"), Decimal("70.00")),
     CylinderType.LPG_19KG: (Decimal("1690.00"), Decimal("110.00")),
     CylinderType.LPG_47_5KG_L: (Decimal("4225.00"), Decimal("275.00")),
     CylinderType.LPG_47_5KG_V: (Decimal("4260.00"), Decimal("275.00")),

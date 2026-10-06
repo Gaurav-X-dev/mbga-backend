@@ -131,7 +131,16 @@ class PricingMonthProvisioner:
         ]
         # A month that somehow has no entries still opens with a usable card rather than an
         # empty tab the screen cannot price anything from.
-        return carried or _default_card()
+        if not carried:
+            return _default_card()
+        # Carrying forward alone means a cylinder type added since last month never appears: the
+        # previous month had no row for it, so neither does this one, and neither will the next.
+        # That is how `LPG_10KG` was invisible on every price list after it was introduced. Any
+        # type the default card knows and this month does not is opened at its default rate, for
+        # staff to change like any other.
+        known = {(cylinder_type, tier) for cylinder_type, tier, _base, _markup in carried}
+        carried.extend(row for row in _default_card() if (row[0], row[1]) not in known)
+        return carried
 
 
 def _default_card() -> list[tuple[str, str, Decimal, Decimal]]:

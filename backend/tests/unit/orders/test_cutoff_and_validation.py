@@ -15,7 +15,11 @@ from app.modules.orders.constants import QUANTITY_LIMITS
 from app.modules.orders.cutoff import clock_12h, clock_24h, evaluate
 from app.modules.platform_settings.models import DEFAULT_ORDER_CUTOFF_HOUR
 from app.modules.orders.schemas import OrderLineRequest
-from app.modules.pricing.constants import CylinderType
+from app.modules.pricing.constants import (
+    DEFAULT_STANDARD_RATES,
+    CylinderType,
+    cylinders_for,
+)
 from app.shared.exceptions.api_error import ApiError
 
 pytestmark = [pytest.mark.unit]
@@ -236,3 +240,26 @@ def test_more_lines_than_cylinder_types_is_rejected():
         validation.validate_basket(payload, customer_type=RETAIL)
 
     assert error.value.detail["fields"][0]["field"] == "items"
+
+
+# --- The opening rate card ---------------------------------------------------------------------
+
+
+def test_every_cylinder_type_has_an_opening_rate():
+    """The invariant that `LPG_10KG` broke, and the one that made it invisible everywhere.
+
+    A pricing month opens from this card, and later months open by copying the one before. A
+    type with no rate here therefore gets no row in any month, this one or any that follows -
+    so it never appears on the rate card, the per-customer override screen, or the order form
+    that prices against them. Adding a cylinder type without a rate is the whole bug.
+    """
+    missing = [kind.value for kind in CylinderType if kind not in DEFAULT_STANDARD_RATES]
+    assert not missing, f"no opening rate for: {missing}"
+
+
+def test_a_retail_customer_can_be_priced_for_everything_they_may_order():
+    """Offering a cylinder the price card cannot price is an order that cannot be placed."""
+    for kind in cylinders_for("RETAIL"):
+        assert kind in DEFAULT_STANDARD_RATES, f"{kind.value} is orderable but has no rate"
+    for kind in cylinders_for("INDUSTRIAL"):
+        assert kind in DEFAULT_STANDARD_RATES, f"{kind.value} is orderable but has no rate"
