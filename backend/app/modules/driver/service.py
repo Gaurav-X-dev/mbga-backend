@@ -56,6 +56,9 @@ from app.modules.driver.schemas import (
     VerifyLocationResponseData,
 )
 from app.modules.driver.upi_qr import build_upi_link, png_base64
+from app.modules.orders.models import Order, OrderItem
+from app.modules.payments.models import Invoice
+from app.shared.date_time.business_calendar import business_today
 from app.modules.orders.constants import ORDER_LABELS
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
@@ -362,11 +365,12 @@ class DriverService:
         await self.session.refresh(slip)
 
         # Build multi-item receipt
-        items = await self._items(slip.id)
+        items = await self._items(slip.id, slip.order_id)
         # The receipt states the handover, so it counts what was handed over. On a part delivery
         # that is less than the slip allocated, and the empties are due against the cylinders the
         # customer actually received rather than the ones that went back on the van.
         delivered_total = await self._delivered_total(slip)
+        payable, paid, pending = await self._money(slip)
 
         return VerifyCustomerOtpResponseData(
             delivery_id=slip.id,
@@ -386,17 +390,18 @@ class DriverService:
             ),
             payment=PaymentEntry(
                 method="cash",
-                split="full",
-                amount_collected=1000.0,
-                payable_amount=1000.0,
-                pending_balance=0.0,
+                split="full" if pending <= 0 else "partial",
+                amount_collected=paid,
+                payable_amount=payable,
+                pending_balance=pending,
             ),
         )
 
     async def get_completed_detail(self, slip_id: str) -> CompletedDeliveryDetailResponseData:
         slip = await self._mine(slip_id)
-        items = await self._items(slip.id)
+        items = await self._items(slip.id, slip.order_id)
         customer_phone = slip.customer_mobile or await self._customer_phone(slip.customer_id)
+        payable, paid, pending = await self._money(slip)
 
         return CompletedDeliveryDetailResponseData(
             id=slip.id,
@@ -411,10 +416,10 @@ class DriverService:
             empty_items=items,
             payment={
                 "method": "cash",
-                "split": "full",
-                "totalAmount": 1000.0,
-                "amountPaid": 1000.0,
-                "pendingBalance": 0.0,
+                "split": "full" if pending <= 0 else "partial",
+                "totalAmount": payable,
+                "amountPaid": paid,
+                "pendingBalance": pending,
             },
             driver_notes=slip.note,
         )
@@ -423,6 +428,9 @@ class DriverService:
         self, period: str, page: int, limit: int
     ) -> HistoryDeliveriesResponseData:
         slips = await self.list_deliveries(DeliveryFilters(settled_only=True, limit=limit))
+        # One query for the whole page rather than one per row: the figure on each line is the
+        # invoice's, and reading them individually would be a query per delivery in the list.
+        paid_by_order, pending_by_order = await self._settled_money([slip.id for slip in slips])
         entries = []
         for slip in slips:
             entries.append(
@@ -436,7 +444,11 @@ class DriverService:
                     total_delivered_count=sum(i.quantity for i in slip.items),
                     total_empties_count=sum(i.expected_quantity for i in slip.empty_returns),
                     items_summary=",".join([f"{i.quantity}x{i.label}" for i in slip.items]),
-                    payment=HistoryPaymentSummary(method="cash", amount=1000.0, status="FULL"),
+                    payment=HistoryPaymentSummary(
+                        method="cash",
+                        amount=paid_by_order.get(slip.id, 0.0),
+                        status="FULL" if pending_by_order.get(slip.id, 0.0) <= 0 else "PARTIAL",
+                    ),
                 )
             )
         return HistoryDeliveriesResponseData(
@@ -457,11 +469,7 @@ class DriverService:
             role=(delivery_profile.delivery_user_type if delivery_profile else "DRIVER").title(),
             on_duty=bool(delivery_profile.on_duty) if delivery_profile else False,
             avatar_initials=_initials(name),
-            shift_stats=ShiftStats(
-                completed_deliveries_today=5,
-                cash_collected_today=15000.0,
-                total_empties_collected_today=25,
-            ),
+            shift_stats=await self._shift_stats(),
         )
 
     async def set_duty(self, on_duty: bool) -> DriverProfileResponseData:
@@ -606,22 +614,110 @@ class DriverService:
             slip.destination_longitude,
         )
 
-    async def _items(self, slip_id: str) -> list[DeliveryItemResponse]:
-        rows = await self.session.scalars(
-            select(DeliverySlipItem)
-            .where(DeliverySlipItem.slip_id == slip_id)
-            .order_by(DeliverySlipItem.position.asc(), DeliverySlipItem.id.asc())
+    async def _settled_money(
+        self, slip_ids: list[str]
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        """`{slip id: paid}` and `{slip id: balance}` for a page of history."""
+        if not slip_ids:
+            return {}, {}
+        rows = await self.session.execute(
+            select(DeliverySlip.id, Invoice.paid_amount, Invoice.balance)
+            .join(Invoice, Invoice.order_id == DeliverySlip.order_id)
+            .where(DeliverySlip.id.in_(slip_ids))
         )
-        return [
-            DeliveryItemResponse(
-                cylinder_type=row.cylinder_type,
-                label=_label(row.cylinder_type),
-                quantity=row.quantity,
-                unit_price=1000.0,  # Mock price
-                total_price=1000.0 * row.quantity,
+        paid: dict[str, float] = {}
+        pending: dict[str, float] = {}
+        for slip_id, amount, balance in rows:
+            paid[slip_id] = float(amount or 0)
+            pending[slip_id] = float(balance or 0)
+        return paid, pending
+
+    async def _shift_stats(self) -> ShiftStats:
+        """What this driver has actually done today.
+
+        Counted from their own settled slips rather than reported as a fixed 5 deliveries and
+        15,000 collected, which every driver saw on every day including their first.
+        """
+        today = business_today()
+        slips = list(
+            await self.session.scalars(
+                self._scope(select(DeliverySlip)).where(
+                    DeliverySlip.scheduled_date == today,
+                    DeliverySlip.status == DeliveryStatus.DELIVERED.value,
+                )
             )
-            for row in rows
-        ]
+        )
+        collected = 0.0
+        for slip in slips:
+            invoice = await self.session.scalar(
+                select(Invoice).where(Invoice.order_id == slip.order_id)
+            )
+            if invoice is not None:
+                collected += float(invoice.paid_amount)
+        return ShiftStats(
+            completed_deliveries_today=len(slips),
+            cash_collected_today=collected,
+            total_empties_collected_today=sum(slip.empties_collected or 0 for slip in slips),
+        )
+
+    async def _money(self, slip: DeliverySlip) -> tuple[float, float, float]:
+        """What the customer owes on this delivery: (payable, paid, pending).
+
+        Read from the invoice the handover raised, or from the order while there is none. Both
+        carry GST **inside** `total_amount` rather than added on top, so the figure here is the
+        one the customer is asked for - which matters, because the driver reads it out at the
+        gate and used to be shown a flat 1000.
+        """
+        invoice = await self.session.scalar(
+            select(Invoice).where(Invoice.order_id == slip.order_id)
+        )
+        if invoice is not None:
+            return float(invoice.total_amount), float(invoice.paid_amount), float(invoice.balance)
+        order = await self.session.get(Order, slip.order_id)
+        total = float(order.total_amount) if order else 0.0
+        return total, 0.0, total
+
+    async def _items(self, slip_id: str, order_id: str | None = None) -> list[DeliveryItemResponse]:
+        """The slip's lines, priced from the order they were cut from.
+
+        The price is read rather than invented. It used to be a flat 1000 per cylinder, which put
+        the same number against a 5 KG and a 422 KG Hippo - and the driver reads this figure out
+        to a customer at the gate, so a made-up one is worse than none.
+
+        `unit_price` is left null when the order's line cannot be found, which says "unknown"
+        instead of asserting a figure nobody can stand behind.
+        """
+        rows = list(
+            await self.session.scalars(
+                select(DeliverySlipItem)
+                .where(DeliverySlipItem.slip_id == slip_id)
+                .order_by(DeliverySlipItem.position.asc(), DeliverySlipItem.id.asc())
+            )
+        )
+        priced: dict[str, OrderItem] = {}
+        if order_id:
+            priced = {
+                item.cylinder_type: item
+                for item in await self.session.scalars(
+                    select(OrderItem).where(OrderItem.order_id == order_id)
+                )
+            }
+        items: list[DeliveryItemResponse] = []
+        for row in rows:
+            line = priced.get(row.cylinder_type)
+            unit = float(line.unit_price) if line else None
+            items.append(
+                DeliveryItemResponse(
+                    cylinder_type=row.cylinder_type,
+                    label=_label(row.cylinder_type),
+                    quantity=row.quantity,
+                    unit_price=unit,
+                    # Priced on what this slip carries, not what the order asked for: a part load
+                    # is a different number from the order's line total.
+                    total_price=None if unit is None else unit * row.quantity,
+                )
+            )
+        return items
 
     async def _customer_phone(self, customer_id: str) -> str | None:
         return await self.session.scalar(
@@ -633,7 +729,9 @@ class DriverService:
         if slip.status == DeliveryStatus.DISPATCHED.value and slip.started_at is not None:
             status_value = DriverDeliveryStatus.OUT_FOR_DELIVERY
 
-        items = await self._items(slip.id)
+        items = await self._items(slip.id, slip.order_id)
+        order = await self.session.get(Order, slip.order_id)
+        payable, _paid, _pending = await self._money(slip)
         customer_phone = slip.customer_mobile or await self._customer_phone(slip.customer_id)
 
         empty_returns = [
@@ -667,9 +765,13 @@ class DriverService:
             empty_returns=empty_returns,
             billing=BillingSummary(
                 order_subtotal=sum(i.total_price or 0.0 for i in items),
-                tax_amount=0.0,
+                # Broken out of the total rather than added to it, matching how the order and
+                # the invoice carry GST. Zero here used to be a placeholder beside a flat price.
+                tax_amount=float(order.gst_amount) if order else 0.0,
                 customer_previous_balance=0.0,
-                total_payable_amount=sum(i.total_price or 0.0 for i in items),
+                # The order's own total, not a sum of line prices: it is what the invoice
+                # bills and what the customer is actually asked for.
+                total_payable_amount=payable,
             ),
         )
 
