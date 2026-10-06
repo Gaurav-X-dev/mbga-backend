@@ -224,7 +224,7 @@ class DriverService:
     async def generate_qr(self, slip_id: str, payload: GenerateQrRequest) -> GenerateQrResponseData:
         slip = await self._mine(slip_id)
         self._require_dispatched(slip)
-        if payload.order_id != slip.order_id:
+        if payload.order_id is not None and payload.order_id != slip.order_id:
             raise ApiError(
                 "QR_ORDER_MISMATCH",
                 http_status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -256,7 +256,7 @@ class DriverService:
             upi_id=merchant.upi_id,
             payee_name=merchant.upi_payee_name,
             amount=amount,
-            order_id=payload.order_id,
+            order_id=slip.order_id,
             notes=payload.notes,
         )
         return GenerateQrResponseData(

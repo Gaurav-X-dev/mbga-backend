@@ -161,15 +161,24 @@ class UpdateItemsRequest(BaseModel):
 
 
 class GenerateQrRequest(BaseModel):
-    order_id: str = Field(alias="orderId", min_length=1, max_length=36)
+    """What to put in the UPI link.
+
+    `orderId` is optional: the delivery is already named in the path and it knows its own order,
+    so making the app repeat it only adds a value it can get wrong - an order *number* instead of
+    an id, say. Sent, it is still checked, because an app confused about which delivery it is on
+    is worth catching.
+    """
+
+    order_id: str | None = Field(default=None, alias="orderId", max_length=36)
     amount: float = Field(gt=0, le=MAX_PAYMENT_AMOUNT, allow_inf_nan=False)
     notes: str | None = Field(default=None, max_length=200)
     model_config = _CAMEL
 
     @field_validator("order_id", mode="before")
     @classmethod
-    def trim_required_text(cls, value: str) -> str:
-        return value.strip() if isinstance(value, str) else value
+    def trim_required_text(cls, value: str | None) -> str | None:
+        trimmed = value.strip() if isinstance(value, str) else value
+        return trimmed or None
 
     @field_validator("notes", mode="before")
     @classmethod
