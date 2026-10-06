@@ -50,7 +50,7 @@ CylinderTypePath = Annotated[
     Path(
         alias="cylinderType",
         max_length=40,
-        description="LPG_5KG, LPG_19KG, LPG_47_5KG_L, LPG_47_5KG_V or LPG_422KG_HIPPO.",
+        description="LPG_5KG, LPG_10KG, LPG_19KG, LPG_47_5KG_L, LPG_47_5KG_V or LPG_422KG_HIPPO.",
     ),
 ]
 

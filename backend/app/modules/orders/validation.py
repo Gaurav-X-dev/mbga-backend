@@ -18,11 +18,13 @@ from app.modules.orders.constants import (
     QUANTITY_LIMITS,
 )
 from app.modules.orders.schemas import OrderLineRequest
-from app.modules.pricing.constants import INDUSTRIAL_ONLY_CYLINDERS, CylinderType
+from app.modules.pricing.constants import CylinderType, cylinders_for
 from app.shared.exceptions.api_error import ApiError
 
 EMPTY_BASKET_MESSAGE = "Add at least one cylinder"
-INDUSTRIAL_ONLY_MESSAGE = "422 KG Hippo is only available to industrial customers."
+INELIGIBLE_CYLINDER_MESSAGE = "This cylinder type is not available for this customer type."
+# Kept as an import-compatible alias for older clients/tests; the rule now applies both ways.
+INDUSTRIAL_ONLY_MESSAGE = INELIGIBLE_CYLINDER_MESSAGE
 
 
 def invalid(field: str, code: str, message: str) -> ApiError:
@@ -68,8 +70,8 @@ def validate_basket(
 
 
 def _check_eligible(cylinder_type: CylinderType, customer_type: str | None) -> None:
-    if cylinder_type in INDUSTRIAL_ONLY_CYLINDERS and (customer_type or "").upper() != "INDUSTRIAL":
-        raise invalid(cylinder_type.value, "industrial_only", INDUSTRIAL_ONLY_MESSAGE)
+    if cylinder_type not in cylinders_for(customer_type):
+        raise invalid(cylinder_type.value, "customer_type_not_eligible", INELIGIBLE_CYLINDER_MESSAGE)
 
 
 def _check_quantity(cylinder_type: CylinderType, quantity: int) -> None:

@@ -151,10 +151,12 @@ async def update_items(
     response_model=GenerateQrResponseData,
     dependencies=_write_guards,
     responses=error_responses(401, 403, 404, 409, 422),
+    summary="Generate UPI QR as Base64 PNG",
 )
 async def generate_qr(
     delivery_id: DeliveryIdPath, payload: GenerateQrRequest, service: ServiceDep
 ) -> GenerateQrResponseData:
+    """Generate a QR locally; this does not contact or verify with a payment gateway."""
     return await service.generate_qr(delivery_id, payload)
 
 

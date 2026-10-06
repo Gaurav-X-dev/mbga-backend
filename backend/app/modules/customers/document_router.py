@@ -68,7 +68,7 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         ],
         type: Annotated[
             UploadType,
-            Form(description="AADHAAR, PAN, FSSAI, GST, or TASK_ATTACHMENT for a file on a task."),
+            Form(description="AADHAAR, PAN, FSSAI, GST, MSME, or TASK_ATTACHMENT for a file on a task."),
         ],
     ) -> DocumentUploadResponse:
         result = await service.upload(actor, file, type)

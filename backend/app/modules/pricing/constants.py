@@ -18,6 +18,7 @@ from enum import StrEnum
 
 class CylinderType(StrEnum):
     LPG_5KG = "LPG_5KG"
+    LPG_10KG = "LPG_10KG"
     LPG_19KG = "LPG_19KG"
     LPG_47_5KG_L = "LPG_47_5KG_L"
     LPG_47_5KG_V = "LPG_47_5KG_V"
@@ -26,6 +27,7 @@ class CylinderType(StrEnum):
 
 CYLINDER_LABELS: dict[CylinderType, str] = {
     CylinderType.LPG_5KG: "5 KG Cylinder",
+    CylinderType.LPG_10KG: "10 KG Cylinder",
     CylinderType.LPG_19KG: "19 KG Cylinder",
     CylinderType.LPG_47_5KG_L: "47.5 KG Cylinder (Liquid)",
     CylinderType.LPG_47_5KG_V: "47.5 KG Cylinder (Vapour)",
@@ -35,14 +37,27 @@ CYLINDER_LABELS: dict[CylinderType, str] = {
 # Hippo is industrial-only (spec §4, "same eligibility rule as order creation"). Every other
 # type is offered to both customer types. Order creation will read this same mapping when it
 # lands, so the Price Setting tab and the order form cannot disagree about what is orderable.
-INDUSTRIAL_ONLY_CYLINDERS: frozenset[CylinderType] = frozenset({CylinderType.LPG_422KG_HIPPO})
+RETAIL_CYLINDERS: tuple[CylinderType, ...] = (
+    CylinderType.LPG_5KG,
+    CylinderType.LPG_10KG,
+    CylinderType.LPG_19KG,
+)
+INDUSTRIAL_CYLINDERS: tuple[CylinderType, ...] = (
+    CylinderType.LPG_19KG,
+    CylinderType.LPG_47_5KG_L,
+    CylinderType.LPG_47_5KG_V,
+    CylinderType.LPG_422KG_HIPPO,
+)
+INDUSTRIAL_ONLY_CYLINDERS: frozenset[CylinderType] = frozenset(
+    set(INDUSTRIAL_CYLINDERS) - set(RETAIL_CYLINDERS)
+)
 
 
 def cylinders_for(customer_type: str | None) -> list[CylinderType]:
     """The cylinder types this customer may be priced for, in display order."""
     if (customer_type or "").upper() == "INDUSTRIAL":
-        return list(CylinderType)
-    return [kind for kind in CylinderType if kind not in INDUSTRIAL_ONLY_CYLINDERS]
+        return list(INDUSTRIAL_CYLINDERS)
+    return list(RETAIL_CYLINDERS)
 
 
 class PricingTier(StrEnum):

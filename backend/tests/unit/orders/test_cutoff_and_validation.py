@@ -186,14 +186,19 @@ def test_merging_keeps_first_seen_order():
 @pytest.mark.parametrize("cylinder_type", list(CylinderType))
 def test_each_type_enforces_its_own_limits(cylinder_type):
     minimum, maximum = QUANTITY_LIMITS[cylinder_type]
+    customer_type = (
+        RETAIL
+        if cylinder_type in {CylinderType.LPG_5KG, CylinderType.LPG_10KG}
+        else INDUSTRIAL
+    )
 
     # Both bounds are inclusive.
-    validation.validate_basket([line(cylinder_type, minimum)], customer_type=INDUSTRIAL)
-    validation.validate_basket([line(cylinder_type, maximum)], customer_type=INDUSTRIAL)
+    validation.validate_basket([line(cylinder_type, minimum)], customer_type=customer_type)
+    validation.validate_basket([line(cylinder_type, maximum)], customer_type=customer_type)
 
     for bad in (minimum - 1, maximum + 1):
         with pytest.raises(ApiError) as error:
-            validation.validate_basket([line(cylinder_type, bad)], customer_type=INDUSTRIAL)
+            validation.validate_basket([line(cylinder_type, bad)], customer_type=customer_type)
         # The spec asks for the cylinder type as the field, so the stepper highlights.
         assert error.value.detail["fields"][0]["field"] == cylinder_type.value
         assert error.value.detail["fields"][0]["message"] == f"Enter {minimum}–{maximum}"

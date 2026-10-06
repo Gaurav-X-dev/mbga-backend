@@ -27,6 +27,7 @@ class KycDocumentType(StrEnum):
     PAN = "PAN"
     FSSAI = "FSSAI"
     GST = "GST"
+    MSME = "MSME"
 
 
 class UploadType(StrEnum):
@@ -41,6 +42,7 @@ class UploadType(StrEnum):
     PAN = "PAN"
     FSSAI = "FSSAI"
     GST = "GST"
+    MSME = "MSME"
     TASK_ATTACHMENT = "TASK_ATTACHMENT"
 
     @property
@@ -104,8 +106,29 @@ class ScanStatus(StrEnum):
 
 # Which documents each customer type must supply (spec §18.5).
 REQUIRED_DOCUMENTS: dict[CustomerType, tuple[KycDocumentType, ...]] = {
-    CustomerType.RETAIL: (KycDocumentType.AADHAAR, KycDocumentType.PAN),
-    CustomerType.INDUSTRIAL: (KycDocumentType.FSSAI, KycDocumentType.GST),
+    CustomerType.RETAIL: (),
+    CustomerType.INDUSTRIAL: (KycDocumentType.GST, KycDocumentType.PAN),
+}
+
+REQUIRED_ANY_DOCUMENTS: dict[CustomerType, tuple[KycDocumentType, ...]] = {
+    CustomerType.RETAIL: (
+        KycDocumentType.AADHAAR,
+        KycDocumentType.GST,
+        KycDocumentType.FSSAI,
+        KycDocumentType.PAN,
+    ),
+    CustomerType.INDUSTRIAL: (),
+}
+
+ALLOWED_DOCUMENTS: dict[CustomerType, tuple[KycDocumentType, ...]] = {
+    CustomerType.RETAIL: REQUIRED_ANY_DOCUMENTS[CustomerType.RETAIL],
+    CustomerType.INDUSTRIAL: (
+        KycDocumentType.GST,
+        KycDocumentType.PAN,
+        KycDocumentType.FSSAI,
+        KycDocumentType.AADHAAR,
+        KycDocumentType.MSME,
+    ),
 }
 
 # --- Account status: backend word -> mobile word (spec §2 CustomerAccountStatus) -----------

@@ -184,6 +184,7 @@ STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
 #: How an order line names its cylinder (spec §3.9 / §18.3).
 ORDER_LABELS: dict[CylinderType, str] = {
     CylinderType.LPG_5KG: "5 KG",
+    CylinderType.LPG_10KG: "10 KG",
     CylinderType.LPG_19KG: "19 KG",
     CylinderType.LPG_47_5KG_L: "47.5 KG L",
     CylinderType.LPG_47_5KG_V: "47.5 KG V",
@@ -193,6 +194,7 @@ ORDER_LABELS: dict[CylinderType, str] = {
 #: The shorter form used inside `itemsSummary` - "6 × 47.5 L · 2 × 47.5 V" (spec §3.10).
 SUMMARY_LABELS: dict[CylinderType, str] = {
     CylinderType.LPG_5KG: "5 KG",
+    CylinderType.LPG_10KG: "10 KG",
     CylinderType.LPG_19KG: "19 KG",
     CylinderType.LPG_47_5KG_L: "47.5 L",
     CylinderType.LPG_47_5KG_V: "47.5 V",
@@ -202,6 +204,7 @@ SUMMARY_LABELS: dict[CylinderType, str] = {
 #: Per-line quantity limits (spec §18.3). A whole order may carry several lines.
 QUANTITY_LIMITS: dict[CylinderType, tuple[int, int]] = {
     CylinderType.LPG_5KG: (1, 100),
+    CylinderType.LPG_10KG: (1, 75),
     CylinderType.LPG_19KG: (1, 50),
     CylinderType.LPG_47_5KG_L: (1, 30),
     CylinderType.LPG_47_5KG_V: (1, 30),

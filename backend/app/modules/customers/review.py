@@ -27,6 +27,7 @@ from app.modules.authentication.account_state import (
 from app.modules.customers.constants import (
     APPLICATION_TRANSITIONS,
     DOCUMENT_APPROVED,
+    REQUIRED_ANY_DOCUMENTS,
     REQUIRED_DOCUMENTS,
     ApplicationStatus,
     CustomerType,
@@ -193,31 +194,41 @@ class KycReviewService:
             )
         customer_type = CustomerType(profile.customer_type)
         by_type = {document.document_type: document for document in documents}
-        for required in REQUIRED_DOCUMENTS[customer_type]:
-            document = by_type.get(required.value)
+        required = REQUIRED_DOCUMENTS[customer_type]
+        required_any = REQUIRED_ANY_DOCUMENTS[customer_type]
+        selected_any = [kind for kind in required_any if kind.value in by_type]
+        if required_any and not selected_any:
+            choices = ", ".join(kind.value for kind in required_any)
+            raise ApiError(
+                "DOCUMENTS_PENDING_APPROVAL",
+                status.HTTP_409_CONFLICT,
+                f"Upload any one of: {choices}.",
+            )
+        for required_kind in (*required, *selected_any):
+            document = by_type.get(required_kind.value)
             if document is None or document.finalized_at is None:
                 raise ApiError(
                     "DOCUMENTS_PENDING_APPROVAL",
                     status.HTTP_409_CONFLICT,
-                    f"The {required.value} document is missing.",
+                    f"The {required_kind.value} document is missing.",
                 )
             if document.status == DocumentStatus.REJECTED.value:
                 raise ApiError(
                     "DOCUMENTS_PENDING_APPROVAL",
                     status.HTTP_409_CONFLICT,
-                    f"The {required.value} document was rejected.",
+                    f"The {required_kind.value} document was rejected.",
                 )
             if not self._scan_is_approvable(document.scan_status):
                 raise ApiError(
                     "DOCUMENT_SCAN_PENDING",
                     status.HTTP_409_CONFLICT,
-                    f"The {required.value} document has not passed the security scan.",
+                    f"The {required_kind.value} document has not passed the security scan.",
                 )
             if not document.number_masked or not document.number_encrypted:
                 raise ApiError(
                     "DOCUMENTS_PENDING_APPROVAL",
                     status.HTTP_409_CONFLICT,
-                    f"The {required.value} number is missing.",
+                    f"The {required_kind.value} number is missing.",
                 )
         if customer_type is CustomerType.INDUSTRIAL:
             primaries = [site for site in sites if site.is_primary and site.is_active]
@@ -234,9 +245,12 @@ class KycReviewService:
             scan_status = ScanStatus(value)
         except ValueError:
             return False
-        if scan_status is ScanStatus.CLEAN:
-            return True
-        return self.allow_skipped_scan and scan_status is ScanStatus.SKIPPED
+        # A scanner is not configured in every deployment, so newly uploaded documents are
+        # recorded as SKIPPED. The merchant still reviews the document before explicitly
+        # approving the KYC application; do not make that manual approval impossible merely
+        # because an automated scanner was unavailable. A document positively identified as
+        # infected (or carrying an unknown/pending status) remains non-approvable.
+        return scan_status in {ScanStatus.CLEAN, ScanStatus.SKIPPED}
 
     # --- rejection -------------------------------------------------------------------------
 

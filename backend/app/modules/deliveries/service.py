@@ -64,6 +64,7 @@ from app.modules.payments.invoicing import InvoiceRaiser
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
 from app.shared.business.actor import BusinessActor
+from app.shared.crypto.field_cipher import FieldCipher
 from app.shared.exceptions.api_error import ApiError
 from app.shared.notifications.outbox import NotificationOutboxWriter
 
@@ -92,6 +93,10 @@ class DeliveryService:
         self.settings = settings
         self.merchant_id = actor.require_merchant_id()
         self.notifications = NotificationOutboxWriter(session)
+        self.confirmation_code_cipher = FieldCipher(
+            settings.document_cipher_secret,
+            purpose="delivery-confirmation-code",
+        )
 
     # --- Reads ------------------------------------------------------------------------------
 
@@ -259,7 +264,8 @@ class DeliveryService:
         )
 
         # The code the customer will read out at the gate. Minted here, told to them in the
-        # notification below, and kept only as a hash.
+        # notification below. The hash verifies it; the encrypted copy lets only the owning
+        # customer's order endpoint show it again after an app refresh.
         code = (
             codes.generate() if slip.confirmation_method == ConfirmationMethod.OTP.value else None
         )
@@ -267,6 +273,9 @@ class DeliveryService:
         slip.dispatched_at = now
         slip.dispatched_by_name = self.actor.display_name
         slip.confirmation_code_hash = codes.fingerprint(code) if code else None
+        slip.confirmation_code_encrypted = (
+            self.confirmation_code_cipher.encrypt(code) if code else None
+        )
         slip.confirmation_attempts = 0
         slip.updated_at = now
         transitions.advance(
@@ -395,6 +404,7 @@ class DeliveryService:
         # Spent. Keeping the hash would leave a code that still verifies against a slip that can
         # no longer be confirmed, which is a secret with no purpose.
         slip.confirmation_code_hash = None
+        slip.confirmation_code_encrypted = None
         slip.updated_at = now
 
         # The cylinders have now actually changed hands, so this is where they come off the
@@ -482,6 +492,7 @@ class DeliveryService:
         slip.status = DeliveryStatus.FAILED.value
         slip.failure_reason = payload.reason.strip()
         slip.confirmation_code_hash = None
+        slip.confirmation_code_encrypted = None
         slip.updated_at = now
         # The order is cancelled with the slip. A failed delivery used to leave it out for
         # delivery with nothing carrying it - not deliverable, because the slip had failed, and

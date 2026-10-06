@@ -80,6 +80,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "DELIVERY_ALREADY_EXISTS": "This order is already on a delivery slip.",
     "DELIVERY_ALREADY_SETTLED": "This delivery has already been completed.",
     "DELIVERY_NOT_READY": "This delivery is not at that step yet.",
+    "QR_ORDER_MISMATCH": "The order does not belong to this delivery.",
     "DELIVERY_CODE_LOCKED": "Too many incorrect codes for this delivery. Confirm it from the office.",
     "DELIVERY_USER_NOT_FOUND": "We could not find this delivery user.",
     "ORDER_NOT_DISPATCHABLE": "This order cannot be scheduled for delivery yet.",

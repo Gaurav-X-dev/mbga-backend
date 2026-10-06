@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +26,13 @@ from app.modules.customers.business_schemas import (
     CustomerRegistrationRequest,
     RegistrationProgressResponse,
 )
-from app.modules.customers.constants import CustomerType as BusinessCustomerType
-from app.modules.customers.constants import to_mobile_account_status
+from app.modules.customers.constants import (
+    ALLOWED_DOCUMENTS,
+    REQUIRED_ANY_DOCUMENTS,
+    REQUIRED_DOCUMENTS,
+    CustomerType as BusinessCustomerType,
+    to_mobile_account_status,
+)
 from app.modules.customers.dependencies import OnboardingActorDep, RegistrationDep
 from app.modules.customers.models import CustomerProfile, KycApplication
 from app.modules.customers.schemas import (
@@ -39,6 +44,8 @@ from app.modules.customers.schemas import (
     CustomerType,
     RegistrationField,
     RegistrationFieldsResponse,
+    KycDocumentRequirement,
+    KycRequirementsResponse,
     RegistrationStatusResponse,
 )
 from app.modules.merchants.models import Merchant
@@ -130,6 +137,45 @@ async def registration_fields() -> RegistrationFieldsResponse:
                 source="SRS/SOW Customer Management",
             ),
         ]
+    )
+
+
+DOCUMENT_LABELS = {
+    "AADHAAR": "Aadhaar Card",
+    "PAN": "PAN Card",
+    "GST": "GST Certificate",
+    "FSSAI": "FSSAI Licence",
+    "MSME": "MSME / Udyam Certificate",
+}
+DOCUMENT_FORMATS = {
+    "AADHAAR": "12 digits",
+    "PAN": "ABCDE1234F",
+    "GST": "15-character GSTIN",
+    "FSSAI": "14 digits",
+    "MSME": "UDYAM-MP-01-1234567",
+}
+
+
+@router.get("/registration/kyc-requirements", response_model=KycRequirementsResponse)
+async def kyc_requirements(
+    customer_type: Annotated[BusinessCustomerType, Query(alias="customerType")],
+) -> KycRequirementsResponse:
+    """Dynamic KYC form rules for the selected customer type."""
+    required = set(REQUIRED_DOCUMENTS[customer_type])
+    required_any = set(REQUIRED_ANY_DOCUMENTS[customer_type])
+    return KycRequirementsResponse(
+        customer_type=customer_type.value,
+        minimum_documents=max(len(required), 1 if required_any else 0),
+        documents=[
+            KycDocumentRequirement(
+                type=kind.value,
+                label=DOCUMENT_LABELS[kind.value],
+                required=kind in required,
+                required_group="ANY_ONE" if kind in required_any else None,
+                number_format=DOCUMENT_FORMATS[kind.value],
+            )
+            for kind in ALLOWED_DOCUMENTS[customer_type]
+        ],
     )
 
 

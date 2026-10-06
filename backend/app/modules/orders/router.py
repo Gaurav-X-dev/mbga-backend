@@ -30,6 +30,7 @@ from app.modules.orders.schemas import (
     CutoffResponse,
     OrderQuoteRequest,
     OrderQuoteResponse,
+    OrderCylinderTypeResponse,
     OrderResponse,
     OrderStatusMetaResponse,
     ReorderPreviewResponse,
@@ -101,6 +102,19 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
     async def order_cutoff(service: ServiceDep) -> CutoffResponse:
         """When an order placed right now would be delivered, against the configured IST cut-off."""
         return await service.cutoff()
+
+    @router.get(
+        "/cylinder-types",
+        response_model=list[OrderCylinderTypeResponse],
+        dependencies=read_guards,
+        responses=error_responses(401, 403, 404, 422),
+        summary="Cylinder types available to a customer",
+    )
+    async def order_cylinder_types(
+        service: ServiceDep,
+        customer_id: Annotated[str | None, Query(alias="customerId")] = None,
+    ) -> list[OrderCylinderTypeResponse]:
+        return await service.cylinder_types(customer_id)
 
     @router.post(
         "/quote",

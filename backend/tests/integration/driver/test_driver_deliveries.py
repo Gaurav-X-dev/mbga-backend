@@ -6,10 +6,14 @@ that when they do, the godown's books move exactly as they would have if the off
 it instead.
 """
 
-import pytest
-from sqlalchemy import func, select
+from base64 import b64decode
 
+import pytest
+from sqlalchemy import func, select, update
+
+from app.modules.customers.models import CustomerProfile
 from app.modules.deliveries.models import DeliverySlip
+from app.modules.merchants.models import Merchant
 from app.modules.orders.models import Order, OrderStatusHistory
 from app.shared.notifications.models import NotificationOutbox
 from tests.integration.deliveries.conftest import DELIVERIES, counts, ready_to_dispatch
@@ -19,6 +23,7 @@ from tests.integration.driver.conftest import (
     give_site_coordinates,
     on_the_road,
 )
+from tests.integration.orders.conftest import CUSTOMER_ORDERS, customer_token
 
 pytestmark = [pytest.mark.integration, pytest.mark.mysql, pytest.mark.asyncio]
 
@@ -34,6 +39,7 @@ async def test_a_driver_sees_the_delivery_assigned_to_them(env):
     assert response.status_code == 200, response.text
     rows = response.json()
     assert [row["id"] for row in rows] == [slip["id"]]
+    assert rows[0]["orderId"] == slip["orderId"]
     assert rows[0]["orderNumber"] == slip["orderNumber"]
     assert rows[0]["status"] == "out_for_delivery"
     # The address arrives as one line the driver can read out or paste into maps.
@@ -62,6 +68,75 @@ async def test_a_merchant_token_cannot_read_the_driver_endpoints(env):
 
 
 # --- Setting off -----------------------------------------------------------------------------
+
+
+async def test_customer_order_api_shows_active_delivery_otp_and_clears_it_after_use(env):
+    """The customer can recover the OTP after refresh without exposing it to merchant APIs."""
+    staff, token, slip, _driver = await on_the_road(env)
+    code = slip["devConfirmationCode"]
+    customer = await env.scalar(
+        select(CustomerProfile).where(CustomerProfile.id == slip["customerId"])
+    )
+    customer_access = await customer_token(env, customer)
+
+    customer_order = await env.get(
+        f"{CUSTOMER_ORDERS}/{slip['orderId']}", customer_access
+    )
+    assert customer_order.status_code == 200, customer_order.text
+    assert customer_order.json()["deliveryOtp"] == code
+    customer_orders = await env.get(CUSTOMER_ORDERS, customer_access)
+    listed = next(row for row in customer_orders.json() if row["id"] == slip["orderId"])
+    assert listed["deliveryOtp"] == code
+
+    merchant_order = await env.get(
+        f"/api/v1/merchant/orders/{slip['orderId']}", staff
+    )
+    assert merchant_order.status_code == 200, merchant_order.text
+    assert merchant_order.json()["deliveryOtp"] is None
+
+    encrypted = await env.scalar(
+        select(DeliverySlip.confirmation_code_encrypted).where(DeliverySlip.id == slip["id"])
+    )
+    assert encrypted is not None
+    assert encrypted != code
+    assert code not in encrypted
+
+    counted = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/confirm",
+        token,
+        {
+            "deliveredItems": [
+                {
+                    "cylinderType": "LPG_19KG",
+                    "quantity": slip["cylindersAllocated"],
+                }
+            ],
+            "collectedEmpties": [],
+            "payment": {
+                "method": "cash",
+                "split": "full",
+                "amountCollected": 0,
+                "payableAmount": 0,
+                "pendingBalance": 0,
+            },
+        },
+    )
+    assert counted.status_code == 200, counted.text
+    completed = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-customer-otp",
+        token,
+        {"otp": code},
+    )
+    assert completed.status_code == 200, completed.text
+
+    refreshed = await env.get(
+        f"{CUSTOMER_ORDERS}/{slip['orderId']}", customer_access
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["deliveryOtp"] is None
+    assert await env.scalar(
+        select(DeliverySlip.confirmation_code_encrypted).where(DeliverySlip.id == slip["id"])
+    ) is None
 
 
 async def test_starting_a_trip_measures_the_distance_to_the_gate(env):
@@ -136,6 +211,56 @@ async def test_a_site_with_no_coordinates_never_blocks_the_driver(env):
     assert response.status_code == 200, response.text
     assert response.json()["distanceMetersFromDestination"] is None
     assert response.json()["isAtLocation"] is True
+
+
+async def test_driver_generates_a_dynamic_upi_qr_as_base64_png(env):
+    _staff, token, slip, _driver = await on_the_road(env)
+    merchant_id = await env.scalar(
+        select(DeliverySlip.merchant_id).where(DeliverySlip.id == slip["id"])
+    )
+    await env.execute(
+        update(Merchant)
+        .where(Merchant.id == merchant_id)
+        .values(upi_id="merchant.indore@bank", upi_payee_name="MBGA Indore")
+    )
+
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/generate-qr",
+        token,
+        {
+            "orderId": slip["orderId"],
+            "amount": 3200.5,
+            "notes": "Order at Gate 2",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["deliveryId"] == slip["id"]
+    assert body["orderId"] == slip["orderId"]
+    assert body["amount"] == 3200.5
+    assert body["upiId"] == "merchant.indore@bank"
+    assert "pa=merchant.indore@bank" in body["upiString"]
+    assert "am=3200.50" in body["upiString"]
+    assert "tr=" + slip["orderId"] in body["upiString"]
+    assert body["mimeType"] == "image/png"
+    assert b64decode(body["qrCodeBase64"], validate=True).startswith(b"\x89PNG\r\n\x1a\n")
+
+
+async def test_qr_order_id_must_match_the_assigned_delivery(env):
+    _staff, token, slip, _driver = await on_the_road(env)
+
+    response = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/generate-qr",
+        token,
+        {
+            "orderId": "another-order",
+            "amount": 100,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "QR_ORDER_MISMATCH"
 
 
 async def test_starting_twice_keeps_the_first_departure_time(env):
@@ -360,6 +485,9 @@ async def test_a_driver_closes_a_failed_run(env):
     assert board.json()["status"] == "FAILED"
     order = await env.scalar(select(Order).where(Order.id == slip["orderId"]))
     assert order.status == "CANCELLED"
+    assert await env.scalar(
+        select(DeliverySlip.confirmation_code_encrypted).where(DeliverySlip.id == slip["id"])
+    ) is None
     events = list(
         await env.execute(
             select(NotificationOutbox.event_type).where(

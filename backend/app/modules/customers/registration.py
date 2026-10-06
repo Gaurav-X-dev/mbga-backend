@@ -37,7 +37,9 @@ from app.modules.customers.business_schemas import (
 from app.modules.customers.codes import CustomerCodeAllocator
 from app.modules.customers.constants import (
     ACCOUNT_TRANSITIONS,
+    ALLOWED_DOCUMENTS,
     EDITABLE_ACCOUNT_STATUSES,
+    REQUIRED_ANY_DOCUMENTS,
     REQUIRED_DOCUMENTS,
     ApplicationStatus,
     CustomerType,
@@ -165,20 +167,23 @@ class CustomerRegistrationService:
         require: bool,
     ) -> list[tuple[KycDocumentType, str, CustomerDocument]]:
         required = REQUIRED_DOCUMENTS[customer_type]
+        required_any = REQUIRED_ANY_DOCUMENTS[customer_type]
+        allowed = ALLOWED_DOCUMENTS[customer_type]
         supplied = {submission.type: submission for submission in submissions}
-        for extra in set(supplied) - set(required):
-            # A retail applicant sending an FSSAI licence is refused rather than ignored:
-            # silently dropping it would leave the customer believing it was submitted.
+        for extra in set(supplied) - set(allowed):
             errors.add(
                 f"doc.{extra.value}",
                 "not_applicable",
                 f"A {customer_type.value.lower()} customer does not submit a {extra.value} document.",
             )
+        if require and required_any and not any(kind in supplied for kind in required_any):
+            choices = ", ".join(kind.value for kind in required_any)
+            errors.add("documents", "one_required", f"Upload any one of: {choices}.")
         resolved: list[tuple[KycDocumentType, str, CustomerDocument]] = []
-        for document_type in required:
+        for document_type in allowed:
             submission = supplied.get(document_type)
             if submission is None:
-                if require:
+                if require and document_type in required:
                     errors.add(f"doc.{document_type.value}", "required", f"Upload the {document_type.value} document.")
                 continue
             number = validate_document_number(document_type, submission.number, errors)
@@ -514,6 +519,9 @@ class CustomerRegistrationService:
             }
             required = REQUIRED_DOCUMENTS[CustomerType(profile.customer_type)]
             missing_documents = [kind.value for kind in required if kind.value not in linked]
+            required_any = REQUIRED_ANY_DOCUMENTS[CustomerType(profile.customer_type)]
+            if required_any and not any(kind.value in linked for kind in required_any):
+                missing_documents.append("ANY_OF:" + "|".join(kind.value for kind in required_any))
         return missing_fields, missing_documents
 
     @staticmethod

@@ -62,6 +62,15 @@ class CutoffResponse(BaseModel):
     model_config = _CAMEL
 
 
+class OrderCylinderTypeResponse(BaseModel):
+    code: CylinderType
+    label: str
+    minimum_quantity: int = Field(alias="minimumQuantity")
+    maximum_quantity: int = Field(alias="maximumQuantity")
+
+    model_config = _CAMEL
+
+
 # --- Lines ----------------------------------------------------------------------------------
 
 
@@ -163,6 +172,8 @@ class OrderResponse(BaseModel):
     cutoff: CutoffResponse
     created_by: str | None = Field(default=None, alias="createdBy")
     delivery_slip_id: str | None = Field(default=None, alias="deliverySlipId")
+    # Populated only on the owning customer's channel while the delivery OTP is active.
+    delivery_otp: str | None = Field(default=None, alias="deliveryOtp")
     invoice_id: str | None = Field(default=None, alias="invoiceId")
 
     model_config = _CAMEL

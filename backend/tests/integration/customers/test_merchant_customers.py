@@ -57,7 +57,7 @@ async def test_staff_can_add_an_industrial_customer_with_sites(env):
     assert len(customer["sites"]) == 1
     assert customer["sites"][0]["isPrimary"] is True
     masked = {document["type"]: document["numberMasked"] for document in customer["documents"]}
-    assert masked == {"FSSAI": "XXXXXXXXXX1234", "GST": "23XXXXXXXXXX1Z5"}
+    assert masked == {"GST": "23XXXXXXXXXX1Z5", "PAN": "XXXXX1234F"}
     assert "12345678901234" not in response.text
 
 

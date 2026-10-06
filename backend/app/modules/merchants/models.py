@@ -20,6 +20,8 @@ class Merchant(Base):
     contact_person_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     gst_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    upi_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    upi_payee_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     address_line_1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line_2: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)

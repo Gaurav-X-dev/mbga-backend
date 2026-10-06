@@ -3,7 +3,11 @@
 from datetime import UTC, datetime
 from typing import Annotated, Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+
+from app.modules.payments.constants import MAX_PAYMENT_AMOUNT
+
+UPI_ID_PATTERN = r"^[a-zA-Z0-9._-]{2,}@[a-zA-Z][a-zA-Z0-9._-]{1,}$"
 
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -81,6 +85,7 @@ class DriverDeliveryResponse(BaseModel):
     """Step 1: GET /deliveries/today"""
 
     id: str
+    order_id: str = Field(alias="orderId")
     order_number: str = Field(alias="orderNumber")
     status: str
     delivery_date: str = Field(alias="deliveryDate")
@@ -156,18 +161,35 @@ class UpdateItemsRequest(BaseModel):
 
 
 class GenerateQrRequest(BaseModel):
-    amount: float
-    payment_split: str = Field(alias="paymentSplit")  # "full" | "partial"
+    order_id: str = Field(alias="orderId", min_length=1, max_length=36)
+    amount: float = Field(gt=0, le=MAX_PAYMENT_AMOUNT, allow_inf_nan=False)
+    notes: str | None = Field(default=None, max_length=200)
     model_config = _CAMEL
+
+    @field_validator("order_id", mode="before")
+    @classmethod
+    def trim_required_text(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def trim_optional_notes(cls, value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return value
+        return value.strip() or None
 
 
 class GenerateQrResponseData(BaseModel):
     delivery_id: str = Field(alias="deliveryId")
+    order_id: str = Field(alias="orderId")
     order_number: str = Field(alias="orderNumber")
     amount: float
+    upi_id: str = Field(alias="upiId")
+    payee_name: str = Field(alias="payeeName")
+    notes: str | None = None
     upi_string: str = Field(alias="upiString")
-    qr_image_url: str = Field(alias="qrImageUrl")
-    expires_in_seconds: int = Field(alias="expiresInSeconds")
+    qr_code_base64: str = Field(alias="qrCodeBase64")
+    mime_type: str = Field(default="image/png", alias="mimeType")
     model_config = _CAMEL
 
 

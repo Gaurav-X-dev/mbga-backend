@@ -35,6 +35,7 @@ class _Address:
         (KycDocumentType.PAN, " abcde1234f ", "ABCDE1234F"),
         (KycDocumentType.GST, "23aaaca1234f1z5", "23AAACA1234F1Z5"),
         (KycDocumentType.FSSAI, "1234 5678 9012 34", "12345678901234"),
+        (KycDocumentType.MSME, "udyam-mp-01-1234567", "UDYAM-MP-01-1234567"),
     ],
 )
 def test_people_type_identifiers_with_spaces_and_case(kind, raw, expected):
@@ -56,6 +57,7 @@ def test_people_type_identifiers_with_spaces_and_case(kind, raw, expected):
         (KycDocumentType.GST, "23AAACA1234F1A5"),
         (KycDocumentType.GST, "AA AACA1234F1Z5"),
         (KycDocumentType.PAN, ""),
+        (KycDocumentType.MSME, "MSME-MP-01-1234567"),
     ],
 )
 def test_invalid_identifiers_are_refused(kind, raw):
@@ -71,6 +73,7 @@ def test_invalid_identifiers_are_refused(kind, raw):
         (KycDocumentType.PAN, "ABCDE1234F", "XXXXX1234F"),
         (KycDocumentType.FSSAI, "12345678907712", "XXXXXXXXXX7712"),
         (KycDocumentType.GST, "23AAACA1234F1Z5", "23XXXXXXXXXX1Z5"),
+        (KycDocumentType.MSME, "UDYAM-MP-01-1234567", "UDYAM-XX-XX-XXX4567"),
     ],
 )
 def test_masks_match_the_specification_examples(kind, value, masked):

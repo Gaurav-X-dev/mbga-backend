@@ -30,11 +30,11 @@ from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 from app.modules.orders.constants import ORDER_LABELS, QUANTITY_LIMITS, REGISTERED_ADDRESS_LABEL
 from app.modules.orders.models import Order, OrderItem
 from app.modules.orders.schemas import OrderLineRequest
-from app.modules.pricing.constants import INDUSTRIAL_ONLY_CYLINDERS, CylinderType
+from app.modules.pricing.constants import CylinderType, cylinders_for
 
 # Reasons the app renders verbatim next to a dropped line.
 UNKNOWN_TYPE = "This cylinder is no longer offered."
-INDUSTRIAL_ONLY = "This cylinder is only available to industrial customers."
+INDUSTRIAL_ONLY = "This cylinder is not available for this customer type."
 OVER_LIMIT = "The maximum for this cylinder has changed. Reduce the quantity to reorder."
 
 SITE_GONE = "The delivery site on the original order is no longer available. Choose another site."
@@ -143,8 +143,7 @@ class ReorderPlanner:
         """The reason this line cannot be repeated, or None when it can."""
         if not isinstance(line.cylinder_type, CylinderType):
             return UNKNOWN_TYPE
-        if line.cylinder_type in INDUSTRIAL_ONLY_CYLINDERS and customer_type != CustomerType.INDUSTRIAL.value:
-            # The customer was industrial when they ordered this and is not any more.
+        if line.cylinder_type not in cylinders_for(customer_type):
             return INDUSTRIAL_ONLY
         minimum, maximum = QUANTITY_LIMITS[line.cylinder_type]
         if not minimum <= line.quantity <= maximum:

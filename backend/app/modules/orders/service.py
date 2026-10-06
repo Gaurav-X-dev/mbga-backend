@@ -29,6 +29,7 @@ from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import Address
 from app.modules.customers.constants import CustomerType, KycStatus
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.deliveries.models import DeliverySlip
 from app.modules.deliveries.schemas import CreateDeliverySlipRequest
 from app.modules.deliveries.service import DeliveryService
 from app.modules.notifications.events.orders import order_confirmed
@@ -38,6 +39,8 @@ from app.modules.orders.constants import (
     ACTIVE_FILTER,
     ACTIVE_STATUSES,
     ALL_STATUSES,
+    ORDER_LABELS,
+    QUANTITY_LIMITS,
     REGISTERED_ADDRESS_LABEL,
     STATUS_BY_CODE,
     STATUS_CATALOGUE,
@@ -67,6 +70,7 @@ from app.modules.orders.schemas import (
     OrderItemResponse,
     OrderQuoteRequest,
     OrderQuoteResponse,
+    OrderCylinderTypeResponse,
     OrderResponse,
     OrderStatusEntry,
     OrderStatusMetaResponse,
@@ -76,8 +80,9 @@ from app.modules.orders.schemas import (
     UnavailableLine,
 )
 from app.modules.platform_settings import service as platform_settings
-from app.modules.pricing.constants import CylinderType
+from app.modules.pricing.constants import CylinderType, cylinders_for
 from app.shared.business.actor import BusinessActor
+from app.shared.crypto.field_cipher import FieldCipher
 from app.shared.exceptions.api_error import ApiError
 from app.shared.idempotency.service import IdempotencyService, validate_key
 from app.shared.notifications.outbox import NotificationOutboxWriter
@@ -109,6 +114,10 @@ class OrderService:
         self.actor = actor
         self.settings = settings
         self.merchant_id = actor.require_merchant_id()
+        self.confirmation_code_cipher = FieldCipher(
+            settings.document_cipher_secret,
+            purpose="delivery-confirmation-code",
+        )
 
     # --- Catalogue and cut-off ---------------------------------------------------------
 
@@ -129,6 +138,26 @@ class OrderService:
 
     async def cutoff(self) -> CutoffResponse:
         return _cutoff_view(await self._cutoff())
+
+    async def cylinder_types(self, customer_id: str | None) -> list[OrderCylinderTypeResponse]:
+        """Cylinder choices for the selected customer's type; the app must not hard-code these."""
+        wanted = customer_id or (self.actor.customer_id if self.actor.is_customer else None)
+        if not wanted:
+            raise ApiError(
+                "VALIDATION_ERROR",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                fields=[{"field": "customerId", "code": "required", "message": "Select a customer."}],
+            )
+        customer = await self._orderable_customer(wanted, require_approved=False)
+        return [
+            OrderCylinderTypeResponse(
+                code=kind,
+                label=ORDER_LABELS[kind],
+                minimum_quantity=QUANTITY_LIMITS[kind][0],
+                maximum_quantity=QUANTITY_LIMITS[kind][1],
+            )
+            for kind in cylinders_for(customer.customer_type)
+        ]
 
     async def _cutoff(self) -> Cutoff:
         """The cut-off as it stands right now, against the hour the admin panel has set.
@@ -863,7 +892,7 @@ class OrderService:
         return (await self._views([order]))[0]
 
     async def _views(self, orders: list[Order]) -> list[OrderResponse]:
-        """Build every response in three queries rather than three per order."""
+        """Build every response in bounded batch queries rather than queries per order."""
         if not orders:
             return []
         ids = [order.id for order in orders]
@@ -884,7 +913,29 @@ class OrderService:
         ):
             history[row.order_id].append(row)
 
-        return [_order_view(order, items[order.id], history[order.id]) for order in orders]
+        delivery_otps: dict[str, str] = {}
+        if self.actor.is_customer:
+            rows = await self.session.execute(
+                select(DeliverySlip.order_id, DeliverySlip.confirmation_code_encrypted).where(
+                    DeliverySlip.order_id.in_(ids),
+                    DeliverySlip.customer_id == self.actor.customer_id,
+                    DeliverySlip.confirmation_code_encrypted.is_not(None),
+                )
+            )
+            for order_id, encrypted_code in rows:
+                code = self.confirmation_code_cipher.decrypt(encrypted_code)
+                if code is not None:
+                    delivery_otps[order_id] = code
+
+        return [
+            _order_view(
+                order,
+                items[order.id],
+                history[order.id],
+                delivery_otp=delivery_otps.get(order.id),
+            )
+            for order in orders
+        ]
 
 
 # --- View builders ----------------------------------------------------------------------------
@@ -940,7 +991,11 @@ def _site_address(site: CustomerDeliverySite) -> Address:
 
 
 def _order_view(
-    order: Order, items: list[OrderItem], history: list[OrderStatusHistory]
+    order: Order,
+    items: list[OrderItem],
+    history: list[OrderStatusHistory],
+    *,
+    delivery_otp: str | None = None,
 ) -> OrderResponse:
     from app.modules.orders.constants import ORDER_LABELS
 
@@ -997,5 +1052,6 @@ def _order_view(
         ),
         created_by=order.created_by,
         delivery_slip_id=order.delivery_slip_id,
+        delivery_otp=delivery_otp,
         invoice_id=order.invoice_id,
     )

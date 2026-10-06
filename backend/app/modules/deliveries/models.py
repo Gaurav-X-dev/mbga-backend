@@ -112,6 +112,10 @@ class DeliverySlip(Base):
     # and a plain column would be a shared secret sitting in the table that the whole office
     # can query. Null when the method is NONE, or once the slip is confirmed and it is spent.
     confirmation_code_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Reversible copy for the owning customer's order screen. It is encrypted with a
+    # purpose-specific key, is never returned to merchant/delivery APIs, and is erased when the
+    # slip reaches DELIVERED or FAILED. The hash above remains the verification source.
+    confirmation_code_encrypted: Mapped[str | None] = mapped_column(String(255), nullable=True)
     confirmation_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     status: Mapped[str] = mapped_column(String(20), index=True)

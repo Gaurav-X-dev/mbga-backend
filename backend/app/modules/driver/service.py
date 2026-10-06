@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from fastapi import status as http_status
@@ -54,6 +55,7 @@ from app.modules.driver.schemas import (
     VerifyLocationRequest,
     VerifyLocationResponseData,
 )
+from app.modules.driver.upi_qr import build_upi_link, png_base64
 from app.modules.orders.constants import ORDER_LABELS
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
@@ -218,13 +220,52 @@ class DriverService:
 
     async def generate_qr(self, slip_id: str, payload: GenerateQrRequest) -> GenerateQrResponseData:
         slip = await self._mine(slip_id)
+        self._require_dispatched(slip)
+        if payload.order_id != slip.order_id:
+            raise ApiError(
+                "QR_ORDER_MISMATCH",
+                http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "The orderId does not belong to this delivery.",
+                fields=[
+                    {
+                        "field": "orderId",
+                        "code": "order_mismatch",
+                        "message": "Use the orderId assigned to this delivery.",
+                    }
+                ],
+            )
+
+        from app.modules.merchants.models import Merchant
+
+        merchant = await self.session.get(Merchant, slip.merchant_id)
+        if not merchant or not merchant.upi_id or not merchant.upi_payee_name:
+            raise ApiError(
+                "MERCHANT_UPI_NOT_CONFIGURED",
+                http_status.HTTP_409_CONFLICT,
+                "Merchant UPI details are not configured in settings."
+            )
+
+        amount = format(
+            Decimal(str(payload.amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+            "f",
+        )
+        upi_string = build_upi_link(
+            upi_id=merchant.upi_id,
+            payee_name=merchant.upi_payee_name,
+            amount=amount,
+            order_id=payload.order_id,
+            notes=payload.notes,
+        )
         return GenerateQrResponseData(
             delivery_id=slip.id,
+            order_id=slip.order_id,
             order_number=slip.order_number,
-            amount=payload.amount,
-            upi_string=f"upi://pay?pa=mbga@bank&pn=MBGA&am={payload.amount}&tr={slip.order_number}&cu=INR",
-            qr_image_url=f"https://mbga.clocktales.com/media/qr/{slip.order_number}_{payload.amount}.png",
-            expires_in_seconds=600,
+            amount=float(amount),
+            upi_id=merchant.upi_id,
+            payee_name=merchant.upi_payee_name,
+            notes=payload.notes,
+            upi_string=upi_string,
+            qr_code_base64=png_base64(upi_string),
         )
 
     async def confirm_counts(
@@ -608,6 +649,7 @@ class DriverService:
 
         return DriverDeliveryResponse(
             id=slip.id,
+            order_id=slip.order_id,
             order_number=slip.order_number,
             status=status_value,
             delivery_date=slip.scheduled_date.isoformat(),

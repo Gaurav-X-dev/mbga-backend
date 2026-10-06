@@ -20,6 +20,7 @@ PAN_PATTERN = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 GSTIN_PATTERN = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
 AADHAAR_PATTERN = re.compile(r"^[0-9]{12}$")
 FSSAI_PATTERN = re.compile(r"^[0-9]{14}$")
+MSME_PATTERN = re.compile(r"^UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}$")
 PINCODE_PATTERN = re.compile(r"^[1-9][0-9]{5}$")
 # Deliberately permissive: the authority on an address is the delivery driver, not a regex.
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
@@ -115,8 +116,11 @@ def validate_address(address, errors: FieldErrors, *, prefix: str = "deliveryAdd
 
 def normalize_document_number(document_type: KycDocumentType, raw: str | None) -> str:
     """Strip the formatting people type (spaces, hyphens, lower case) before validating."""
+    if document_type is KycDocumentType.MSME:
+        # Hyphens are part of the published Udyam identifier, unlike Aadhaar/PAN formatting.
+        return re.sub(r"\s", "", str(raw or "")).upper()
     text = re.sub(r"[\s-]", "", str(raw or ""))
-    if document_type in {KycDocumentType.PAN, KycDocumentType.GST}:
+    if document_type in {KycDocumentType.PAN, KycDocumentType.GST, KycDocumentType.MSME}:
         return text.upper()
     return text
 
@@ -133,6 +137,10 @@ def validate_document_number(document_type: KycDocumentType, raw: str | None, er
         KycDocumentType.PAN: (PAN_PATTERN, "Enter a valid PAN, for example ABCDE1234F."),
         KycDocumentType.FSSAI: (FSSAI_PATTERN, "Enter the 14-digit FSSAI licence number."),
         KycDocumentType.GST: (GSTIN_PATTERN, "Enter a valid 15-character GSTIN."),
+        KycDocumentType.MSME: (
+            MSME_PATTERN,
+            "Enter a valid Udyam number, for example UDYAM-MP-01-1234567.",
+        ),
     }
     pattern, message = patterns[document_type]
     if not pattern.match(value):
@@ -154,6 +162,8 @@ def mask_document_number(document_type: KycDocumentType, value: str) -> str:
         return f"XXXXX{value[-5:]}"
     if document_type is KycDocumentType.FSSAI:
         return f"{'X' * 10}{value[-4:]}"
+    if document_type is KycDocumentType.MSME:
+        return f"UDYAM-XX-XX-{'X' * 3}{value[-4:]}"
     # GSTIN: the state code is not secret and identifies the registration at a glance.
     return f"{value[:2]}{'X' * 10}{value[-3:]}"
 

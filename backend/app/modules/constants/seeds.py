@@ -44,6 +44,7 @@ def seed_rows() -> list[SeedConstant]:
         KycDocumentType.PAN: "PAN Card",
         KycDocumentType.FSSAI: "FSSAI Licence",
         KycDocumentType.GST: "GST Certificate",
+        KycDocumentType.MSME: "MSME / Udyam Certificate",
         PricingTier.STANDARD: "Standard",
         PricingTier.BULK: "Bulk",
         PricingTier.KEY_ACCOUNT: "Key Account",

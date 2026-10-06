@@ -306,6 +306,7 @@ The driver's work. Every one of these is scoped to the slips addressed to **this
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `id` | string | yes |  |
+| `orderId` | string | yes | Use this value when calling `generate-qr` |
 | `orderNumber` | string | yes |  |
 | `status` | string | yes |  |
 | `deliveryDate` | string | yes |  |
@@ -373,15 +374,19 @@ The driver's work. Every one of these is scoped to the slips addressed to **this
 
 ### `POST /deliveries/{deliveryId}/generate-qr`
 
-**Generate Qr**
+**Generate UPI QR as Base64 PNG**
 
 
 **Request body**
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `amount` | float | yes |  |
-| `paymentSplit` | string | yes |  |
+| `orderId` | string | yes | Must belong to the delivery in the path |
+| `amount` | float | yes | Positive INR amount; encoded to two decimals |
+| `notes` | string · nullable | no | UPI transaction note, maximum 200 characters |
+
+`upiId` and `payeeName` are read from the delivery's merchant configuration. The Delivery App
+must not send or allow a driver to override either payee value.
 
 
 **Response**
@@ -389,11 +394,18 @@ The driver's work. Every one of these is scoped to the slips addressed to **this
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `deliveryId` | string | yes |  |
+| `orderId` | string | yes |  |
 | `orderNumber` | string | yes |  |
 | `amount` | float | yes |  |
+| `upiId` | string | yes |  |
+| `payeeName` | string | yes |  |
+| `notes` | string · nullable | no |  |
 | `upiString` | string | yes |  |
-| `qrImageUrl` | string | yes |  |
-| `expiresInSeconds` | int | yes |  |
+| `qrCodeBase64` | string | yes | Raw Base64 for a 300×300 PNG |
+| `mimeType` | string | yes | Always `image/png` |
+
+Render with `data:image/png;base64,<qrCodeBase64>`. This is not a payment-gateway call and does
+not confirm or record a payment.
 
 
 **Error statuses**: `401`, `403`, `404`, `409`, `422`

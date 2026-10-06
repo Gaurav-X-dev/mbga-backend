@@ -25,6 +25,8 @@ dependencies = [
   # pydantic does not require it: without it the app imports fine locally, where something else
   # has pulled it in, and fails at start-up on a clean install.
   "email-validator>=2.0",
+  # Generates in-memory PNG UPI QR codes for the Delivery App.
+  "qrcode[pil]>=8.0",
 ]
 
 [project.optional-dependencies]

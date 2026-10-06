@@ -46,6 +46,24 @@ class RegistrationFieldsResponse(BaseModel):
     fields: list[RegistrationField]
 
 
+class KycDocumentRequirement(BaseModel):
+    type: str
+    label: str
+    required: bool
+    required_group: str | None = Field(default=None, alias="requiredGroup")
+    number_format: str = Field(alias="numberFormat")
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class KycRequirementsResponse(BaseModel):
+    customer_type: str = Field(alias="customerType")
+    minimum_documents: int = Field(alias="minimumDocuments")
+    documents: list[KycDocumentRequirement]
+
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
 class CustomerProfilePayload(BaseModel):
     mobile_number: str | None = Field(
         default=None,

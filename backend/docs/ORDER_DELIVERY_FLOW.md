@@ -100,7 +100,7 @@ The customer app has no confirm, assign, dispatch, deliver, or delivery-cancel A
 | POST | `/api/v1/delivery/deliveries/out-for-delivery` | Start one or many deliveries |
 | POST | `/api/v1/delivery/deliveries/{deliveryId}/verify-location` | Driver: I am on location |
 | PUT | `/api/v1/delivery/deliveries/{deliveryId}/update-items` | Update delivery item counts/reason |
-| POST | `/api/v1/delivery/deliveries/{deliveryId}/generate-qr` | Generate payment QR |
+| POST | `/api/v1/delivery/deliveries/{deliveryId}/generate-qr` | Generate dynamic UPI QR as Base64 PNG |
 | POST | `/api/v1/delivery/deliveries/{deliveryId}/confirm` | Record delivered/empty/payment counts |
 | POST | `/api/v1/delivery/deliveries/{deliveryId}/verify-customer-otp` | Complete delivery |
 | POST | `/api/v1/delivery/deliveries/{deliveryId}/cancel` | Cancel delivery with customer OTP |
@@ -488,11 +488,43 @@ Generate payment QR:
 
 ```http
 POST /api/v1/delivery/deliveries/{deliveryId}/generate-qr
+Authorization: Bearer <delivery-app-token>
 ```
 
 ```json
-{"amount": 3200, "paymentSplit": "full"}
+{
+  "orderId": "order-uuid",
+  "amount": 3200.50,
+  "notes": "Order ORD-2610-0042 at Gate 2",
+  "upiId": "merchant.indore@bank",
+  "payeeName": "MBGA Indore"
+}
 ```
+
+Response:
+
+```json
+{
+  "deliveryId": "delivery-uuid",
+  "orderId": "order-uuid",
+  "orderNumber": "ORD-2610-0042",
+  "amount": 3200.50,
+  "upiId": "merchant.indore@bank",
+  "payeeName": "MBGA Indore",
+  "notes": "Order ORD-2610-0042 at Gate 2",
+  "upiString": "upi://pay?pa=merchant.indore@bank&pn=MBGA%20Indore&am=3200.50&cu=INR&tr=order-uuid&tn=Order%20ORD-2610-0042%20at%20Gate%202",
+  "qrCodeBase64": "iVBORw0KGgoAAAANSUhEUgAA...",
+  "mimeType": "image/png"
+}
+```
+
+The Base64 value is raw PNG data. Render it in the app as
+`data:image/png;base64,<qrCodeBase64>`. The backend validates the UPI ID, positive amount, signed-
+in driver's delivery ownership, active delivery state, and that `orderId` belongs to the path's
+`deliveryId`. UPI ID and payee name are request-specific; no values are hard-coded.
+
+This endpoint only creates a standard UPI QR locally. It does not contact a payment gateway,
+verify that payment arrived, create a payment record, or expire the QR.
 
 Set driver duty state:
 
@@ -524,9 +556,23 @@ The backend refuses `onDuty: false` while that driver still has dispatched deliv
 | `DELIVERY_FAILED` | Merchant | Driver cancels failed delivery | Open failed slip/order |
 | `DELIVERY_UNASSIGNED` | Driver | Failed delivery closes assignment | Remove from active queue |
 
-The four-digit delivery OTP is carried in the customer's `DELIVERY_DISPATCHED` notification.
-Production apps must never depend on `devConfirmationCode`; that field is only populated in
-local/staging configurations.
+The four-digit delivery OTP is carried in the customer's `DELIVERY_DISPATCHED` notification and
+in the owning customer's order list/detail as `deliveryOtp`. The order API is the reliable source
+after an app restart or missed push. `deliveryOtp` is non-null only while the code is active; it is
+cleared after successful delivery or a failed/cancelled run. Merchant and Delivery App responses
+never reveal it. Production apps must never depend on `devConfirmationCode`; that field is only
+populated in local/staging configurations.
+
+Customer order wire shape while the van is out:
+
+```json
+{
+  "id": "order-uuid",
+  "status": "OUT_FOR_DELIVERY",
+  "deliverySlipId": "delivery-uuid",
+  "deliveryOtp": "1234"
+}
+```
 
 Notification row wire shape:
 
@@ -552,8 +598,9 @@ Notification row wire shape:
 2. Build tracking from `status` and `statusHistory`. Supported live order states are `PLACED`,
    `CONFIRMED`, `OUT_FOR_DELIVERY`, `ON_LOCATION`, `DELIVERED`, and `CANCELLED`.
 3. Show Cancel only for `PLACED` or `CONFIRMED`. Hide it from `OUT_FOR_DELIVERY` onward.
-4. On `DELIVERY_DISPATCHED`, prominently show the OTP and tell the customer to share it only
-   after accepting the delivery or acknowledging cancellation.
+4. On `DELIVERY_DISPATCHED`, refresh the order and prominently show its non-null `deliveryOtp`.
+   Also render it on app reopen from `GET /customer/orders/{orderId}`; do not depend only on push
+   text. Tell the customer to share it only after accepting the delivery.
 5. Refresh order detail after `ORDER_CONFIRMED`, `DELIVERY_DISPATCHED`,
    `DELIVERY_ON_LOCATION_CUSTOMER`, `DELIVERY_COMPLETED`, or `ORDER_CANCELLED`.
 6. Do not add confirm, assignment, dispatch, reschedule, delivered, or delivery-failure buttons.
