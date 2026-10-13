@@ -87,7 +87,7 @@ def check_confirmation_method(method: ConfirmationMethod) -> ConfirmationMethod:
     return method
 
 
-def check_crew(profile, *, role: str, busy: bool = False):
+def check_crew(profile, *, role: str, busy_on=None):
     """The named driver or helper must be this merchant's, active, approved and free.
 
     `profile` is `None` either because no id was given - handled by the caller - or because the
@@ -124,11 +124,18 @@ def check_crew(profile, *, role: str, busy: bool = False):
             f"{role}_not_active",
             f"This {role}'s account is not active.",
         )
-    if busy:
+    if busy_on is not None:
+        # Named, because "already carrying a delivery" told the office nothing they could act
+        # on - which round, on which van, was a question only a SQL query could answer.
+        # The name off the clashing slip: it is the same person, written as the office wrote it.
+        named = busy_on.driver_name if role == "driver" else busy_on.helper_name
+        who = (named or "").strip() or f"This {role}"
         raise invalid(
             f"{role}UserId",
             f"{role}_already_assigned",
-            f"This {role} is already carrying a delivery that has not been settled.",
+            f"{who} is already out on {busy_on.vehicle_number} "
+            f"for {busy_on.order_number} ({busy_on.slip_number}). "
+            f"Use that vehicle, or move the other delivery first.",
         )
     return profile
 
@@ -158,15 +165,21 @@ def resolve_helper_name(payload, account_name: str | None) -> str | None:
 # --- Confirming -------------------------------------------------------------------------------
 
 
-def check_empties(collected: int | None, allocated: int) -> int:
-    """`0 <= n <= cylindersAllocated` (spec §10.4).
+def check_empties(collected: int | None, allocated: int, *, previous_due: int = 0) -> int:
+    """`0 <= n <= cylindersAllocated + what this customer still owes` (spec §10.4).
 
-    The upper bound is not pedantry: more empties than cylinders delivered means the driver is
-    booking somebody else's cylinders onto this slip, and the empty bucket stops reconciling.
+    The upper bound is not pedantry: past it the driver is booking somebody else's cylinders
+    onto this slip, and the empty bucket stops reconciling.
+
+    **`previous_due` is why the bound is not the allocation alone.** A customer who took two
+    19 KG last month and is taking one 5 KG today hands back three shells, and capping at the
+    one cylinder delivered refused the very return the driver came to collect - so last
+    month's shells stayed in their yard. The ceiling is what this customer could legitimately
+    be holding: today's load plus the balance from earlier visits.
     """
     if collected is None or isinstance(collected, bool) or not isinstance(collected, int):
         raise invalid("emptiesCollected", "empties_invalid", INVALID_COUNT_MESSAGE)
-    if collected < 0 or collected > allocated:
+    if collected < 0 or collected > allocated + max(previous_due, 0):
         raise invalid("emptiesCollected", "empties_out_of_range", INVALID_COUNT_MESSAGE)
     return collected
 

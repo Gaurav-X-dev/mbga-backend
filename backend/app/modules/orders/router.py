@@ -16,11 +16,13 @@ before `/orders/{order_id}`, or "statuses" would be matched as an order id.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Path, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings, get_settings
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.dependencies import ActorDep, CustomerActorDep
+from app.modules.orders.models import Order
 from app.modules.orders.schemas import (
     BulkConfirmRequest,
     BulkConfirmResponse,
@@ -28,9 +30,9 @@ from app.modules.orders.schemas import (
     ConfirmOrderRequest,
     CreateOrderRequest,
     CutoffResponse,
+    OrderCylinderTypeResponse,
     OrderQuoteRequest,
     OrderQuoteResponse,
-    OrderCylinderTypeResponse,
     OrderResponse,
     OrderStatusMetaResponse,
     ReorderPreviewResponse,
@@ -38,8 +40,12 @@ from app.modules.orders.schemas import (
     RepeatOrderRequest,
 )
 from app.modules.orders.service import OrderFilters, OrderService
+from app.modules.vehicles.coverage import available_for_pincode
+from app.modules.vehicles.schemas import AvailableVehicleResponse
 from app.shared.authorization.dependencies import require_login_channel, require_permission
+from app.shared.business.admin_scope import AdminMerchantActorDep
 from app.shared.database.session import get_db_session
+from app.shared.exceptions.api_error import ApiError
 from app.shared.exceptions.openapi import error_responses
 
 OrderIdPath = Annotated[str, Path(alias="orderId", max_length=36)]
@@ -48,22 +54,28 @@ OrderIdPath = Annotated[str, Path(alias="orderId", max_length=36)]
 def build_order_router(channel: LoginChannel) -> APIRouter:
     """Build the `/orders` routes for one channel."""
     is_customer = channel is LoginChannel.CUSTOMER
+    is_admin = channel is LoginChannel.ADMIN
     router = APIRouter(prefix="/orders", tags=[f"{channel.value.title()} Orders"])
 
     channel_only = Depends(require_login_channel(channel))
-    actor_dependency = CustomerActorDep if is_customer else ActorDep
+    actor_dependency = (
+        CustomerActorDep if is_customer else AdminMerchantActorDep if is_admin else ActorDep
+    )
+    staff_guards = [channel_only]
+    if is_admin:
+        staff_guards.append(Depends(require_permission("merchants.view")))
 
     # A customer is authorised by owning the row, not by holding a permission (spec §2.1:
     # "Customers have permissions: []; their access is implied by ownership").
     read_guards = (
         [channel_only]
         if is_customer
-        else [channel_only, Depends(require_permission("orders.view"))]
+        else [*staff_guards, Depends(require_permission("orders.view"))]
     )
     write_guards = (
         [channel_only]
         if is_customer
-        else [channel_only, Depends(require_permission("orders.create"))]
+        else [*staff_guards, Depends(require_permission("orders.create"))]
     )
 
     # FastAPI caches `get_db_session` per request, so the actor dependency and the service
@@ -263,6 +275,34 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         """Someone else's order is reported as 404, never 403."""
         return await service.get(order_id)
 
+    if not is_customer:
+
+        @router.get(
+            "/{orderId}/available-vehicles",
+            response_model=list[AvailableVehicleResponse],
+            dependencies=read_guards,
+            responses=error_responses(401, 403, 404, 409),
+            summary="Vehicles eligible for this order's delivery pincode",
+        )
+        async def order_available_vehicles(
+            order_id: OrderIdPath,
+            actor: actor_dependency,
+            session: Annotated[AsyncSession, Depends(get_db_session)],
+        ) -> list[AvailableVehicleResponse]:
+            merchant_id = actor.require_merchant_id()
+            order = await session.scalar(
+                select(Order).where(Order.id == order_id, Order.merchant_id == merchant_id)
+            )
+            if order is None:
+                raise ApiError("ORDER_NOT_FOUND", status.HTTP_404_NOT_FOUND)
+            if not order.address_pincode:
+                raise ApiError(
+                    "ORDER_PINCODE_MISSING",
+                    status.HTTP_409_CONFLICT,
+                    "Order delivery address has no pincode.",
+                )
+            return await available_for_pincode(session, merchant_id, order.address_pincode)
+
     @router.get(
         "/{orderId}/reorder",
         response_model=ReorderPreviewResponse,
@@ -321,7 +361,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         @router.post(
             "/{orderId}/confirm",
             response_model=OrderResponse,
-            dependencies=[channel_only, Depends(require_permission("orders.update"))],
+            dependencies=[*staff_guards, Depends(require_permission("orders.update"))],
             responses=error_responses(401, 403, 404, 409),
             summary="Confirm an order",
         )
@@ -350,7 +390,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         @router.post(
             "/confirm",
             response_model=BulkConfirmResponse,
-            dependencies=[channel_only, Depends(require_permission("orders.update"))],
+            dependencies=[*staff_guards, Depends(require_permission("orders.update"))],
             responses=error_responses(401, 403, 404, 409, 422),
             summary="Confirm several orders onto one van",
         )
@@ -373,7 +413,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
         response_model=OrderResponse,
         dependencies=write_guards
         if is_customer
-        else [channel_only, Depends(require_permission("orders.cancel"))],
+        else [*staff_guards, Depends(require_permission("orders.cancel"))],
         responses=error_responses(401, 403, 404, 409),
         summary="Cancel an order",
     )

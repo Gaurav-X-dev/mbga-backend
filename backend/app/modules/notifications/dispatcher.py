@@ -106,7 +106,9 @@ class NotificationDispatcher:
         )
 
     async def _deliver(self, row: NotificationOutbox, report: DispatchReport, moment: datetime) -> None:
-        devices = await self.recipients.devices_for(row.recipient_kind, row.recipient_id)
+        devices = await self.recipients.devices_for(
+            row.recipient_kind, row.recipient_id, row.recipient_channel
+        )
 
         if self.projects is None:
             # No sender - push is off for this environment, or this is a dry run. Report

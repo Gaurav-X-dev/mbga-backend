@@ -14,13 +14,15 @@ from app.config.app import get_settings
 # Import models so Alembic sees the approved metadata.
 from app.modules.audit_logs import models as audit_log_models  # noqa: F401
 from app.modules.authentication import models as authentication_models  # noqa: F401
-from app.modules.authentication import otp_models as otp_models  # noqa: F401
+from app.modules.authentication import otp_models as otp_models
 from app.modules.constants import models as constant_models  # noqa: F401
+from app.modules.credit import models as credit_models  # noqa: F401
 from app.modules.customers import models as customer_models  # noqa: F401
 from app.modules.deliveries import models as delivery_slip_models  # noqa: F401
 from app.modules.delivery_users import models as delivery_user_models  # noqa: F401
 from app.modules.expenses import models as expense_models  # noqa: F401
 from app.modules.inventory import models as inventory_models  # noqa: F401
+from app.modules.locations import models as location_models  # noqa: F401
 from app.modules.merchants import models as merchant_models  # noqa: F401
 from app.modules.notifications import models as notification_models  # noqa: F401
 from app.modules.orders import models as order_models  # noqa: F401
@@ -31,6 +33,7 @@ from app.modules.roles import models as role_models  # noqa: F401
 from app.modules.tasks import models as task_models  # noqa: F401
 from app.modules.users import models as user_models  # noqa: F401
 from app.modules.users import role_models as user_role_models  # noqa: F401
+from app.modules.vehicles import models as vehicle_models  # noqa: F401
 from app.shared.database.base import Base
 from app.shared.idempotency import models as idempotency_models  # noqa: F401
 from app.shared.notifications import models as notification_outbox_models  # noqa: F401

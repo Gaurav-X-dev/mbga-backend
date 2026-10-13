@@ -147,6 +147,7 @@ def assigned_to_driver(
         title="New delivery assigned",
         body=f"Order {order_number}{where} has been assigned to you.{when}",
         severity=INFO,
+        recipient_channel="DELIVERY",
     )
 
 
@@ -168,6 +169,7 @@ def unassigned_from_driver(
         title="Delivery reassigned",
         body=f"Order {order_number} is no longer assigned to you.{why}",
         severity=WARNING,
+        recipient_channel="DELIVERY",
     )
 
 
@@ -190,6 +192,7 @@ def cancelled_in_transit(
         title="Order cancelled - do not deliver",
         body=f"Order {order_number}{whose} was cancelled. Do not complete this delivery.",
         severity=CRITICAL,
+        recipient_channel="DELIVERY",
     )
 
 

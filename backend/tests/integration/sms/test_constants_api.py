@@ -5,6 +5,7 @@ from sqlalchemy import select, update
 
 from app.modules.constants.models import Constant
 from app.modules.constants.seeds import ConstantsSeedRunner, seed_rows
+from app.modules.payments.constants import PaymentMode
 from app.modules.customers.constants import CustomerType, KycDocumentType, PricingTier
 from app.modules.merchants.models import Merchant
 from tests.integration.authentication.conftest import code_of
@@ -72,12 +73,27 @@ async def test_an_unknown_group_is_simply_empty(env):
 
 @pytest.mark.parametrize(
     ("group", "enum"),
-    [("customerTypes", CustomerType), ("documentTypes", KycDocumentType), ("pricingTiers", PricingTier)],
+    [
+        ("customerTypes", CustomerType),
+        ("documentTypes", KycDocumentType),
+        ("pricingTiers", PricingTier),
+    ],
 )
 async def test_the_keys_are_exactly_what_the_write_endpoints_accept(env, group, enum):
     """An option the backend would reject is worse than no option at all."""
     keys = {r["constKey"] for r in (await env.client.get(CUSTOMER, params={"group": group})).json()}
     assert keys == {member.value for member in enum}
+
+
+async def test_payment_modes_offer_only_what_is_still_taken(env):
+    """`PaymentMode` is wider than the offer, so that a payment recorded in a withdrawn mode
+    keeps reading back. The dropdown must follow the offer, not the enum."""
+    from app.modules.payments.constants import OFFERED_PAYMENT_MODES
+
+    rows = (await env.client.get(CUSTOMER, params={"group": "paymentModes"})).json()
+
+    assert {r["constKey"] for r in rows} == {mode.value for mode in OFFERED_PAYMENT_MODES}
+    assert "NEFT" not in {r["constKey"] for r in rows}
 
 
 async def test_the_seeder_is_idempotent_and_keeps_edited_labels(env):

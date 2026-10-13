@@ -33,7 +33,15 @@ export const PERMISSIONS = {
   deliveryUsersCreate: "delivery_users.create",
   deliveryUsersUpdate: "delivery_users.update",
   deliveryUsersActivate: "delivery_users.activate",
-  deliveryUsersBlock: "delivery_users.block"
+  deliveryUsersBlock: "delivery_users.block",
+  customersView: "customers.view",
+  ordersView: "orders.view",
+  inventoryView: "inventory.view",
+  paymentsView: "payments.view",
+  reportsView: "reports.view",
+  creditView: "credit.view",
+  creditManage: "credit.manage",
+  creditOverride: "credit.override"
 } as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -67,3 +75,4 @@ export function safeRedirectPath(candidate: unknown, channel: AuthChannel): stri
   if (candidate !== prefix && !candidate.startsWith(`${prefix}/`)) return CHANNEL_HOME[channel];
   return candidate;
 }
+

@@ -20,6 +20,7 @@ Three tables:
 from datetime import date, datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     DateTime,
@@ -118,6 +119,29 @@ class DeliverySlip(Base):
     confirmation_code_encrypted: Mapped[str | None] = mapped_column(String(255), nullable=True)
     confirmation_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
+    # What the driver says he collected at the gate, written when he confirms his counts and
+    # acted on when the customer's code completes the handover. It is stated in one request and
+    # banked in another - the invoice it pays does not exist until the second - so it is parked
+    # here rather than carried between them, the same way `delivered_quantity` is.
+    #
+    # Null means no money was taken: the customer is paying later, or the office confirmed the
+    # slip itself. That is an ordinary outcome, not a missing value.
+    payment_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    # Whole rupees, as everywhere else on the platform.
+    payment_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # The UTR or UPI transaction id. Required for anything but cash, because without it the
+    # payment can never be matched against a bank statement.
+    payment_reference: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+    # The last UPI QR shown at this gate, and when. Nothing was recorded before: the endpoint
+    # built a link, returned it and forgot it, so "a QR for 3,380 was shown at 14:32" was a
+    # thing nobody could find out. It is the only trace the platform has of a UPI collection
+    # being asked for, because no gateway tells it whether the money arrived.
+    qr_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    qr_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     status: Mapped[str] = mapped_column(String(20), index=True)
     # Why a slip failed. The cancelled order is final, but staff still need the reason for the
     # customer conversation and for deciding whether to accept a fresh order.
@@ -155,6 +179,15 @@ class DeliverySlipItem(Base):
     # ledger then books the whole allocation. Kept separate from `quantity` because the
     # allocation is what the van stays answerable for while it is out.
     delivered_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # How many empties of this size came back. Kept per type for the same reason
+    # `delivered_quantity` is: the slip's own `empties_collected` is one number across every
+    # size, which is enough for the ledger but tells the driver's receipt and the godown
+    # nothing about which cylinders actually returned. Without it the receipt listed the
+    # delivered lines in the empties column, so a handover of 2 and 1 printed "Total: 2" over
+    # rows adding to 3.
+    #
+    # `None` means nothing was recorded per type - an older slip, or one the office confirmed.
+    empties_collected: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # Display order, so the slip lists cylinders the way the order did.
     position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 

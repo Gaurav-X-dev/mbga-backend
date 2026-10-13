@@ -254,6 +254,9 @@ class AccountStateResolver:
             select(CustomerDocument.id).where(
                 CustomerDocument.customer_id == profile.id,
                 CustomerDocument.is_mandatory.is_(True),
+                # Superseded rows are excluded, or a scan the customer already replaced would
+                # keep them out of their own account for ever.
+                CustomerDocument.superseded_at.is_(None),
                 CustomerDocument.status != "APPROVED",
             )
         )

@@ -136,12 +136,18 @@ async def test_the_due_filters_pick_the_right_days(env):
     today = business_today()
     # Monday is 0, so this is the coming Sunday - the last day THIS_WEEK covers.
     sunday = today + timedelta(days=6 - today.weekday())
-    for label, due in (
-        ("Today", today),
-        ("Tomorrow", today + timedelta(days=1)),
-        ("End of week", sunday),
-        ("Next week", sunday + timedelta(days=1)),
-    ):
+    tomorrow = today + timedelta(days=1)
+
+    # One task per distinct day. On a Saturday the end of the week *is* tomorrow, and giving
+    # both a task of their own put two rows on one day - so `due=TOMORROW` returned both and
+    # this test failed every Saturday, on a filter that was working perfectly.
+    wanted = {"Today": today, "Tomorrow": tomorrow, "Next week": sunday + timedelta(days=1)}
+    wanted.setdefault("End of week", sunday)
+    by_day: dict[object, str] = {}
+    for label, due in wanted.items():
+        by_day.setdefault(due, label)
+
+    for due, label in by_day.items():
         task = await create_task(env, token, title=label, assignedUserIds=[priya.id])
         await env.execute(update(Task).where(Task.id == task["id"]).values(due_date=due))
 
@@ -150,7 +156,8 @@ async def test_the_due_filters_pick_the_right_days(env):
     assert await titles(env, token, due="TOMORROW") == ["Tomorrow"]
     this_week = set(await titles(env, token, due="THIS_WEEK"))
     assert "Today" in this_week
-    assert "End of week" in this_week
+    # Whichever label landed on Sunday - "End of week", or "Tomorrow" when today is Saturday.
+    assert by_day[sunday] in this_week
     assert "Next week" not in this_week, "the window stops at Sunday"
 
 

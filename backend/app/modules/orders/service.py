@@ -25,11 +25,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.app import Settings
 from app.modules.authentication.account_state import CUSTOMER_APPROVED
 from app.modules.authentication.constants import LoginChannel
+from app.modules.credit.service import CreditLimitService
 from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import Address
 from app.modules.customers.constants import CustomerType, KycStatus
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.deliveries.constants import (
+    IN_TRANSIT_STATUSES,
+    LIVE_STATUSES,
+    DeliveryStatus,
+)
 from app.modules.deliveries.models import DeliverySlip
+from app.modules.notifications.events import deliveries as delivery_events
 from app.modules.deliveries.schemas import CreateDeliverySlipRequest
 from app.modules.deliveries.service import DeliveryService
 from app.modules.notifications.events.orders import order_confirmed
@@ -47,6 +54,7 @@ from app.modules.orders.constants import (
     OrderMode,
     OrderSource,
     OrderStatus,
+    may_be_cancelled,
     status_label,
 )
 from app.modules.orders.cutoff import Cutoff, evaluate
@@ -67,10 +75,10 @@ from app.modules.orders.schemas import (
     CreateOrderRequest,
     CutoffResponse,
     DeliveryAssignment,
+    OrderCylinderTypeResponse,
     OrderItemResponse,
     OrderQuoteRequest,
     OrderQuoteResponse,
-    OrderCylinderTypeResponse,
     OrderResponse,
     OrderStatusEntry,
     OrderStatusMetaResponse,
@@ -249,6 +257,14 @@ class OrderService:
         source = self._resolve_source(payload.source)
 
         priced = await self._engine().price(customer.id, lines)
+        # Credit is a customer-account rule, not a login-channel rule.  A merchant,
+        # administrator, customer, or API client can all place an order for the same
+        # customer, so every write path must make the identical server-side decision.
+        # `CreditLimitService` is the only permitted exception point: it consumes an
+        # unexpired, audited credit override when one has explicitly been granted.
+        await CreditLimitService(self.session).enforce_fail_open(
+            customer.id, priced.total_amount
+        )
         moment = await self._cutoff()
         now = datetime.now(UTC)
         number = await OrderNumberAllocator(self.session, self.merchant_id).allocate()
@@ -684,6 +700,54 @@ class OrderService:
             commit=False,
         )
 
+    async def _close_slip_for(self, order: Order, now: datetime) -> None:
+        """Fail this order's live slip, if it has one, and tell the driver carrying it.
+
+        Nothing is booked back: counts only drop at handover, so a slip cancelled before the
+        customer's code was read out never took a cylinder off the godown's books. What has to
+        happen is that the slip stops being live - otherwise the driver keeps it on his list
+        for ever and the van stays held for that day.
+
+        **And the driver has to be told.** The office can call off a round that is already on
+        the road, so by the time this runs the van may be at the customer's gate. A driver who
+        is not interrupted hands over cylinders against an order that no longer exists, and
+        that has to be collected back and unwound in the books afterwards.
+        """
+        slip = await self.session.scalar(
+            select(DeliverySlip).where(
+                DeliverySlip.order_id == order.id,
+                DeliverySlip.status.in_(tuple(LIVE_STATUSES)),
+            )
+        )
+        if slip is None:
+            return
+        was_on_the_road = slip.status in IN_TRANSIT_STATUSES
+        slip.status = DeliveryStatus.FAILED.value
+        slip.failure_reason = f"Order {order.order_number} cancelled by {self.actor.display_name}"
+        # Spent: a code that still verifies against a slip nobody can confirm is a secret with
+        # no purpose.
+        slip.confirmation_code_hash = None
+        slip.confirmation_code_encrypted = None
+        slip.updated_at = now
+
+        if not slip.driver_user_id:
+            return
+        outbox = NotificationOutboxWriter(self.session)
+        if was_on_the_road:
+            # CRITICAL: it has to interrupt whatever he is doing, because he may be mid-handover.
+            outbox.queue(
+                delivery_events.cancelled_in_transit(
+                    slip.driver_user_id, slip.id, slip.order_number, slip.customer_name
+                )
+            )
+        else:
+            # Still at the godown. The round simply loses a stop; nothing needs interrupting.
+            outbox.queue(
+                delivery_events.unassigned_from_driver(
+                    slip.driver_user_id, slip.id, slip.order_number, reason=slip.failure_reason
+                )
+            )
+
     async def cancel(self, order_id: str, reason: str | None) -> OrderResponse:
         """Cancel an order that has not left the godown.
 
@@ -693,13 +757,18 @@ class OrderService:
         # Locked, because a dispatch racing this cancellation must queue behind it rather than
         # read the status it had a moment ago and then overwrite CANCELLED.
         order = await self._owned(order_id, lock=True)
-        if order.status not in {OrderStatus.PLACED.value, OrderStatus.CONFIRMED.value}:
+        by_staff = not self.actor.is_customer
+        if not may_be_cancelled(order.status, by_staff=by_staff):
             raise ApiError(
                 "ORDER_NOT_CANCELLABLE",
                 status.HTTP_409_CONFLICT,
                 f"An order that is {STATUS_BY_CODE[order.status].label.lower()} can no longer be cancelled.",
             )
         now = datetime.now(UTC)
+        # A round already on the road keeps a live slip, and a live slip holds the driver and
+        # the van for that day and sits on the driver's list. Cancelling the order without
+        # closing it would leave him a delivery he cannot complete and nobody can take off him.
+        await self._close_slip_for(order, now)
         # Through `advance()` like every other move, so the trail row and the legality check come
         # from one place. The refusal above stays because it says "can no longer be cancelled",
         # which is the sentence the app shows; `advance()` would phrase it the other way round.
@@ -913,19 +982,24 @@ class OrderService:
         ):
             history[row.order_id].append(row)
 
+        # The code, to the customer who has to read it out and to the office they ring when they
+        # cannot. A staff-placed order often never reaches the customer's phone at all - the
+        # office placed it for them - and a driver at the gate of a customer who has no code,
+        # or no phone to hand, had nobody to ask. The office can now answer.
         delivery_otps: dict[str, str] = {}
+        scope = select(DeliverySlip.order_id, DeliverySlip.confirmation_code_encrypted).where(
+            DeliverySlip.order_id.in_(ids),
+            DeliverySlip.confirmation_code_encrypted.is_not(None),
+        )
         if self.actor.is_customer:
-            rows = await self.session.execute(
-                select(DeliverySlip.order_id, DeliverySlip.confirmation_code_encrypted).where(
-                    DeliverySlip.order_id.in_(ids),
-                    DeliverySlip.customer_id == self.actor.customer_id,
-                    DeliverySlip.confirmation_code_encrypted.is_not(None),
-                )
-            )
-            for order_id, encrypted_code in rows:
-                code = self.confirmation_code_cipher.decrypt(encrypted_code)
-                if code is not None:
-                    delivery_otps[order_id] = code
+            scope = scope.where(DeliverySlip.customer_id == self.actor.customer_id)
+        else:
+            scope = scope.where(DeliverySlip.merchant_id == self.merchant_id)
+        rows = await self.session.execute(scope)
+        for order_id, encrypted_code in rows:
+            code = self.confirmation_code_cipher.decrypt(encrypted_code)
+            if code is not None:
+                delivery_otps[order_id] = code
 
         return [
             _order_view(
@@ -933,6 +1007,7 @@ class OrderService:
                 items[order.id],
                 history[order.id],
                 delivery_otp=delivery_otps.get(order.id),
+                by_staff=not self.actor.is_customer,
             )
             for order in orders
         ]
@@ -996,6 +1071,7 @@ def _order_view(
     history: list[OrderStatusHistory],
     *,
     delivery_otp: str | None = None,
+    by_staff: bool = False,
 ) -> OrderResponse:
     from app.modules.orders.constants import ORDER_LABELS
 
@@ -1033,6 +1109,7 @@ def _order_view(
         gst_amount=order.gst_amount,
         total_amount=order.total_amount,
         status=order.status,
+        can_cancel=may_be_cancelled(order.status, by_staff=by_staff),
         status_history=[
             OrderStatusEntry(
                 status=row.status,

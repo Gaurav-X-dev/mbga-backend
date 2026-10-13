@@ -27,6 +27,18 @@ class Merchant(Base):
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     state: Mapped[str | None] = mapped_column(String(120), nullable=True)
     postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Invoice print settings.  These belong to the merchant profile, while each issued invoice
+    # copies them into its immutable snapshot.
+    invoice_pan: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    invoice_bank_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    invoice_bank_account_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    invoice_bank_account_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    invoice_bank_ifsc: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    invoice_logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    invoice_signature_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    invoice_terms: Mapped[str | None] = mapped_column(Text, nullable=True)
+    invoice_declaration: Mapped[str | None] = mapped_column(Text, nullable=True)
+    invoice_hsn_sac: Mapped[str] = mapped_column(String(30), default="271119", server_default="271119")
     status: Mapped[str] = mapped_column(String(30), index=True)
     approval_status: Mapped[str] = mapped_column(String(30), index=True)
     created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)

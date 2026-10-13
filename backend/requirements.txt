@@ -24,6 +24,10 @@ httpx>=0.27.0
 email-validator>=2.0
 # Generates in-memory PNG UPI QR codes for the Delivery App.
 qrcode[pil]>=8.0
+# Converts the shared HTML tax-invoice template into the exact same downloadable PDF.
+weasyprint>=62.0,<70.0
+# Supplies IANA timezone data on Windows/minimal containers; Linux can use the system copy.
+tzdata>=2025.2
 
 # Development and test tools
 pytest>=8.3.0

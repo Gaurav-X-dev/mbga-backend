@@ -42,8 +42,28 @@ PNG_BYTES = (
     b"\x1f\x15\xc4\x89\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
+#: One fixed set, for the tests that deliberately want two customers to clash on a number.
+#: Everything else gets a fresh set from `fresh_documents()`: one Aadhaar is one person, and
+#: handing every test customer the same identifiers is a duplicate registration by any reading
+#: - which the backend now refuses, exactly as it should.
 RETAIL_DOCS = {"AADHAAR": "123412341234", "PAN": "ABCDE1234F"}
 INDUSTRIAL_DOCS = {"GST": "23AAACA1234F1Z5", "PAN": "ABCDE1234F"}
+
+
+def fresh_documents(customer_type: str) -> dict[str, str]:
+    """Valid, distinct identifiers for one customer.
+
+    Built to the real patterns - 12 digits for an Aadhaar, five letters, four digits and a
+    letter for a PAN, a GSTIN wrapped around that PAN - so they pass validation while never
+    colliding with another test's customer.
+    """
+    stamp = uuid4().int
+    digits = f"{stamp % 10_000:04d}"
+    letters = "".join(chr(ord("A") + (stamp >> (5 * index)) % 26) for index in range(5))
+    pan = f"{letters}{digits}Z"
+    if customer_type == "RETAIL":
+        return {"AADHAAR": f"{stamp % 1_000_000_000_000:012d}", "PAN": pan}
+    return {"GST": f"23{pan}1Z5", "PAN": pan}
 
 ADDRESS = {
     "line1": "12 MG Road",
@@ -80,9 +100,24 @@ async def upload_file_id(auth_env, prefix: str, token: str, document_type: str, 
     return response.json()["fileId"]
 
 
-async def registration_body(auth_env, prefix: str, token: str, *, customer_type: str = "RETAIL", mobile: str | None = None, **overrides) -> dict:
-    """A complete registration payload with freshly uploaded documents."""
-    numbers = RETAIL_DOCS if customer_type == "RETAIL" else INDUSTRIAL_DOCS
+async def registration_body(
+    auth_env,
+    prefix: str,
+    token: str,
+    *,
+    customer_type: str = "RETAIL",
+    mobile: str | None = None,
+    shared_numbers: bool = False,
+    **overrides,
+) -> dict:
+    """A complete registration payload with freshly uploaded documents.
+
+    `shared_numbers=True` reuses the fixed set, for a test that wants two customers to clash.
+    """
+    if shared_numbers:
+        numbers = RETAIL_DOCS if customer_type == "RETAIL" else INDUSTRIAL_DOCS
+    else:
+        numbers = fresh_documents(customer_type)
     documents = [
         {"type": kind, "number": number, "fileName": await upload_file_id(auth_env, prefix, token, kind)}
         for kind, number in numbers.items()
@@ -119,10 +154,19 @@ async def onboarding(auth_env, mobile: str | None = None) -> tuple[str, str]:
     return mobile, session["token"]["access_token"]
 
 
-async def registered_customer(auth_env, merchant, *, customer_type: str = "RETAIL", submit: bool = True) -> tuple[str, str, str]:
+async def registered_customer(
+    auth_env,
+    merchant,
+    *,
+    customer_type: str = "RETAIL",
+    submit: bool = True,
+    shared_numbers: bool = False,
+) -> tuple[str, str, str]:
     """A self-registered customer. Returns mobile, onboarding token and customer id."""
     mobile, token = await onboarding(auth_env)
-    body = await registration_body(auth_env, CUSTOMER, token, customer_type=customer_type)
+    body = await registration_body(
+        auth_env, CUSTOMER, token, customer_type=customer_type, shared_numbers=shared_numbers
+    )
     created = await auth_env.post(f"{REG}/profile", token, json={"merchant_code": merchant.code, **body})
     assert created.status_code == 201, created.text
     if submit:

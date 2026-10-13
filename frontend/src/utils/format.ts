@@ -95,3 +95,8 @@ export function emptyToNull(value: string | null | undefined): string | null {
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
 }
+
+
+export function formatCurrency(value: number | null | undefined, fallback = '?'): string {
+  return typeof value === 'number' && Number.isFinite(value) ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value) : fallback;
+}

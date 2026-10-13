@@ -68,6 +68,40 @@ class InvoiceResponse(BaseModel):
     model_config = _CAMEL
 
 
+class InvoiceComplianceUpdate(BaseModel):
+    """Manual government/transport references for an issued tax invoice.
+
+    No GST/e-Way provider is connected yet; these are office-entered values only.  The endpoint
+    is intentionally unavailable to customers.
+    """
+
+    irn: str | None = Field(default=None, max_length=120)
+    acknowledgement_number: str | None = Field(default=None, alias="acknowledgementNumber", max_length=80)
+    acknowledgement_date: UtcTime | None = Field(default=None, alias="acknowledgementDate")
+    eway_bill_number: str | None = Field(default=None, alias="ewayBillNumber", max_length=80)
+    eway_bill_date: UtcTime | None = Field(default=None, alias="ewayBillDate")
+    transport_document_number: str | None = Field(default=None, alias="transportDocumentNumber", max_length=100)
+    lr_number: str | None = Field(default=None, alias="lrNumber", max_length=100)
+    terms_of_delivery: str | None = Field(default=None, alias="termsOfDelivery", max_length=500)
+
+    model_config = _CAMEL
+
+
+class MerchantInvoiceSettingsUpdate(BaseModel):
+    invoice_pan: str | None = Field(default=None, alias="invoicePan", max_length=20)
+    invoice_bank_name: str | None = Field(default=None, alias="invoiceBankName", max_length=160)
+    invoice_bank_account_name: str | None = Field(default=None, alias="invoiceBankAccountName", max_length=160)
+    invoice_bank_account_number: str | None = Field(default=None, alias="invoiceBankAccountNumber", max_length=80)
+    invoice_bank_ifsc: str | None = Field(default=None, alias="invoiceBankIfsc", max_length=30)
+    invoice_logo_url: str | None = Field(default=None, alias="invoiceLogoUrl", max_length=500)
+    invoice_signature_url: str | None = Field(default=None, alias="invoiceSignatureUrl", max_length=500)
+    invoice_terms: str | None = Field(default=None, alias="invoiceTerms", max_length=10000)
+    invoice_declaration: str | None = Field(default=None, alias="invoiceDeclaration", max_length=10000)
+    invoice_hsn_sac: str | None = Field(default=None, alias="invoiceHsnSac", max_length=30)
+
+    model_config = _CAMEL
+
+
 # --- Payments --------------------------------------------------------------------------------
 
 

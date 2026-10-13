@@ -55,8 +55,9 @@ async def test_the_period_label_is_ready_for_the_screen(env):
     expense = await created_expense(env, token)
 
     # The list row reads "23 Sep 2026 - Mohan Lal - September 2026"; the label is built
-    # here so every client does not reimplement month names.
-    assert expense["periodLabel"] == "September 2026"
+    # here so every client does not reimplement month names. Worked out rather than written
+    # down: a month name typed into a test fails every run once that month is over.
+    assert expense["periodLabel"] == business_today().strftime("%B %Y")
 
 
 async def test_a_category_code_may_be_sent_instead_of_an_id(env):

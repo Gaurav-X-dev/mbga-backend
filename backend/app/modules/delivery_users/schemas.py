@@ -54,6 +54,10 @@ class DeliveryUserResponse(BaseModel):
     approval_status: str
     role: str
     allowed_channel: str = "DELIVERY"
+    #: The crew member's own "I am on shift" toggle, set from the delivery app. Shown because it
+    #: is the one thing that keeps somebody out of the assignment list, so the office can see why
+    #: a name is missing instead of guessing.
+    on_duty: bool = False
     created_at: datetime
 
 

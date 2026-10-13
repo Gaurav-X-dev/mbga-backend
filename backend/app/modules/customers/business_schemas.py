@@ -10,7 +10,7 @@ onboarding-session contracts are frozen, and the app already ships against them.
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.customers.constants import (
     ApplicationStatus,
@@ -19,6 +19,7 @@ from app.modules.customers.constants import (
     KycDocumentType,
     PricingTier,
 )
+from app.shared.validation.names import check_name
 
 
 class Address(BaseModel):
@@ -63,6 +64,14 @@ class SiteSubmission(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("name", "contact_name", mode="after")
+    @classmethod
+    def _real_names(cls, value: str | None, info) -> str | None:
+        """A site's own name and the person to ask for there, held to the same rule."""
+        tidied = check_name(value, field=info.field_name, required=False)
+        return tidied or None if value is not None else None
+
+
 
 class CustomerRegistrationRequest(BaseModel):
     """Spec §5.1 / §7.1. The same body for both registration paths.
@@ -84,10 +93,26 @@ class CustomerRegistrationRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("business_name", "owner_name", mode="after")
+    @classmethod
+    def _real_names(cls, value: str, info) -> str:
+        """Refuse a name that is not a name in any language, and tidy the rest.
+
+        Whether a *particular* name is required depends on the customer type and is decided by
+        the registration rules; this only says that whatever was typed has to be a name. A
+        customer registered as a run of `@` and `#` with no letter in it, and the only check
+        in the way was `max_length`.
+        """
+        return check_name(value, field=info.field_name, required=False)
+
+
 
 class KycDocumentResponse(BaseModel):
     """Spec §3.4. `numberMasked` is the only form of the identifier that ever leaves here."""
 
+    #: This document's own id, which is what the reveal route is addressed by. Without it a
+    #: reviewer's screen has a masked number and no way to ask for the rest of it.
+    id: str
     type: str
     number_masked: str = Field(alias="numberMasked")
     file_name: str = Field(alias="fileName")
@@ -132,8 +157,15 @@ class CustomerResponse(BaseModel):
     # Sum of open invoice balances. The invoice module does not exist yet, so this is 0 for
     # every customer; the field is present because the apps read it unconditionally.
     running_balance: int = Field(default=0, alias="runningBalance")
-    # Omitted entirely until the order module exists, rather than filled with a made-up date.
     last_order_at: datetime | None = Field(default=None, alias="lastOrderAt")
+    # Credit terms are editable by authorised admin/merchant users, but read-only in the
+    # customer app. Values are always returned so all three clients share one contract.
+    credit_enabled: bool = Field(default=False, alias="creditEnabled")
+    credit_limit: int = Field(default=0, alias="creditLimit")
+    credit_days: int | None = Field(default=None, alias="creditDays")
+    used_credit: int = Field(default=0, alias="usedCredit")
+    available_credit: int = Field(default=0, alias="availableCredit")
+    credit_active: bool = Field(default=False, alias="creditActive")
     application_id: str | None = Field(default=None, alias="applicationId")
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
@@ -220,3 +252,18 @@ class RegistrationProgressResponse(BaseModel):
     missing_documents: list[str] = Field(default_factory=list, alias="missingDocumentTypes")
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class RevealedDocumentNumber(BaseModel):
+    """One document's identifier in full, for a reviewer comparing it with the scan.
+
+    The only response in the project that carries an unmasked number. `numberMasked` comes back
+    beside it so the screen can go straight back to hiding it without another call.
+    """
+
+    document_id: str = Field(alias="documentId")
+    document_type: str = Field(alias="documentType")
+    number: str
+    number_masked: str = Field(alias="numberMasked")
+
+    model_config = ConfigDict(populate_by_name=True)

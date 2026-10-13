@@ -54,8 +54,8 @@ async def test_a_customer_token_goes_through_the_customer_project(env):
     assert merchant_app.sent == []
 
 
-async def test_one_person_in_two_apps_is_reached_through_both_projects(env):
-    """The case the recipient alone cannot answer: two tokens, two projects, one event."""
+async def test_one_person_in_two_apps_is_reached_only_in_the_target_app(env):
+    """One identity in two apps must not turn one event into a cross-app data leak."""
     _staff_token, merchant, user = await staff(env, fcm_token="their-merchant-phone")
     # The same user also holds a live customer-app session on another device.
     async with env.sessions() as session:
@@ -75,13 +75,15 @@ async def test_one_person_in_two_apps_is_reached_through_both_projects(env):
             )
         )
         await session.commit()
-    await queue(env, recipient_kind="user", recipient_id=user.id)
+    await queue(
+        env, recipient_kind="user", recipient_id=user.id, recipient_channel=MERCHANT
+    )
     merchant_app, customer_app = StubFcm(project_id="mbga-merchant"), StubFcm(project_id="mbga-customer")
 
     report = await _dispatch(env, StubProjects(by_channel={MERCHANT: merchant_app, CUSTOMER: customer_app}))
 
     assert merchant_app.tokens == ["their-merchant-phone"]
-    assert customer_app.tokens == ["their-customer-phone"]
+    assert customer_app.tokens == []
     assert report.delivered == 1
     assert merchant
 
@@ -103,7 +105,8 @@ async def test_an_app_with_no_credential_is_skipped_not_fatal(env):
     report = await _dispatch(env, StubProjects(by_channel={MERCHANT: merchant_app, DELIVERY: None}))
 
     assert merchant_app.tokens == ["configured-device"]
-    assert report.unconfigured == 1
+    # The DELIVERY session is not an audience for a MERCHANT event at all.
+    assert report.unconfigured == 0
     # One device got it, so the row is settled rather than retried for ever.
     assert report.delivered == 1
     assert (await _row(env, notification_id)).delivered_at is not None

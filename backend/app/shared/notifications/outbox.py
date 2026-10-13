@@ -37,6 +37,17 @@ class NotificationEvent:
     title: str
     body: str
     severity: str = Severity.INFO
+    recipient_channel: str | None = None
+
+
+def recipient_channel(kind: str, explicit: str | None = None) -> str:
+    """Resolve the app owning an event; personal events must say so explicitly."""
+    if explicit:
+        return explicit.upper()
+    inferred = {"customer": "CUSTOMER", "merchant": "MERCHANT"}.get((kind or "").lower())
+    if inferred is None:
+        raise ValueError("Personal notifications require recipient_channel")
+    return inferred
 
 
 class NotificationOutboxWriter:
@@ -63,6 +74,7 @@ class NotificationOutboxWriter:
                 event_type=event.event_type,
                 recipient_kind=event.recipient_kind,
                 recipient_id=event.recipient_id,
+                recipient_channel=recipient_channel(event.recipient_kind, event.recipient_channel),
                 entity_type=event.entity_type,
                 entity_id=event.entity_id,
                 title=event.title,
@@ -101,6 +113,7 @@ class NotificationOutboxWriter:
             event_type=event.event_type,
             recipient_kind=event.recipient_kind,
             recipient_id=event.recipient_id,
+            recipient_channel=recipient_channel(event.recipient_kind, event.recipient_channel),
             entity_type=event.entity_type,
             entity_id=event.entity_id,
             title=event.title,

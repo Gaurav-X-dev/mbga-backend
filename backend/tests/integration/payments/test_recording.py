@@ -116,16 +116,27 @@ async def test_a_nonsense_amount_is_refused(env, amount):
     assert (await invoice_now(env, token, invoice["id"]))["paidAmount"] == 0
 
 
-@pytest.mark.parametrize("mode", ["UPI", "NEFT"])
-async def test_a_bank_payment_without_a_reference_is_refused(env, mode):
+async def test_a_upi_payment_without_a_reference_is_refused(env):
     """Without a UTR it can never be matched against a statement - it would sit PENDING for ever."""
     token, _merchant, _customer, invoice = await billed(env)
 
-    response = await pay(env, token, invoice, invoice["totalAmount"], mode)
+    response = await pay(env, token, invoice, invoice["totalAmount"], "UPI")
 
     assert response.status_code == 422
     assert response.json()["detail"]["fields"][0]["field"] == "reference"
     assert response.json()["detail"]["fields"][0]["message"] == "Reference is required"
+
+
+async def test_a_withdrawn_mode_is_refused_before_anything_else(env):
+    """NEFT is no longer taken. It is refused on the mode, not sent back asking for a UTR it
+    would have no use for."""
+    token, _merchant, _customer, invoice = await billed(env)
+
+    response = await pay(env, token, invoice, invoice["totalAmount"], "NEFT")
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["fields"][0]["field"] == "mode"
+    assert response.json()["detail"]["fields"][0]["code"] == "mode_not_offered"
 
 
 async def test_cash_needs_no_reference(env):

@@ -21,10 +21,15 @@ from app.modules.merchants.schemas import (
     MerchantUserUpdate,
 )
 from app.modules.roles.models import Role
+from app.modules.users.identity import get_or_create_mobile_user
 from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
 from app.shared.authorization.context import AuthContext
-from app.shared.authorization.dependencies import require_authenticated_user, require_login_channel, require_permission
+from app.shared.authorization.dependencies import (
+    require_authenticated_user,
+    require_login_channel,
+    require_permission,
+)
 from app.shared.database.session import get_db_session
 
 router = APIRouter(prefix="/merchants", tags=["Admin Merchants"])
@@ -123,32 +128,21 @@ async def _assign_role(session: AsyncSession, user_id: str, role: Role, scope_ty
 
 
 async def _get_or_create_user(session: AsyncSession, *, mobile: str, full_name: str, email: str | None, role: str) -> User:
-    existing = await session.scalar(select(User).where(User.mobile_number == mobile))
+    if email:
+        email_owner = await session.scalar(select(User).where(User.email == email.lower()))
+        if email_owner is not None and email_owner.mobile_number != mobile:
+            raise HTTPException(status_code=409, detail={"code": "EMAIL_ALREADY_EXISTS", "message": "Email already exists"})
+    existing, _ = await get_or_create_mobile_user(
+        session,
+        mobile=mobile,
+        full_name=full_name,
+        email=email,
+        legacy_role=role,
+    )
     if existing:
         if existing.status == "BLOCKED":
             raise HTTPException(status_code=409, detail={"code": "MOBILE_ALREADY_BLOCKED", "message": "Mobile belongs to a blocked user"})
         return existing
-    if email:
-        email_existing = await session.scalar(select(User).where(User.email == email.lower()))
-        if email_existing:
-            raise HTTPException(status_code=409, detail={"code": "EMAIL_ALREADY_EXISTS", "message": "Email already exists"})
-    now = datetime.now(UTC)
-    user = User(
-        id=str(uuid4()),
-        email=email.lower() if email else None,
-        username=None,
-        full_name=full_name,
-        mobile_number=mobile,
-        country_code="+91",
-        password_hash=None,
-        role=role,
-        status="ACTIVE",
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(user)
-    await session.flush()
-    return user
 
 
 @router.post(
@@ -312,17 +306,35 @@ async def list_merchant_users(merchant_id: str, session: Annotated[AsyncSession,
     return [_merchant_user_response(mu, user) for mu, user in result.all()]
 
 
+#: The roles a merchant may give its own staff. Anything outside this - a typo, a job title the
+#: panel invented - falls back to `manager`, which is what every staff member used to get.
+MERCHANT_STAFF_ROLES = frozenset({"manager", "salesperson", "godown_stock_manager", "accountant"})
+
+
+def _role_for(staff_type: str | None) -> str:
+    """The role code behind a job title the office picked.
+
+    `staff_type` is the word the panel shows - "ACCOUNTANT", "SALESPERSON" - and it was stored
+    and then ignored: every merchant user was assigned `manager` regardless. So an accountant
+    held a manager's permissions, and every screen that reads a person's role called them a
+    manager, because that is what they were.
+    """
+    code = (staff_type or "").strip().lower()
+    return code if code in MERCHANT_STAFF_ROLES else "manager"
+
+
 @router.post("/{merchant_id}/users", response_model=MerchantUserResponse, status_code=201, dependencies=[Depends(require_login_channel(LoginChannel.ADMIN)), Depends(require_permission("merchant_users.create"))])
 async def create_merchant_user(merchant_id: str, payload: MerchantUserCreate, session: Annotated[AsyncSession, Depends(get_db_session)], context: Annotated[AuthContext, Depends(require_authenticated_user)]) -> MerchantUserResponse:
     await _load_merchant(session, merchant_id)
-    user = await _get_or_create_user(session, mobile=_normalize_mobile_or_422(payload.mobile_number), full_name=payload.full_name, email=payload.email, role="manager")
+    role_code = _role_for(payload.staff_type)
+    user = await _get_or_create_user(session, mobile=_normalize_mobile_or_422(payload.mobile_number), full_name=payload.full_name, email=payload.email, role=role_code)
     now = datetime.now(UTC)
     existing = await session.scalar(select(MerchantUser).where(MerchantUser.merchant_id == merchant_id, MerchantUser.user_id == user.id))
     if existing:
         raise HTTPException(status_code=409, detail={"code": "MERCHANT_USER_EXISTS", "message": "Merchant user already exists"})
     merchant_user = MerchantUser(id=str(uuid4()), merchant_id=merchant_id, user_id=user.id, staff_type=payload.staff_type, status="ACTIVE", notes=None, created_at=now, updated_at=now)
     session.add(merchant_user)
-    await _assign_role(session, user.id, await _get_role(session, "manager"), "merchant", merchant_id, context.user_id)
+    await _assign_role(session, user.id, await _get_role(session, role_code), "merchant", merchant_id, context.user_id)
     await _audit(session, "merchant_user.created", context.user_id, "merchant_user", merchant_user.id, "Merchant user created")
     await session.commit()
     return _merchant_user_response(merchant_user, user)

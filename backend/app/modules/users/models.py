@@ -13,7 +13,9 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     username: Mapped[str | None] = mapped_column(String(80), unique=True, index=True, nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    mobile_number: Mapped[str | None] = mapped_column(String(15), index=True, nullable=True)
+    # One verified phone is one identity. Application access is expressed by user_roles and
+    # the login_channel in a session, never by creating another user row for the same phone.
+    mobile_number: Mapped[str | None] = mapped_column(String(15), unique=True, index=True, nullable=True)
     country_code: Mapped[str | None] = mapped_column(String(5), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(50), index=True)

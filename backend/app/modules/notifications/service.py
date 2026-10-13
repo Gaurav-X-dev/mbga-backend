@@ -111,6 +111,7 @@ class NotificationService:
 
     def _scoped(self) -> Select:
         """Every notification this actor may read, and nothing else."""
+        channel = self.actor.login_channel.value
         buckets = [
             and_(
                 NotificationOutbox.recipient_kind == RecipientKind.USER.value,
@@ -134,7 +135,10 @@ class NotificationService:
                     NotificationOutbox.recipient_id == self.actor.merchant_id,
                 )
             )
-        return select(NotificationOutbox).where(or_(*buckets))
+        return select(NotificationOutbox).where(
+            NotificationOutbox.recipient_channel == channel,
+            or_(*buckets),
+        )
 
     async def _read_ids(self, ids: list[str]) -> set[str]:
         if not ids:

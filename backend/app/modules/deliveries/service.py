@@ -42,7 +42,9 @@ from app.modules.deliveries.constants import (
     STATUS_RANK,
     ConfirmationMethod,
     DeliveryStatus,
+    status_label,
 )
+from app.modules.deliveries.empties import CustomerEmpties
 from app.modules.deliveries.models import DeliverySlip, DeliverySlipItem
 from app.modules.deliveries.numbering import SlipNumberAllocator
 from app.modules.deliveries.schemas import (
@@ -51,6 +53,7 @@ from app.modules.deliveries.schemas import (
     DeliveryItemResponse,
     DeliverySlipResponse,
     FailDeliveryRequest,
+    ReassignDeliveryRequest,
 )
 from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.inventory.ledger import StockLedger
@@ -63,6 +66,7 @@ from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
 from app.modules.payments.invoicing import InvoiceRaiser
 from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
+from app.modules.vehicles.models import Vehicle, VehiclePincodeMapping
 from app.shared.business.actor import BusinessActor
 from app.shared.crypto.field_cipher import FieldCipher
 from app.shared.exceptions.api_error import ApiError
@@ -140,8 +144,10 @@ class DeliveryService:
         accepted with nobody on it.
         """
         order = await self._slippable_order(payload.order_id)
-        vehicle = validation.check_vehicle_number(payload.vehicle_number)
+        vehicle = await self._vehicle(payload.vehicle_number)
+        await self._require_vehicle_coverage(vehicle, order.address_pincode)
         scheduled_date = _scheduled(payload.scheduled_date, order)
+        await self._van_is_free(vehicle, payload.driver_user_id, scheduled_date)
         driver = await self._crew_member(
             payload.driver_user_id,
             role="driver",
@@ -252,8 +258,13 @@ class DeliveryService:
         a van was out, and a second van could be loaded from the same cylinders.
         """
         slip = await self._owned(slip_id)
-        self._require_status(slip, DeliveryStatus.DISPATCHED, ready=DeliveryStatus.SCHEDULED)
+        # The order is read **before** the slip's own status, so a driver whose phone still
+        # shows a cancelled round is told that the order was cancelled rather than that his
+        # slip is settled. Cancelling an order fails its slip, so the slip's state is the
+        # consequence; the order's is the reason, and the reason is what the app branches on.
         order = await self._order_of(slip, lock=True)
+        transitions.check_can_move(order, OrderStatus.OUT_FOR_DELIVERY)
+        self._require_status(slip, DeliveryStatus.DISPATCHED, ready=DeliveryStatus.SCHEDULED)
         now = datetime.now(UTC)
 
         # Refuses with spec §10.3's message, and writes nothing either way.
@@ -391,7 +402,15 @@ class DeliveryService:
             DeliveryStatus.DELIVERED,
             ready=(DeliveryStatus.DISPATCHED, DeliveryStatus.ON_LOCATION),
         )
-        collected = validation.check_empties(payload.empties_collected, slip.cylinders_allocated)
+        # The ceiling counts what this customer is still holding from earlier visits, not just
+        # today's load: three shells coming back against one cylinder delivered is the ordinary
+        # case for a customer returning last month's.
+        owed = await CustomerEmpties(self.session, self.merchant_id).outstanding(
+            slip.customer_id, ignoring=slip.id
+        )
+        collected = validation.check_empties(
+            payload.empties_collected, slip.cylinders_allocated, previous_due=sum(owed.values())
+        )
         await self._check_code(slip, payload.otp)
 
         order = await self._order_of(slip, lock=True)
@@ -412,10 +431,17 @@ class DeliveryService:
         # the driver brings back is still on it, so only what he handed over is booked.
         lines = await self._delivered_lines(slip.id)
         ledger = StockLedger(self.session, self.merchant_id)
+        # What the godown screen prints beside the movement. `reference_id` is free text and is
+        # meant to be read - a challan number on a refill, a vehicle number on a transfer - and
+        # a slip's uuid there put 36 characters of database key in front of the order number on
+        # every automatic row. The slip number says the same thing and can be said out loud;
+        # it is unique per merchant, so nothing that could be looked up before is lost.
+        trace = f"{slip.order_number} · {slip.customer_name}"[:255]
         if lines:
             await ledger.deliver(
                 lines,
-                reference_id=slip.id,
+                reference_id=slip.slip_number,
+                note=trace,
                 recorded_by_user_id=self.actor.user_id,
                 recorded_by_name=self.actor.display_name,
                 now=now,
@@ -423,7 +449,8 @@ class DeliveryService:
         if collected:
             await ledger.collect_empties(
                 {_primary_type(lines or await self._lines(slip.id)): collected},
-                reference_id=slip.id,
+                reference_id=slip.slip_number,
+                note=trace,
                 recorded_by_user_id=self.actor.user_id,
                 recorded_by_name=self.actor.display_name,
                 now=now,
@@ -444,20 +471,122 @@ class DeliveryService:
         # nothing to bill for, and a failed delivery would otherwise leave an invoice for goods
         # that came back on the van. Raising it is idempotent, so a retried confirmation bills
         # nothing twice.
-        invoice = await InvoiceRaiser(self.session, self.merchant_id).raise_for(order, now=now)
+        # Billed for `lines` - what the driver handed over - rather than for the order. On a part
+        # delivery the two differ, and billing the order would charge the customer for cylinders
+        # that went back on the van. It is the same count the ledger moved above, so the invoice
+        # and the godown's books can never disagree about what left.
+        invoice = await InvoiceRaiser(self.session, self.merchant_id).raise_for(
+            order, delivered=lines, now=now
+        )
         self.notifications.queue(
             delivery_events.delivered(
                 slip.customer_id, order.id, slip.order_number, cylinders=slip.cylinders_allocated
             )
         )
-        self.notifications.queue(
-            payment_events.invoice_raised(
-                slip.customer_id,
-                invoice.id,
-                invoice.invoice_number,
-                invoice.total_amount,
-                slip.order_number,
+        # No invoice when nothing was handed over. There is no bill to tell the customer about,
+        # and a notification about one would be a message they cannot act on.
+        if invoice is not None:
+            self.notifications.queue(
+                payment_events.invoice_raised(
+                    slip.customer_id,
+                    invoice.id,
+                    invoice.invoice_number,
+                    invoice.total_amount,
+                    slip.order_number,
+                )
             )
+        await self.session.commit()
+        return await self._view(slip)
+
+    async def reassign(
+        self, slip_id: str, payload: ReassignDeliveryRequest
+    ) -> DeliverySlipResponse:
+        """Change a slip's van, crew or day without losing the order.
+
+        Until now a slip could not be changed at all once it was raised. The office picked the
+        wrong driver, or a van came off the road, or a round simply never went out - and the
+        only way forward was to cancel the order and place it again, which throws away its
+        number, its history and the customer's place in the queue. The result was drivers
+        holding four vans across four days with no way to let any of them go.
+
+        **Only before it leaves.** A dispatched slip has cylinders on that van and a code in the
+        customer's hand; handing it to somebody else would make the paperwork and the yard
+        disagree. Those are failed and raised again, not moved.
+
+        Every rule that guarded the first assignment runs again, against the slip as it will
+        stand: the new crew must be this merchant's and free that day, the new van must be on
+        the list and not already out with somebody else. The slip is locked for the duration,
+        so two people moving the same round take it in turns.
+        """
+        slip = await self._owned(slip_id, lock=True)
+        self._require_status(slip, DeliveryStatus.SCHEDULED, ready=(DeliveryStatus.SCHEDULED,))
+
+        vehicle = (
+            await self._vehicle(payload.vehicle_number)
+            if payload.vehicle_number is not None
+            else slip.vehicle_number
+        )
+        await self._require_vehicle_coverage(vehicle, slip.address_pincode)
+        scheduled_date = payload.scheduled_date or slip.scheduled_date
+        driver_user_id = (
+            payload.driver_user_id
+            if "driver_user_id" in payload.model_fields_set
+            else slip.driver_user_id
+        )
+        helper_user_id = (
+            payload.helper_user_id
+            if "helper_user_id" in payload.model_fields_set
+            else slip.helper_user_id
+        )
+
+        # The slip's own row must not count against the move, or a round would clash with
+        # itself the moment anything about it changed.
+        await self._van_is_free(vehicle, driver_user_id, scheduled_date, ignoring=slip.id)
+        driver = await self._crew_member(
+            driver_user_id,
+            role="driver",
+            vehicle_number=vehicle,
+            scheduled_date=scheduled_date,
+            ignoring=slip.id,
+        )
+        helper = await self._crew_member(
+            helper_user_id,
+            role="helper",
+            vehicle_number=vehicle,
+            scheduled_date=scheduled_date,
+            ignoring=slip.id,
+        )
+
+        now = datetime.now(UTC)
+        slip.vehicle_number = vehicle
+        slip.scheduled_date = scheduled_date
+        slip.driver_user_id = driver_user_id
+        slip.driver_name = (
+            validation.resolve_driver_name(
+                payload, await self._account_name(driver, driver_user_id)
+            )
+            or slip.driver_name
+        )
+        slip.helper_user_id = helper_user_id
+        slip.helper_name = (
+            validation.resolve_helper_name(
+                payload, await self._account_name(helper, helper_user_id)
+            )
+            if helper_user_id
+            else None
+        )
+        slip.updated_at = now
+
+        order = await self._order_of(slip, lock=True)
+        transitions.note(
+            self.session,
+            order,
+            note=_reassigned_note(slip, payload.reason),
+            by_name=self.actor.display_name,
+            by_user_id=self.actor.user_id,
+            by_role=self.actor.role_label,
+            source=self.actor.source,
+            now=now,
         )
         await self.session.commit()
         return await self._view(slip)
@@ -596,10 +725,16 @@ class DeliveryService:
         """Every slip query starts here. Applied as a `WHERE`, never as a later filter."""
         return statement.where(DeliverySlip.merchant_id == self.merchant_id)
 
-    async def _owned(self, slip_id: str) -> DeliverySlip:
-        slip = await self.session.scalar(
-            self._scope(select(DeliverySlip)).where(DeliverySlip.id == slip_id)
-        )
+    async def _owned(self, slip_id: str, *, lock: bool = False) -> DeliverySlip:
+        """This merchant's slip, or a 404.
+
+        `lock` takes the row for update, which a move needs: two people reassigning the same
+        round would otherwise both read it as it was and the second would overwrite the first.
+        """
+        statement = self._scope(select(DeliverySlip)).where(DeliverySlip.id == slip_id)
+        if lock:
+            statement = statement.with_for_update()
+        slip = await self.session.scalar(statement)
         if slip is None:
             raise _not_found()
         return slip
@@ -665,6 +800,131 @@ class DeliveryService:
             raise _not_found()
         return order
 
+    async def _van_is_free(
+        self,
+        vehicle: str,
+        driver_user_id: str | None,
+        scheduled_date: date,
+        *,
+        ignoring: str | None = None,
+    ) -> None:
+        """One van, one driver, one day.
+
+        The other half of the crew rule. That one stops a person being sent out on two vans;
+        this stops two people being sent out in one, which is the same mistake from the van's
+        side and was not checked at all - the office could load a second round onto a van that
+        had already left with somebody else, and nobody found out until two drivers wanted the
+        same keys.
+
+        Several slips on the same van with the **same** driver are the ordinary case: that is a
+        round being filled through the morning, and it stays allowed.
+
+        A hired van with no driver named is not held: there is nobody to clash with, and a
+        hired van is a different vehicle each time whatever the plate says.
+        """
+        if not driver_user_id:
+            return
+        taken = await self.session.scalar(
+            select(DeliverySlip.driver_name).where(
+                DeliverySlip.merchant_id == self.merchant_id,
+                DeliverySlip.vehicle_number == vehicle,
+                DeliverySlip.scheduled_date == scheduled_date,
+                DeliverySlip.status.in_(tuple(LIVE_STATUSES)),
+                DeliverySlip.driver_user_id.is_not(None),
+                DeliverySlip.driver_user_id != driver_user_id,
+                # The slip being moved must not clash with itself.
+                DeliverySlip.id != (ignoring or ""),
+            )
+        )
+        if taken is not None:
+            raise validation.invalid(
+                "vehicleNumber",
+                "vehicle_already_assigned",
+                f"{vehicle} is already out with {taken} today. Pick another van.",
+            )
+
+    async def _vehicle(self, number: str) -> str:
+        """The plate, normalised and checked against this merchant's own vans.
+
+        The number used to be free text, so a typo did not fail - it quietly created a second
+        van, and the rule that stops one person being sent out twice could not see that
+        `MP09 GH 4521` and `MP09GH4521` were the same vehicle.
+
+        **A plate nobody has added yet is added here**, rather than refused. Refusing it meant
+        the office could not dispatch until somebody opened the vehicles screen, which is the
+        wrong order: the van is in the yard and the order is waiting. Adding it keeps the
+        catalogue complete without anyone maintaining it, and the normalisation above is what
+        actually stops the typos - `MP09 GH 4521` and `mp09gh4521` arrive here as one plate and
+        find one row.
+
+        A van somebody **retired** is still refused. That is a deliberate act - sold, off the
+        road - and quietly reviving it would undo the only decision this list records.
+        """
+        plate = validation.check_vehicle_number(number)
+        match = await self.session.scalar(
+            select(Vehicle).where(Vehicle.merchant_id == self.merchant_id, Vehicle.number == plate)
+        )
+        if match is None:
+            now = datetime.now(UTC)
+            self.session.add(
+                Vehicle(
+                    id=str(uuid4()),
+                    merchant_id=self.merchant_id,
+                    number=plate,
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await self.session.flush()
+            return plate
+        if not match.is_active:
+            raise validation.invalid(
+                "vehicleNumber",
+                "vehicle_inactive",
+                f"{plate} is off the road. Put it back on the list, or pick another van.",
+            )
+        return match.number
+
+    async def _require_vehicle_coverage(self, vehicle_number: str, pincode: str | None) -> None:
+        """Enforce coverage after this merchant starts configuring it.
+
+        Existing merchants remain operational until their first mapping is created. Once any
+        mapping exists, every assignment must use a vehicle mapped to the destination pincode.
+        This gives production a safe migration path without a flag day.
+        """
+        configured = await self.session.scalar(
+            select(func.count(VehiclePincodeMapping.id)).where(
+                VehiclePincodeMapping.merchant_id == self.merchant_id,
+                VehiclePincodeMapping.is_active.is_(True),
+            )
+        )
+        if not configured:
+            return
+        if not pincode:
+            raise validation.invalid(
+                "vehicleNumber",
+                "delivery_pincode_missing",
+                "The customer delivery address needs a pincode before a vehicle can be assigned.",
+            )
+        covered = await self.session.scalar(
+            select(VehiclePincodeMapping.id)
+            .join(Vehicle, Vehicle.id == VehiclePincodeMapping.vehicle_id)
+            .where(
+                VehiclePincodeMapping.merchant_id == self.merchant_id,
+                VehiclePincodeMapping.pincode == pincode,
+                VehiclePincodeMapping.is_active.is_(True),
+                Vehicle.number == vehicle_number,
+                Vehicle.is_active.is_(True),
+            )
+        )
+        if covered is None:
+            raise validation.invalid(
+                "vehicleNumber",
+                "vehicle_not_mapped_to_pincode",
+                f"{vehicle_number} is not mapped to customer pincode {pincode}.",
+            )
+
     async def _crew_member(
         self,
         user_id: str | None,
@@ -672,6 +932,7 @@ class DeliveryService:
         role: str,
         vehicle_number: str,
         scheduled_date: date,
+        ignoring: str | None = None,
     ) -> DeliveryProfile | None:
         """A delivery profile of this merchant, active and approved, or a coded refusal.
 
@@ -695,22 +956,38 @@ class DeliveryService:
         return validation.check_crew(
             profile,
             role=role,
-            busy=await self._has_conflicting_assignment(
+            busy_on=await self._has_conflicting_assignment(
                 user_id,
                 role=role,
                 vehicle_number=vehicle_number,
                 scheduled_date=scheduled_date,
+                ignoring=ignoring,
             ),
         )
 
     async def _has_conflicting_assignment(
-        self, user_id: str, *, role: str, vehicle_number: str, scheduled_date: date
-    ) -> bool:
-        """Whether this person is assigned to a different live delivery round.
+        self,
+        user_id: str,
+        *,
+        role: str,
+        vehicle_number: str,
+        scheduled_date: date,
+        ignoring: str | None = None,
+    ) -> DeliverySlip | None:
+        """The slip that has this person on the day being assigned, if any.
 
-        A round contains several order slips, so another slip on the same vehicle and date is
-        compatible. A different vehicle/date or switching between driver and helper is a real
-        conflict.
+        A conflict is **one person, one day, two places**: a second vehicle, or being the driver
+        of one slip and the helper of another. Nothing else.
+
+        **The same van on the same day is not a conflict.** A round is several order slips, and
+        the office fills it one order at a time through the morning - and keeps filling it after
+        the van has left, because an order that arrives mid-morning is served off the cylinders
+        already loaded. Refusing that would send a second van out for what the first is carrying.
+
+        **Another day is not a conflict either, and this is only looked for on the day being
+        assigned.** Tomorrow's round is planned in the evening, while today's slips are still
+        open - that is when the planning happens. Comparing against every live slip blocked a
+        driver from all of next week until today's last delivery was confirmed.
         """
         assignments = list(
             await self.session.scalars(
@@ -721,15 +998,22 @@ class DeliveryService:
                         DeliverySlip.driver_user_id == user_id,
                         DeliverySlip.helper_user_id == user_id,
                     ),
+                    # The slip being moved must not clash with itself.
+                    DeliverySlip.id != (ignoring or ""),
                 )
             )
         )
         role_field = "driver_user_id" if role == "driver" else "helper_user_id"
-        return any(
-            getattr(slip, role_field) != user_id
-            or slip.vehicle_number != vehicle_number
-            or slip.scheduled_date != scheduled_date
-            for slip in assignments
+        # The clashing slip itself, not just that there is one: the office is told which round
+        # is in the way, which is the only form of this refusal they can act on.
+        return next(
+            (
+                slip
+                for slip in assignments
+                if slip.scheduled_date == scheduled_date
+                and (getattr(slip, role_field) != user_id or slip.vehicle_number != vehicle_number)
+            ),
+            None,
         )
 
     async def _account_name(self, profile, user_id: str | None) -> str | None:
@@ -933,14 +1217,32 @@ class DeliveryService:
             empties_collected=slip.empties_collected,
             # Derived, so it cannot drift from the two numbers it is made of.
             pending_pickup=max(slip.cylinders_allocated - slip.empties_collected, 0),
-            confirmation_method=ConfirmationMethod(slip.confirmation_method),
+            confirmation_method=_confirmation_method(slip.confirmation_method),
             status=DeliveryStatus(slip.status),
+            status_label=status_label(slip.status),
             failure_reason=slip.failure_reason,
             note=slip.note,
             dev_confirmation_code=(
                 reveal_code if reveal_code and self.settings.dev_expose_otp_in_response else None
             ),
         )
+
+
+def _confirmation_method(stored: str | None) -> ConfirmationMethod:
+    """Read a stored method back, without letting one bad row take out the list.
+
+    The enum is the authority on what may be **written**, and every write path validates
+    against it. Reading is different: a row can predate a rule, or have been written by hand
+    during a migration, and `ConfirmationMethod("")` raises - which turned one such slip into a
+    500 on the whole merchant's delivery board, hiding every other delivery with it.
+
+    `NONE` is the honest answer for a slip that does not name a method, and it is what a slip
+    raised without one would have been given anyway.
+    """
+    try:
+        return ConfirmationMethod(stored)
+    except ValueError:
+        return ConfirmationMethod.NONE
 
 
 def _label(cylinder_type: str) -> str:
@@ -958,6 +1260,14 @@ def _scheduled(requested: date | None, order: Order) -> date:
     instant - a van goes out on a date, and there is no delivery slot to carry a time.
     """
     return requested if requested is not None else order.scheduled_delivery_date
+
+
+def _reassigned_note(slip: DeliverySlip, reason: str | None) -> str:
+    """One line for the order's trail, saying where the round went."""
+    where = f"Reassigned to {slip.driver_name or 'no driver'} on {slip.vehicle_number}"
+    where += f" for {slip.scheduled_date:%d %b %Y}"
+    extra = (reason or "").strip()
+    return f"{where} - {extra}" if extra else where
 
 
 def _primary_type(lines: dict[CylinderType, int]) -> CylinderType:

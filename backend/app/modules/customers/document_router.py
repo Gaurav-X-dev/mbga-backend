@@ -9,9 +9,10 @@ Routes stay channel-prefixed. An unprefixed `/documents` would be reachable with
 token and would undo the channel isolation the auth layer provides.
 """
 
+from dataclasses import replace
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,7 @@ from app.modules.customers.dependencies import (
 )
 from app.shared.authorization.dependencies import require_login_channel, require_permission
 from app.shared.business.actor import BusinessActorResolver
+from app.shared.business.admin_scope import AdminMerchantActorDep
 from app.shared.business.audit import BusinessAuditor
 from app.shared.database.session import get_db_session
 from app.shared.exceptions.api_error import ApiError
@@ -39,21 +41,33 @@ from app.shared.storage import UnsafeStorageKeyError
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
-def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str, ...] = ()) -> APIRouter:
+def build_document_router(
+    channel: LoginChannel, *, view_permissions: tuple[str, ...] = ()
+) -> APIRouter:
     """Build the `/documents` routes for one channel."""
+    is_admin = channel is LoginChannel.ADMIN
     router = APIRouter(prefix="/documents", tags=[f"{channel.value.title()} Documents"])
-    actor_dependency = CustomerActorDep if channel is LoginChannel.CUSTOMER else ActorDep
+    actor_dependency = (
+        CustomerActorDep
+        if channel is LoginChannel.CUSTOMER
+        else AdminMerchantActorDep
+        if is_admin
+        else ActorDep
+    )
     # The customer actor already locks the channel *and* admits the onboarding session that
     # registration uploads arrive on. `require_login_channel` would reject that session,
     # because it resolves a full app session first - so it is only added for merchants.
     guards = [] if channel is LoginChannel.CUSTOMER else [Depends(require_login_channel(channel))]
+    if is_admin:
+        guards.append(Depends(require_permission("merchants.view")))
     view_guards = guards + [Depends(require_permission(name)) for name in view_permissions]
+    upload_guards = view_guards if is_admin else guards
 
     @router.post(
         "",
         response_model=DocumentUploadResponse,
         status_code=status.HTTP_201_CREATED,
-        dependencies=guards,
+        dependencies=upload_guards,
         responses=error_responses(401, 403, 413, 415, 422),
         summary="Upload a KYC document",
     )
@@ -64,11 +78,15 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         session: Annotated[object, Depends(get_db_session)],
         file: Annotated[
             UploadFile,
-            File(description="PDF, JPG or PNG - and Word, Excel or CSV for a task attachment. At most 5 MB."),
+            File(
+                description="PDF, JPG or PNG - and Word, Excel or CSV for a task attachment. At most 5 MB."
+            ),
         ],
         type: Annotated[
             UploadType,
-            Form(description="AADHAAR, PAN, FSSAI, GST, MSME, or TASK_ATTACHMENT for a file on a task."),
+            Form(
+                description="AADHAAR, PAN, FSSAI, GST, MSME, or TASK_ATTACHMENT for a file on a task."
+            ),
         ],
     ) -> DocumentUploadResponse:
         result = await service.upload(actor, file, type)
@@ -126,8 +144,9 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         # image view. A relative path would resolve against the app bundle, not the API.
         base = str(request.base_url).rstrip("/")
         prefix = f"{base}/api/v1/{channel.value.lower()}"
+        merchant_scope = f"&merchantId={actor.merchant_id}" if is_admin else ""
         return DocumentUrlResponse(
-            url=f"{prefix}/documents/{file_id}/content?token={token}",
+            url=f"{prefix}/documents/{file_id}/content?token={token}{merchant_scope}",
             expires_in_seconds=expires_in,
         )
 
@@ -143,6 +162,7 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         access: AccessDep,
         storage: StorageDep,
         session: Annotated[AsyncSession, Depends(get_db_session)],
+        merchant_id: Annotated[str | None, Query(alias="merchantId", max_length=36)] = None,
     ) -> StreamingResponse:
         """Serve the bytes to whoever holds a valid, unexpired signed link.
 
@@ -156,6 +176,14 @@ def build_document_router(channel: LoginChannel, *, view_permissions: tuple[str,
         if granted_file_id != file_id:
             raise ApiError("DOCUMENT_NOT_FOUND", status.HTTP_404_NOT_FOUND)
         actor = await BusinessActorResolver(session).resolve_viewer(viewer_id, channel)
+        if is_admin:
+            if not merchant_id:
+                raise ApiError(
+                    "MERCHANT_SCOPE_REQUIRED",
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "merchantId is required for an Admin document link.",
+                )
+            actor = replace(actor, merchant_id=merchant_id)
         document = await access.readable(actor, file_id)
         try:
             stream = storage.open(document.storage_key)

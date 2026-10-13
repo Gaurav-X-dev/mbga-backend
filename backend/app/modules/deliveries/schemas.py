@@ -85,6 +85,9 @@ class DeliverySlipResponse(BaseModel):
     pending_pickup: int = Field(alias="pendingPickup")
     confirmation_method: ConfirmationMethod = Field(alias="confirmationMethod")
     status: DeliveryStatus
+    #: The same status in the words a screen shows. The apps were each prettifying the enum
+    #: themselves and disagreeing; the wording belongs with the status, not in four codebases.
+    status_label: str = Field(alias="statusLabel")
 
     failure_reason: str | None = Field(default=None, alias="failureReason")
     note: str | None = None
@@ -145,5 +148,31 @@ class FailDeliveryRequest(BaseModel):
     """
 
     reason: str = Field(min_length=1, max_length=MAX_NOTE_LENGTH)
+
+    model_config = _CAMEL
+
+
+class ReassignDeliveryRequest(BaseModel):
+    """Move a slip to a different van, a different crew, or a different day.
+
+    Everything here is optional and only what is sent is changed: an office swapping a broken
+    van keeps the driver, and one moving a round to tomorrow keeps both.
+
+    Built because a slip could not be changed at all once raised. A driver picked by mistake, a
+    van off the road, a driver on leave, a round that never went out - every one of them left
+    cancelling the order and placing it again as the only way forward, which loses the order's
+    history and its number.
+    """
+
+    vehicle_number: str | None = Field(default=None, alias="vehicleNumber", max_length=50)
+    driver_user_id: str | None = Field(default=None, alias="driverUserId", max_length=36)
+    driver_name: str | None = Field(default=None, alias="driverName", max_length=160)
+    helper_user_id: str | None = Field(default=None, alias="helperUserId", max_length=36)
+    helper_name: str | None = Field(default=None, alias="helperName", max_length=160)
+    #: A plain date. Moving a slip that never went out onto today is what puts it back on the
+    #: driver's list, which is the only screen that can close it.
+    scheduled_date: date | None = Field(default=None, alias="deliveryDate")
+    #: Why the round changed, for the slip's own trail.
+    reason: str | None = Field(default=None, max_length=MAX_NOTE_LENGTH)
 
     model_config = _CAMEL

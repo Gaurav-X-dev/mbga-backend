@@ -124,7 +124,13 @@ async def test_staff_do_not_see_another_merchants_notifications(env):
 
 async def test_a_personally_addressed_notification_reaches_that_user(env):
     token, _merchant, user = await staff(env)
-    await queue(env, recipient_kind="user", recipient_id=user.id, title="Just for you")
+    await queue(
+        env,
+        recipient_kind="user",
+        recipient_id=user.id,
+        recipient_channel="MERCHANT",
+        title="Just for you",
+    )
 
     rows = (await env.get(MERCHANT, token)).json()
 

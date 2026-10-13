@@ -24,3 +24,13 @@ frontend/*.tsbuildinfo
 
 # Reference copies of other branches, unpacked locally for comparison. Large, and already in git.
 mbga-backend.zip
+
+# Deploy artefacts. Built from the source beside them and uploaded to the server by hand;
+# keeping them here would grow the repository with copies of what it already contains.
+*.zip
+*.sql
+
+# One-off debug scripts written against the live server. Not part of the project.
+backend/test_db.py
+frontend/test_api.py
+frontend/test_live.py

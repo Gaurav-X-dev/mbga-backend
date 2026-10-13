@@ -37,6 +37,11 @@ class CustomerProfile(Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gst_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
     pricing_tier: Mapped[str] = mapped_column(String(30), default="STANDARD", server_default="STANDARD")
+    # Opt-in trade credit. Existing and domestic customers remain unaffected until an
+    # authorised administrator explicitly enables it.
+    credit_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    credit_limit: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    credit_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Registered / primary delivery address, stored as columns so a report can group on city.
     address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -94,6 +99,18 @@ class CustomerDocument(Base):
     issue_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # When a later upload of the same type took this one's place. A rejected customer
+    # re-uploads, and both rows used to sit on the customer with nothing saying which one the
+    # reviewer should be looking at - so approval marked them both approved, and a verification
+    # could be done against the scan that had already been turned down.
+    #
+    # The row stays. It is the evidence of what was submitted and when, which is the whole
+    # point of keeping a document trail.
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The upload that replaced it, so the history reads forwards as well as backwards.
+    superseded_by_file_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     status: Mapped[str] = mapped_column(String(30), index=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_mandatory: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -23,10 +23,14 @@ from tests.integration.customers.conftest import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.mysql]
 
+ADMIN = "/api/v1/admin"
+
 
 async def staff_customer(env, token, *, customer_type="RETAIL"):
     mobile = random_mobile()
-    body = await registration_body(env, MERCHANT, token, customer_type=customer_type, mobile=mobile.removeprefix("+91"))
+    body = await registration_body(
+        env, MERCHANT, token, customer_type=customer_type, mobile=mobile.removeprefix("+91")
+    )
     if customer_type == "INDUSTRIAL":
         body["sites"] = [site()]
     response = await env.post(f"{MERCHANT}/customers", token, json=body)
@@ -38,6 +42,23 @@ async def application_of(env, token, customer_id: str, *, status: str = "ALL") -
     listed = await env.get(f"{MERCHANT}/kyc/applications?status={status}", token)
     assert listed.status_code == 200, listed.text
     return next(item for item in listed.json()["items"] if item["customerId"] == customer_id)
+
+
+async def test_admin_queue_returns_non_empty_rows_with_the_merchant_name(env):
+    merchant_token, merchant, _ = await reviewer(env)
+    customer = await staff_customer(env, merchant_token)
+    admin = await env.create_user(roles=("super_admin",))
+    admin_login = await env.sign_in(f"{ADMIN}/auth", admin.mobile_number)
+
+    listed = await env.get(
+        f"{ADMIN}/kyc/applications?status=PENDING&limit=20&offset=0",
+        admin_login["token"]["access_token"],
+    )
+
+    assert listed.status_code == 200, listed.text
+    row = next(item for item in listed.json()["items"] if item["customer_id"] == customer["id"])
+    assert row["merchant_id"] == merchant.id
+    assert row["merchant_name"] == merchant.name
 
 
 async def test_the_queue_defaults_to_pending_and_is_merchant_scoped(env):
@@ -58,7 +79,9 @@ async def test_the_queue_can_be_filtered_by_decision(env):
     token, _, _ = await reviewer(env)
     approved_customer = await staff_customer(env, token)
     rejected_customer = await staff_customer(env, token)
-    assert (await env.post(f"{MERCHANT}/customers/{approved_customer['id']}/approve", token)).status_code == 200
+    assert (
+        await env.post(f"{MERCHANT}/customers/{approved_customer['id']}/approve", token)
+    ).status_code == 200
     rejected = await env.post(
         f"{MERCHANT}/customers/{rejected_customer['id']}/reject",
         token,
@@ -72,7 +95,9 @@ async def test_the_queue_can_be_filtered_by_decision(env):
         assert {item["status"] for item in listed.json()["items"]} == {value}
 
     everything = await env.get(f"{MERCHANT}/kyc/applications?status=ALL", token)
-    assert {approved_customer["id"], rejected_customer["id"]} <= {item["customerId"] for item in everything.json()["items"]}
+    assert {approved_customer["id"], rejected_customer["id"]} <= {
+        item["customerId"] for item in everything.json()["items"]
+    }
 
     invalid = await env.get(f"{MERCHANT}/kyc/applications?status=MAYBE", token)
     assert (invalid.status_code, code_of(invalid)) == (422, "VALIDATION_ERROR")
@@ -109,7 +134,10 @@ async def test_application_detail_returns_masked_documents_and_sites(env):
     assert body["status"] == "PENDING"
     assert body["deliveryAddress"]["pincode"] == "452001"
     assert len(body["sites"]) == 1
-    assert {document["numberMasked"] for document in body["documents"]} == {"XXXXXXXXXX1234", "23XXXXXXXXXX1Z5"}
+    assert {document["numberMasked"] for document in body["documents"]} == {
+        "XXXXXXXXXX1234",
+        "23XXXXXXXXXX1Z5",
+    }
     # No full identifier and no storage path anywhere in the payload.
     assert "12345678901234" not in response.text
     assert "kyc/" not in response.text
@@ -135,7 +163,9 @@ async def test_the_review_permissions_are_both_required(env):
     no_review, _, _ = await reviewer(env, merchant, permissions=("customers.view",))
     assert (await env.get(f"{MERCHANT}/kyc/applications", no_review)).status_code == 403
 
-    queue_only, _, _ = await reviewer(env, merchant, permissions=("customers.view", "customers.review"))
+    queue_only, _, _ = await reviewer(
+        env, merchant, permissions=("customers.view", "customers.review")
+    )
     assert (await env.get(f"{MERCHANT}/kyc/applications", queue_only)).status_code == 200
     # The queue is visible, but the documents on the detail screen are not.
     detail = await env.get(f"{MERCHANT}/kyc/applications/{application['id']}", queue_only)
@@ -209,7 +239,9 @@ async def test_incomplete_legacy_customers_are_not_approved(env, customer_type):
     assert (response.status_code, code_of(response)) == (409, "REGISTRATION_INCOMPLETE")
 
 
-@pytest.mark.parametrize("settings_overrides", [{"allow_skipped_kyc_scan_in_local": False}], indirect=True)
+@pytest.mark.parametrize(
+    "settings_overrides", [{"allow_skipped_kyc_scan_in_local": False}], indirect=True
+)
 async def test_skipped_scan_can_be_manually_approved_when_scanner_is_unavailable(env):
     token, _, _ = await reviewer(env)
     customer = await staff_customer(env, token)
@@ -223,7 +255,9 @@ async def test_an_approved_customer_can_sign_in(env):
     token, _, _ = await reviewer(env)
     customer = await staff_customer(env, token)
     mobile = f"+91{customer['mobile']}"
-    assert (await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)).status_code == 200
+    assert (
+        await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)
+    ).status_code == 200
 
     login = await env.sign_in("/api/v1/customer/auth", mobile)
     assert login["next_action"] == "OPEN_CUSTOMER_HOME"
@@ -238,7 +272,9 @@ async def test_rejection_requires_a_substantial_reason(env):
 
     empty = await env.post(f"{MERCHANT}/customers/{customer['id']}/reject", token, json={})
     assert empty.status_code == 422, empty.text
-    short = await env.post(f"{MERCHANT}/customers/{customer['id']}/reject", token, json={"reason": "no"})
+    short = await env.post(
+        f"{MERCHANT}/customers/{customer['id']}/reject", token, json={"reason": "no"}
+    )
     assert short.status_code == 422, short.text
 
     rejected = await env.post(
@@ -257,13 +293,20 @@ async def test_a_decision_cannot_be_taken_twice(env):
     token, _, _ = await reviewer(env)
     customer = await staff_customer(env, token)
 
-    assert (await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)).status_code == 200
+    assert (
+        await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)
+    ).status_code == 200
     again = await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)
     assert (again.status_code, code_of(again)) == (409, "INVALID_STATUS_TRANSITION")
     reversed_decision = await env.post(
-        f"{MERCHANT}/customers/{customer['id']}/reject", token, json={"reason": "Changed my mind about this"}
+        f"{MERCHANT}/customers/{customer['id']}/reject",
+        token,
+        json={"reason": "Changed my mind about this"},
     )
-    assert (reversed_decision.status_code, code_of(reversed_decision)) == (409, "INVALID_STATUS_TRANSITION")
+    assert (reversed_decision.status_code, code_of(reversed_decision)) == (
+        409,
+        "INVALID_STATUS_TRANSITION",
+    )
 
 
 async def test_concurrent_approve_and_reject_cannot_both_win(env):
@@ -273,7 +316,11 @@ async def test_concurrent_approve_and_reject_cannot_both_win(env):
 
     approve, reject = await asyncio.gather(
         env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token),
-        env.post(f"{MERCHANT}/customers/{customer['id']}/reject", token, json={"reason": "Documents are not readable"}),
+        env.post(
+            f"{MERCHANT}/customers/{customer['id']}/reject",
+            token,
+            json={"reason": "Documents are not readable"},
+        ),
     )
     outcomes = sorted([approve.status_code, reject.status_code])
     assert outcomes == [200, 409], f"{approve.text} | {reject.text}"
@@ -296,7 +343,9 @@ async def test_a_reviewer_cannot_decide_another_merchants_customer(env):
 async def test_decisions_queue_the_customer_notification(env):
     token, _, _ = await reviewer(env)
     customer = await staff_customer(env, token)
-    assert (await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)).status_code == 200
+    assert (
+        await env.post(f"{MERCHANT}/customers/{customer['id']}/approve", token)
+    ).status_code == 200
 
     queued = await env.scalar(
         select(NotificationOutbox).where(

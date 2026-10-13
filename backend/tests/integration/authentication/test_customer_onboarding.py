@@ -225,8 +225,13 @@ async def test_customer_registration_to_login_journey(env):
     me = await env.get(f"{CUSTOMER}/me", login["token"]["access_token"])
     assert me.status_code == 200
     assert me.json()["account_status"] == "ACTIVE"
-    # A full customer session is not accepted on onboarding-only routes.
-    assert code_of(await env.get(f"{REG}/status", login["token"]["access_token"])) == "TOKEN_TYPE_NOT_ALLOWED"
+    # A full session reads its own registration status. It used to be refused here, which
+    # stranded the customer the routes exist for: a rejected one signs in - that is how they
+    # are shown the reason - and signing in issues an access token, so refusing it meant the
+    # only session they had could not correct what it had just told them to correct.
+    own_status = await env.get(f"{REG}/status", login["token"]["access_token"])
+    assert own_status.status_code == 200, own_status.text
+    assert own_status.json()["status"] == "APPROVED"
 
     refreshed = await env.post(f"{CUSTOMER}/token/refresh", json={"refresh_token": login["token"]["refresh_token"]})
     assert refreshed.status_code == 200

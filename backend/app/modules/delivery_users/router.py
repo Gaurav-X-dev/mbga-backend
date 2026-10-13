@@ -10,8 +10,6 @@ from app.modules.audit_logs.models import AuditLog
 from app.modules.authentication.constants import LoginChannel
 from app.modules.authentication.mobile_number import normalize_mobile_number
 from app.modules.authentication.models import LoginSession
-from app.modules.deliveries.constants import LIVE_STATUSES
-from app.modules.deliveries.models import DeliverySlip
 from app.modules.delivery_users.models import DeliveryProfile
 from app.modules.delivery_users.schemas import (
     DeliveryUserCreate,
@@ -22,6 +20,7 @@ from app.modules.delivery_users.schemas import (
 )
 from app.modules.merchants.models import Merchant, MerchantUser
 from app.modules.roles.models import Role
+from app.modules.users.identity import get_or_create_mobile_user
 from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
 from app.shared.authorization.context import AuthContext
@@ -42,6 +41,7 @@ def _expiry_datetime(value):
 def _response(profile: DeliveryProfile, user: User) -> DeliveryUserResponse:
     role = "driver" if profile.delivery_user_type == "DRIVER" else "helper"
     return DeliveryUserResponse(
+        on_duty=bool(profile.on_duty),
         id=profile.id,
         merchant_id=profile.merchant_id,
         user_id=user.id,
@@ -133,29 +133,17 @@ async def _assign_role(session: AsyncSession, user_id: str, role: Role, actor_us
 
 
 async def _get_or_create_user(session: AsyncSession, *, mobile: str, full_name: str, email: str | None, role: str) -> User:
-    existing = await session.scalar(select(User).where(User.mobile_number == mobile))
-    if existing:
-        return existing
     if email:
-        email_existing = await session.scalar(select(User).where(User.email == email.lower()))
-        if email_existing:
+        email_owner = await session.scalar(select(User).where(User.email == email.lower()))
+        if email_owner is not None and email_owner.mobile_number != mobile:
             raise HTTPException(status_code=409, detail={"code": "EMAIL_ALREADY_EXISTS", "message": "Email already exists"})
-    now = datetime.now(UTC)
-    user = User(
-        id=str(uuid4()),
-        email=email.lower() if email else None,
-        username=None,
+    user, _ = await get_or_create_mobile_user(
+        session,
+        mobile=mobile,
         full_name=full_name,
-        mobile_number=mobile,
-        country_code="+91",
-        password_hash=None,
-        role=role,
-        status="ACTIVE",
-        created_at=now,
-        updated_at=now,
+        email=email,
+        legacy_role=role,
     )
-    session.add(user)
-    await session.flush()
     return user
 
 
@@ -225,14 +213,9 @@ async def list_delivery_users(
     stmt = select(DeliveryProfile, User).join(User, User.id == DeliveryProfile.user_id).where(*filters).order_by(DeliveryProfile.created_at.desc()).limit(limit).offset(offset)
     rows = (await session.execute(stmt)).all()
     total = int(await session.scalar(select(func.count()).select_from(DeliveryProfile).join(User, User.id == DeliveryProfile.user_id).where(*filters)) or 0)
-    return DeliveryUserListResponse(items=[_response(profile, user) for profile, user in rows], total=total, limit=limit, offset=offset)
+    items = [_response(profile, user) for profile, user in rows]
+    return DeliveryUserListResponse(items=items, total=total, limit=limit, offset=offset)
 
-
-#: Carrying a slip that has not been settled is what "busy" means. `SCHEDULED` counts as much as
-#: `DISPATCHED`: the van is spoken for from the moment the office assigns it, and a second slip
-#: raised against the same crew for the same day is a double-booking nobody discovers until two
-#: vans are waiting for one driver.
-_LIVE_SLIP_STATUSES = tuple(LIVE_STATUSES)
 
 
 @router.get(
@@ -253,27 +236,18 @@ async def list_available_delivery_users(
     own idea of what counts: two apps would then disagree, and the one that is wrong offers staff
     a driver the assignment endpoint refuses.
 
+    **Carrying work is not a reason to be left out.** A round is filled one order at a time, and
+    it keeps filling after the van has left: a drop that comes in mid-morning is served off the
+    cylinders already loaded, so the driver out on the road is often the right person for it.
+    Both "he already has one" and "he has gone" were tried here as reasons to hide somebody, and
+    both hid the driver the office wanted. What remains is whether this person can be given work
+    at all - of this merchant, active, approved, and clocked on.
+
     **Advisory, not a reservation.** Two people can open this screen at the same moment and both
-    be shown the same free driver. The slip endpoint revalidates every one of these rules under a
-    lock, which is what actually decides; this only keeps the obviously-unassignable out of the
-    list so the common case does not need the refusal.
+    be shown the same driver. The slip endpoint revalidates every rule under a lock, which is
+    what actually decides; this only keeps the obviously-unassignable out of the list.
     """
     merchant_id = await _merchant_scope(session, context)
-    busy = (
-        select(DeliverySlip.driver_user_id)
-        .where(
-            DeliverySlip.merchant_id == merchant_id,
-            DeliverySlip.status.in_(_LIVE_SLIP_STATUSES),
-            DeliverySlip.driver_user_id.is_not(None),
-        )
-        .union(
-            select(DeliverySlip.helper_user_id).where(
-                DeliverySlip.merchant_id == merchant_id,
-                DeliverySlip.status.in_(_LIVE_SLIP_STATUSES),
-                DeliverySlip.helper_user_id.is_not(None),
-            )
-        )
-    )
     statement = (
         select(DeliveryProfile, User)
         .join(User, User.id == DeliveryProfile.user_id)
@@ -284,7 +258,6 @@ async def list_available_delivery_users(
             DeliveryProfile.approval_status == "APPROVED",
             DeliveryProfile.on_duty.is_(True),
             User.status == "ACTIVE",
-            DeliveryProfile.user_id.not_in(busy),
         )
         .order_by(User.full_name)
         .limit(limit)

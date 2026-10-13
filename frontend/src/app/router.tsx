@@ -44,6 +44,18 @@ const DeliveryMemberCreatePage = page(
   () => import("../features/delivery-team/DeliveryMemberCreatePage"),
   "DeliveryMemberCreatePage"
 );
+const MerchantCustomersPage = page(() => import("../features/merchant-customers/MerchantCustomersPage"), "MerchantCustomersPage");
+const MerchantOrdersPage = page(() => import("../features/merchant-orders/MerchantOrdersPage"), "MerchantOrdersPage");
+const MerchantInventoryPage = page(() => import("../features/merchant-inventory/MerchantInventoryPage"), "MerchantInventoryPage");
+const MerchantPaymentsPage = page(() => import("../features/merchant-payments/MerchantPaymentsPage"), "MerchantPaymentsPage");
+const MerchantReportsPage = page(() => import("../features/merchant-reports/MerchantReportsPage"), "MerchantReportsPage");
+
+const AdminOrdersPage = page(() => import("../features/admin-orders/AdminOrdersPage"), "AdminOrdersPage");
+const AdminInventoryPage = page(() => import("../features/admin-inventory/AdminInventoryPage"), "AdminInventoryPage");
+const AdminPaymentsPage = page(() => import("../features/admin-payments/AdminPaymentsPage"), "AdminPaymentsPage");
+const AdminReportsPage = page(() => import("../features/admin-reports/AdminReportsPage"), "AdminReportsPage");
+const AdminCreditPage = page(() => import("../features/admin-credit/AdminCreditPage"), "AdminCreditPage");
+
 const DeliveryMemberDetailPage = page(
   () => import("../features/delivery-team/DeliveryMemberDetailPage"),
   "DeliveryMemberDetailPage"
@@ -77,6 +89,11 @@ export const routes: RouteObject[] = [
             element: guarded([PERMISSIONS.merchantsCreate], <MerchantCreatePage />)
           },
           { path: "merchants/:merchantId", element: guarded(PERMISSIONS.merchantsView, <MerchantDetailPage />) },
+          { path: "orders", element: guarded(PERMISSIONS.ordersView, <AdminOrdersPage />) },
+          { path: "inventory", element: guarded(PERMISSIONS.inventoryView, <AdminInventoryPage />) },
+          { path: "payments", element: guarded(PERMISSIONS.paymentsView, <AdminPaymentsPage />) },
+          { path: "reports", element: guarded(PERMISSIONS.reportsView, <AdminReportsPage />) },
+          { path: "credit", element: guarded(PERMISSIONS.creditView, <AdminCreditPage />) },
           { path: "customers", element: <CustomerKycPage /> },
           { path: "customers/:applicationId", element: <CustomerKycDetailPage /> },
           { path: "approvals", element: <ApprovalsPage /> },
@@ -139,3 +156,7 @@ export function createAppRouter() {
     }
   });
 }
+
+
+
+

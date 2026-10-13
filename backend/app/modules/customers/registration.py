@@ -81,9 +81,6 @@ from app.shared.notifications import (
 
 ACCOUNT_STATE = StatusMachine("customer account", ACCOUNT_TRANSITIONS)
 CUSTOMER_ROLE = "customer"
-# Staff channels. A number already used by staff cannot become a customer login, because the
-# same user row would then carry both a staff role and a customer role.
-STAFF_ROLES = {"super_admin", "manager", "salesperson", "godown_stock_manager", "accountant", "driver", "helper"}
 
 
 @dataclass
@@ -305,13 +302,23 @@ class CustomerRegistrationService:
             user.full_name = owner_name
             user.updated_at = now
 
-    def link_documents(self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime) -> None:
-        """Finalize each staged upload onto the customer.
+    async def link_documents(
+        self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime
+    ) -> None:
+        """Finalize each staged upload onto the customer, replacing what it supersedes.
 
         The identifier is encrypted, masked and hashed here, and `finalized_at` is stamped so
         the same upload can never be attached to a second registration.
+
+        **The newest upload of a type is the document.** A rejected customer uploads a fresh
+        scan, and until now both rows sat on them with nothing saying which was current: the
+        review screen listed them side by side, approval marked both approved - including the
+        one the merchant had turned down - and a verification could be done against either.
+        The older rows are kept and pointed at their replacement, because they are the evidence
+        of what was submitted and when.
         """
         for document_type, number, upload in data.documents:
+            await self._supersede_previous(profile, document_type, upload, now)
             upload.customer_id = profile.id
             upload.merchant_id = profile.merchant_id
             upload.number_encrypted = self.cipher.encrypt(number)
@@ -323,6 +330,86 @@ class CustomerRegistrationService:
             upload.status = DocumentStatus.UPLOADED.value
             upload.finalized_at = now
             upload.updated_at = now
+
+    async def ensure_numbers_are_unique(
+        self, profile: CustomerProfile, data: ValidatedRegistration
+    ) -> None:
+        """Refuse an identifier that already belongs to another of this merchant's customers.
+
+        One Aadhaar is one person and one PAN is one business, so the same number arriving on a
+        second registration is either a duplicate account or somebody using papers that are not
+        theirs. `number_lookup_hash` has been written on every document since encryption landed
+        and was never read; this is what it is for.
+
+        **Within one merchant.** A person can hold a connection with two agencies, and refusing
+        that would be wrong - and worse, the refusal would tell one agency that a number is on
+        file at another, which is theirs to know and not ours to say.
+
+        Superseded uploads are skipped: a customer re-submitting their own Aadhaar must not be
+        refused by the copy they are replacing. So is the customer's own current row, for the
+        same reason on a straight re-save.
+
+        Every clash is reported at once, under the field the form shows, because the
+        registration form reports all its errors together.
+        """
+        if not data.documents:
+            return
+        by_hash = {
+            self.cipher.lookup_hash(number): document_type
+            for document_type, number, _upload in data.documents
+        }
+        clashes = await self.session.scalars(
+            select(CustomerDocument).where(
+                CustomerDocument.merchant_id == profile.merchant_id,
+                CustomerDocument.customer_id.is_not(None),
+                CustomerDocument.customer_id != profile.id,
+                CustomerDocument.superseded_at.is_(None),
+                CustomerDocument.number_lookup_hash.in_(list(by_hash)),
+            )
+        )
+        errors = FieldErrors()
+        seen: set[str] = set()
+        for row in clashes:
+            document_type = by_hash.get(row.number_lookup_hash)
+            if document_type is None or document_type.value in seen:
+                continue
+            seen.add(document_type.value)
+            errors.add(
+                f"doc.{document_type.value}.number",
+                "already_registered",
+                f"This {document_type.value} number is already registered with another customer.",
+            )
+        errors.raise_if_any()
+
+    async def _supersede_previous(
+        self,
+        profile: CustomerProfile,
+        document_type: KycDocumentType,
+        replacement: CustomerDocument,
+        now: datetime,
+    ) -> None:
+        """Retire the customer's earlier uploads of this type in favour of the new one.
+
+        Only finalized ones, and only this type: a staged upload that was never attached is
+        not a document yet, and an Aadhaar does not supersede a PAN.
+        """
+        previous = await self.session.scalars(
+            select(CustomerDocument).where(
+                CustomerDocument.customer_id == profile.id,
+                CustomerDocument.document_type == document_type.value,
+                CustomerDocument.finalized_at.is_not(None),
+                CustomerDocument.superseded_at.is_(None),
+                CustomerDocument.file_id != replacement.file_id,
+            )
+        )
+        highest = 0
+        for row in previous:
+            row.superseded_at = now
+            row.superseded_by_file_id = replacement.file_id
+            row.updated_at = now
+            highest = max(highest, row.version or 1)
+        if highest:
+            replacement.version = highest + 1
 
     async def replace_sites(self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime) -> None:
         """Set the customer's delivery sites to exactly what was submitted."""
@@ -434,7 +521,8 @@ class CustomerRegistrationService:
         data = await self.validate(request, actor, require_documents=False)
         now = datetime.now(UTC)
         await self.apply_profile_fields(profile, data, now)
-        self.link_documents(profile, data, now)
+        await self.ensure_numbers_are_unique(profile, data)
+        await self.link_documents(profile, data, now)
         await self.replace_sites(profile, data, now)
         if profile.registered_at is None:
             profile.registered_at = now
@@ -514,6 +602,9 @@ class CustomerRegistrationService:
                     select(CustomerDocument).where(
                         CustomerDocument.customer_id == profile.id,
                         CustomerDocument.finalized_at.is_not(None),
+                        # A replaced upload does not satisfy a requirement - the one that
+                        # replaced it does, and it is in this same list.
+                        CustomerDocument.superseded_at.is_(None),
                     )
                 )
             }
@@ -593,7 +684,6 @@ class CustomerRegistrationService:
         mobile = validate_mobile(request.mobile, errors)
         errors.raise_if_any()
         assert mobile is not None  # validate_mobile raised otherwise
-        await self._reject_staff_mobile(mobile)
         await self._reject_existing_customer(mobile)
 
         data = await self.validate(request, actor, require_documents=True)
@@ -634,7 +724,8 @@ class CustomerRegistrationService:
             raise self._duplicate_mobile() from exc
 
         await self.ensure_code(profile, data.customer_type)
-        self.link_documents(profile, data, now)
+        await self.ensure_numbers_are_unique(profile, data)
+        await self.link_documents(profile, data, now)
         await self.replace_sites(profile, data, now)
         self.move_to_review(profile, now)
         application = await self.open_application(profile, actor.user_id, now)
@@ -660,15 +751,6 @@ class CustomerRegistrationService:
             fields=[{"field": "mobile", "code": "duplicate", "message": "A customer with this mobile already exists."}],
         )
 
-    async def _reject_staff_mobile(self, mobile: str) -> None:
-        user = await self.session.scalar(select(User).where(User.mobile_number == mobile))
-        if user is not None and user.role in STAFF_ROLES:
-            raise ApiError(
-                "VALIDATION_ERROR",
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                fields=[{"field": "mobile", "code": "staff_number", "message": "This number belongs to MBGA staff."}],
-            )
-
     async def _reject_existing_customer(self, mobile: str) -> None:
         existing = await self.session.scalar(select(CustomerProfile.id).where(CustomerProfile.mobile_number == mobile))
         if existing is not None:
@@ -681,27 +763,13 @@ class CustomerRegistrationService:
         would split their sign-in. Reuse never touches roles — the customer role is granted
         only on approval, by the review service, so this path cannot escalate anyone.
         """
-        user = await self.session.scalar(select(User).where(User.mobile_number == mobile))
-        if user is not None:
-            if not user.full_name:
-                user.full_name = owner_name
-                user.updated_at = now
-            return user
-        user = User(
-            id=str(uuid4()),
-            email=None,
-            username=None,
+        from app.modules.users.identity import get_or_create_mobile_user
+
+        user, _ = await get_or_create_mobile_user(
+            self.session,
+            mobile=mobile,
             full_name=owner_name,
-            mobile_number=mobile,
-            country_code="+91",
-            password_hash=None,
-            role=CUSTOMER_ROLE,
-            # Not ACTIVE: the customer can sign in and see "Verification Pending", but the
-            # account only becomes fully usable when a reviewer approves it.
-            status="PENDING",
-            created_at=now,
-            updated_at=now,
+            legacy_role=CUSTOMER_ROLE,
+            new_user_status="PENDING",
         )
-        self.session.add(user)
-        await self.session.flush()
         return user

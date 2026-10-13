@@ -19,7 +19,15 @@ from app.shared.redis.client import get_redis
 
 bearer_scheme = HTTPBearer(auto_error=False)
 FULL_SESSION_TYPES = frozenset({SessionType.ACCESS.value})
-ONBOARDING_SESSION_TYPES = frozenset({SessionType.ONBOARDING.value})
+# An onboarding token *or* a full one. A customer whose registration was rejected is
+# deliberately allowed to sign in - that is how they get to read the rejection reason - and
+# signing in hands them an access token, not the onboarding token registration started on.
+# Accepting only the latter left them holding the one session that could not act on what they
+# had just been shown: every edit came back 401 and the app signed them straight back out.
+# Nothing is widened by this. An access token is the stronger of the two, and the registration
+# routes decide for themselves who may write, by status: `EDITABLE_STATUSES` on the profile and
+# `EDITABLE_ACCOUNT_STATUSES` at submit, so an approved customer is still refused.
+ONBOARDING_SESSION_TYPES = frozenset({SessionType.ONBOARDING.value, SessionType.ACCESS.value})
 
 
 async def _validated_context(

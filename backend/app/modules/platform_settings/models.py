@@ -16,7 +16,7 @@ gives the value a type, a default and a range the database itself enforces.
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.database.base import Base
@@ -41,6 +41,18 @@ class PlatformSettings(Base):
     # hour on a wall clock, because that is how the cut-off is told to a customer and worked to
     # in the godown; half past anything would have to be explained on every screen.
     order_cutoff_hour: Mapped[int] = mapped_column(Integer, default=DEFAULT_ORDER_CUTOFF_HOUR)
+    credit_limit_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    credit_reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    credit_reminder_interval_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
+    credit_reminder_max_count: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    credit_quiet_start_hour: Mapped[int] = mapped_column(Integer, default=21, server_default="21")
+    credit_quiet_end_hour: Mapped[int] = mapped_column(Integer, default=8, server_default="8")
+    credit_reminder_threshold_percent: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    credit_block_push_cooldown_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    credit_reminder_template: Mapped[str] = mapped_column(
+        Text,
+        default="Hello {customer_name}, outstanding is ₹{outstanding}. Limit: ₹{limit}; available: ₹{available}.",
+    )
     # Who last changed any of this. The trail for a value that silently moves every order's
     # promised date is worth more than the value itself.
     updated_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

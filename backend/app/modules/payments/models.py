@@ -90,6 +90,22 @@ class Invoice(Base):
     #: The customer's GSTIN as it stood when the invoice was raised. Copied, like the name.
     gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
+    # The printable document is a legal snapshot, not a live join to merchant/customer/order
+    # tables.  It contains the parties, address, lines, tax split and dispatch facts exactly as
+    # they stood at issue time.  TEXT keeps the migration safe on MySQL installations that do
+    # not allow JSON defaults; JSON is validated by the service before it is returned.
+    document_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # e-Invoice / e-Way data is deliberately manual until a GST provider is integrated.  These
+    # fields are optional so a normal retail cash memo never pretends to have government IDs.
+    irn: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    acknowledgement_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    acknowledgement_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    eway_bill_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    eway_bill_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    transport_document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lr_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    terms_of_delivery: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

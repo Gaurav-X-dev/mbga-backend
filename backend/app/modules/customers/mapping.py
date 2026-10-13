@@ -23,13 +23,10 @@ from app.modules.customers.models import (
     CustomerProfile,
     KycApplication,
 )
+from app.modules.orders.constants import OrderStatus
+from app.modules.orders.models import Order
 from app.modules.payments.models import Invoice
-
-# Order history still comes from a module that does not exist, and is reported as the
-# contract's documented empty value rather than invented. The running balance is real now: it
-# is the sum of this customer's open invoice balances, passed in by the caller that already
-# knows how to batch-load it.
-UNIMPLEMENTED_LAST_ORDER_AT = None
+from app.modules.platform_settings import service as platform_settings
 
 
 def address_of(profile: CustomerProfile) -> Address:
@@ -67,6 +64,7 @@ def document_response(document: CustomerDocument) -> KycDocumentResponse:
     function cannot accidentally emit a full number because it never holds one.
     """
     return KycDocumentResponse(
+        id=document.id,
         type=document.document_type,
         number_masked=document.number_masked or "",
         # The display name, not the storage key. `fileId` is the handle for §17.2.
@@ -84,6 +82,9 @@ def customer_response(
     documents: list[CustomerDocument],
     application: KycApplication | None = None,
     running_balance: int = 0,
+    last_order_at=None,
+    credit_used: int = 0,
+    credit_active: bool = False,
 ) -> CustomerResponse:
     return CustomerResponse(
         id=profile.id,
@@ -104,7 +105,13 @@ def customer_response(
         approved_at=profile.approved_at,
         rejection_reason=profile.rejection_reason,
         running_balance=running_balance,
-        last_order_at=UNIMPLEMENTED_LAST_ORDER_AT,
+        last_order_at=last_order_at,
+        credit_enabled=profile.credit_enabled,
+        credit_limit=int(profile.credit_limit or 0),
+        credit_days=profile.credit_days,
+        used_credit=credit_used,
+        available_credit=max(int(profile.credit_limit or 0) - credit_used, 0),
+        credit_active=credit_active,
         application_id=application.id if application else None,
     )
 
@@ -176,7 +183,12 @@ class CustomerViewLoader:
             return {}
         rows = await self.session.scalars(
             select(CustomerDocument)
-            .where(CustomerDocument.customer_id.in_(customer_ids))
+            # Current only. A superseded upload is history, and showing it on a list row makes
+            # a customer who re-submitted look like one with two of everything.
+            .where(
+                CustomerDocument.customer_id.in_(customer_ids),
+                CustomerDocument.superseded_at.is_(None),
+            )
             .order_by(CustomerDocument.submitted_at)
         )
         grouped: dict[str, list[CustomerDocument]] = {}
@@ -212,17 +224,45 @@ class CustomerViewLoader:
         )
         return {customer_id: int(total or 0) for customer_id, total in rows}
 
+    async def order_summaries_for(self, customer_ids: list[str]) -> tuple[dict[str, int], dict[str, object]]:
+        """Batch-load uninvoiced exposure and the real most-recent order timestamp."""
+        if not customer_ids:
+            return {}, {}
+        exposure_rows = await self.session.execute(
+            select(Order.customer_id, func.coalesce(func.sum(Order.total_amount), 0))
+            .where(
+                Order.customer_id.in_(customer_ids),
+                Order.invoice_id.is_(None),
+                Order.status.not_in((OrderStatus.CANCELLED.value, OrderStatus.DELIVERED.value)),
+            )
+            .group_by(Order.customer_id)
+        )
+        last_rows = await self.session.execute(
+            select(Order.customer_id, func.max(Order.created_at))
+            .where(Order.customer_id.in_(customer_ids))
+            .group_by(Order.customer_id)
+        )
+        return (
+            {customer_id: int(total or 0) for customer_id, total in exposure_rows},
+            {customer_id: created_at for customer_id, created_at in last_rows},
+        )
+
     async def customer_view(self, profile: CustomerProfile) -> CustomerResponse:
         sites = await self.sites_for([profile.id])
         documents = await self.documents_for([profile.id])
         applications = await self.latest_applications_for([profile.id])
         balances = await self.running_balances_for([profile.id])
+        pending, last_orders = await self.order_summaries_for([profile.id])
+        settings = await platform_settings.load(self.session)
         return customer_response(
             profile,
             sites=sites.get(profile.id, []),
             documents=documents.get(profile.id, []),
             application=applications.get(profile.id),
             running_balance=balances.get(profile.id, 0),
+            last_order_at=last_orders.get(profile.id),
+            credit_used=balances.get(profile.id, 0) + pending.get(profile.id, 0),
+            credit_active=bool(settings.credit_limit_enabled and profile.credit_enabled and profile.credit_limit),
         )
 
     async def customer_views(self, profiles: list[CustomerProfile]) -> list[CustomerResponse]:
@@ -231,6 +271,8 @@ class CustomerViewLoader:
         documents = await self.documents_for(ids)
         applications = await self.latest_applications_for(ids)
         balances = await self.running_balances_for(ids)
+        pending, last_orders = await self.order_summaries_for(ids)
+        settings = await platform_settings.load(self.session)
         return [
             customer_response(
                 profile,
@@ -238,6 +280,9 @@ class CustomerViewLoader:
                 documents=documents.get(profile.id, []),
                 application=applications.get(profile.id),
                 running_balance=balances.get(profile.id, 0),
+                last_order_at=last_orders.get(profile.id),
+                credit_used=balances.get(profile.id, 0) + pending.get(profile.id, 0),
+                credit_active=bool(settings.credit_limit_enabled and profile.credit_enabled and profile.credit_limit),
             )
             for profile in profiles
         ]

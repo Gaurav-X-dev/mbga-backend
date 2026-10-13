@@ -57,6 +57,24 @@ STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
     DeliveryStatus.FAILED.value: frozenset(),
 }
 
+#: What each status is called on a screen. Without this the apps prettify the raw enum
+#: themselves, and they do not agree: the deliveries list showed "Dispatched" next to a bare
+#: "ON_LOCATION", because title-casing one word works and title-casing two with an underscore
+#: does not. The wording lives here so all four apps read the same sentence.
+STATUS_LABELS: dict[str, str] = {
+    DeliveryStatus.SCHEDULED.value: "Scheduled",
+    DeliveryStatus.DISPATCHED.value: "Out for Delivery",
+    DeliveryStatus.ON_LOCATION.value: "At Customer",
+    DeliveryStatus.DELIVERED.value: "Delivered",
+    DeliveryStatus.FAILED.value: "Cancelled",
+}
+
+
+def status_label(code: str) -> str:
+    """What a slip status is called. Falls back to a readable form of an unknown code."""
+    return STATUS_LABELS.get(code, code.replace("_", " ").title())
+
+
 #: List ordering, spec §10.1: "DISPATCHED -> SCHEDULED -> FAILED -> DELIVERED, then newest
 #: scheduledDate". It is a work queue, not a log: what is on the road comes first, then what
 #: has to go out, then what went wrong. Delivered slips are last because they need nobody.
@@ -121,3 +139,36 @@ MOCK_CODE = "4321"
 
 #: Longest note a driver or the office may attach on confirmation or failure.
 MAX_NOTE_LENGTH = 500
+
+
+class CancellationReason(StrEnum):
+    """Why a run did not deliver, as the driver picks it from a list.
+
+    In code rather than in the `constants` table because the backend validates against it and
+    because `OTHER` carries a rule - it is the one that demands the driver write something. A
+    row an operator could add would be a choice the cancel endpoint then refused. The **labels**
+    are seeded into `constants` and may be reworded freely; only the codes are fixed.
+    """
+
+    CUSTOMER_UNAVAILABLE = "CUSTOMER_UNAVAILABLE"
+    CUSTOMER_REFUSED = "CUSTOMER_REFUSED"
+    PAYMENT_ISSUE = "PAYMENT_ISSUE"
+    ADDRESS_UNREACHABLE = "ADDRESS_UNREACHABLE"
+    OTHER = "OTHER"
+    VEHICLE_BREAKDOWN = "VEHICLE_BREAKDOWN"
+
+
+#: What the driver app shows, in this order. The labels are the default wording; an operator may
+#: change them in `constants` without a release.
+CANCELLATION_REASON_LABELS: dict[CancellationReason, str] = {
+    CancellationReason.CUSTOMER_UNAVAILABLE: "Customer Unavailable / Shop Closed",
+    CancellationReason.CUSTOMER_REFUSED: "Customer Refused Delivery",
+    CancellationReason.PAYMENT_ISSUE: "Payment Issue / Dispute",
+    CancellationReason.ADDRESS_UNREACHABLE: "Address Unreachable / Wrong Location",
+    CancellationReason.VEHICLE_BREAKDOWN: "Vehicle Breakdown / Road Blocked",
+    CancellationReason.OTHER: "Other Reason",
+}
+
+#: Reasons that say nothing on their own. "Other" with no note is a cancelled delivery nobody
+#: can account for afterwards, which is the one thing the reason exists to prevent.
+REASONS_REQUIRING_NOTES: frozenset[CancellationReason] = frozenset({CancellationReason.OTHER})

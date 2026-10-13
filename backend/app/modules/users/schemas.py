@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class UserSummary(BaseModel):
@@ -23,6 +23,18 @@ class UserCreate(BaseModel):
     country_code: str | None = Field(default="+91", max_length=5)
     role: str = "admin_user"
     status: str = "ACTIVE"
+    #: The agency this person works for. **Required for a merchant's staff**, because a role on
+    #: its own does not make somebody part of an agency: the team list, the task picker and
+    #: every merchant-scoped screen read the `merchant_users` link, not the role. A salesperson
+    #: created without this had the role and appeared on none of them, with no error to say so.
+    #:
+    #: Left out for a platform user - a super admin belongs to no agency.
+    merchant_id: str | None = Field(default=None, alias="merchantId", max_length=36)
+    #: The job title the office calls them, shown wherever staff are listed. Defaults to the
+    #: role's own name. Ignored without `merchantId`.
+    staff_type: str | None = Field(default=None, alias="staffType", max_length=60)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class UserUpdate(BaseModel):

@@ -26,6 +26,7 @@ class NotificationOutbox(Base):
         Index("ix_notification_outbox_pending", "delivered_at", "created_at"),
         UniqueConstraint(
             "event_type", "entity_type", "entity_id", "recipient_kind", "recipient_id",
+            "recipient_channel",
             name="uq_notification_outbox_event",
         ),
     )
@@ -35,6 +36,9 @@ class NotificationOutbox(Base):
     # "customer" or "merchant" - who the message is addressed to.
     recipient_kind: Mapped[str] = mapped_column(String(20))
     recipient_id: Mapped[str] = mapped_column(String(36), index=True)
+    # Which application owns this row. A person may use several apps with one user id;
+    # identity alone is therefore not a notification audience.
+    recipient_channel: Mapped[str] = mapped_column(String(30), index=True)
     entity_type: Mapped[str] = mapped_column(String(40))
     entity_id: Mapped[str] = mapped_column(String(36))
     title: Mapped[str] = mapped_column(String(180))

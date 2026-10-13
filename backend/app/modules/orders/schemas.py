@@ -166,6 +166,11 @@ class OrderResponse(BaseModel):
     gst_amount: int = Field(alias="gstAmount")
     total_amount: int = Field(alias="totalAmount")
     status: OrderStatus
+    #: Whether `POST /orders/{orderId}/cancel` would be accepted right now. The apps hide the
+    #: Cancel button on `false` instead of each keeping its own copy of the rule - a merchant
+    #: and a customer both offered Cancel on a delivery whose driver was already at the gate,
+    #: and the press came back a 409.
+    can_cancel: bool = Field(alias="canCancel")
     status_history: list[OrderStatusEntry] = Field(default_factory=list, alias="statusHistory")
     placed_at: UtcTime = Field(alias="placedAt")
     # The cut-off as evaluated at placement, not as it would be evaluated now.

@@ -18,7 +18,8 @@ from fastapi import APIRouter
 
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
-from app.modules.driver.router import deliveries_router, driver_router
+from app.modules.driver.router import deliveries_router, driver_router, reference_router
+from app.modules.locations.router import router as locations_router
 from app.modules.notifications.router import build_notification_router
 
 router = APIRouter()
@@ -35,3 +36,11 @@ router.include_router(deliveries_router)
 
 # The driver's own record and what is on their van (§8, §10).
 router.include_router(driver_router)
+
+# Lists the app fills its dropdowns from. Served here rather than on the public /constants
+# endpoint because one of them carries a rule - which reasons demand a note - that a plain
+# key/value row cannot express.
+router.include_router(reference_router)
+
+# States and cities for the address forms, read from the table rather than a list in the code.
+router.include_router(locations_router)

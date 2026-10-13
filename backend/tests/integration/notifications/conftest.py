@@ -89,6 +89,7 @@ async def queue(
     *,
     recipient_kind: str,
     recipient_id: str,
+    recipient_channel: str | None = None,
     event_type: str = "ORDER_PLACED",
     entity_type: str = "order",
     entity_id: str | None = None,
@@ -106,6 +107,10 @@ async def queue(
                 event_type=event_type,
                 recipient_kind=recipient_kind,
                 recipient_id=recipient_id,
+                recipient_channel=recipient_channel
+                or {"customer": "CUSTOMER", "merchant": "MERCHANT", "user": "DELIVERY"}[
+                    recipient_kind
+                ],
                 entity_type=entity_type,
                 entity_id=entity_id or str(uuid4()),
                 title=title,

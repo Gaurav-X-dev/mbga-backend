@@ -7,6 +7,7 @@ from app.modules.constants.router import router as constants_router
 from app.modules.customers.document_router import build_document_router
 from app.modules.customers.profile_router import router as customer_profile_router
 from app.modules.customers.router import router as customer_registration_router
+from app.modules.locations.router import router as locations_router
 from app.modules.notifications.router import build_notification_router
 from app.modules.payments.router import build_payment_router
 from app.modules.orders.router import build_order_router
@@ -30,3 +31,6 @@ router.include_router(build_notification_router(LoginChannel.CUSTOMER))
 router.include_router(build_payment_router(LoginChannel.CUSTOMER))
 # Public dropdown data. Mounted on both channels so each app calls its own base URL.
 router.include_router(constants_router)
+
+# States and cities for the address forms, read from the table rather than a list in the code.
+router.include_router(locations_router)

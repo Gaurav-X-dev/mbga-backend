@@ -28,6 +28,37 @@ class OrderStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+#: What a **customer** may cancel themselves. Once a van has left the godown the cylinders are
+#: on it and somebody has to account for them; a customer calling off a delivery whose driver
+#: is at their gate is a conversation, not a button.
+CANCELLABLE_STATUSES: frozenset[str] = frozenset(
+    {OrderStatus.PLACED.value, OrderStatus.CONFIRMED.value}
+)
+
+#: What the **office** may cancel. They can reach the driver, and an agency that cannot call off
+#: its own round until the van comes back has to let a delivery nobody wants run to the gate.
+#: No stock moves here: counts only drop at handover, so an order cancelled while the van is out
+#: never took anything off the books to put back.
+STAFF_CANCELLABLE_STATUSES: frozenset[str] = CANCELLABLE_STATUSES | frozenset(
+    {OrderStatus.OUT_FOR_DELIVERY.value, OrderStatus.ON_LOCATION.value}
+)
+
+
+def may_be_cancelled(status: str, *, by_staff: bool = False) -> bool:
+    """Whether `POST /orders/{id}/cancel` would be accepted for an order in this status.
+
+    Read onto the order as `canCancel` so the apps can hide the button rather than each one
+    carrying its own copy of this rule - and getting it wrong, which is how a merchant and a
+    customer both kept a Cancel button on an order nothing could cancel.
+
+    **The answer differs by who is asking**, which is why the apps must read it rather than
+    infer it: the same order can be cancellable from the merchant panel and not from the
+    customer's phone.
+    """
+    allowed = STAFF_CANCELLABLE_STATUSES if by_staff else CANCELLABLE_STATUSES
+    return status in allowed
+
+
 class OrderMode(StrEnum):
     NEW = "NEW"
     REPEAT = "REPEAT"

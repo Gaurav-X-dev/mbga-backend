@@ -31,8 +31,9 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Customer Documents"
     # Public dropdown data for the registration form. Grouped under Registration rather than
     # given a tag of its own, because the customer channel's tag set is a contract the
-    # OpenAPI matrix test asserts.
-    if path == "/api/v1/customer/constants":
+    # OpenAPI matrix test asserts. The delivery area is the same kind of thing: the address
+    # form's state and city boxes, read before the customer has an account.
+    if path == "/api/v1/customer/constants" or path.startswith("/api/v1/customer/locations"):
         return "Customer Registration"
     if path.startswith(("/api/v1/customer/customers", "/api/v1/customer/profile")):
         return "Customer Profile"
@@ -63,12 +64,17 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Admin Permissions"
     if path.startswith("/api/v1/admin/audit-logs"):
         return "Admin Audit Logs"
+    if path.startswith("/api/v1/admin/reports"):
+        return "Admin Reports"
     if path.startswith("/api/v1/merchant/auth/"):
         return "Merchant Authentication"
     if path.startswith("/api/v1/merchant/delivery-users"):
         return "Merchant Delivery Users"
-    if path == "/api/v1/merchant/constants":
+    if path == "/api/v1/merchant/constants" or path.startswith("/api/v1/merchant/locations"):
         return "Merchant APIs"
+    # The agency's own vans, maintained from the panel and read by the assignment form.
+    if path.startswith("/api/v1/merchant/vehicles"):
+        return "Merchant Deliveries"
     # Both pricing families, before the /merchant/customers rule below: the Price Setting
     # tab sits on a customer path but belongs with pricing, not with customer review.
     if path.startswith("/api/v1/merchant/pricing") or path.endswith("/pricing") or "/pricing/" in path:

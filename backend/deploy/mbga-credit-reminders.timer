@@ -1,0 +1,12 @@
+[Unit]
+Description=Run MBGA credit reminder scan every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=mbga-credit-reminders.service
+
+[Install]
+WantedBy=timers.target

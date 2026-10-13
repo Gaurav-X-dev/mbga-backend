@@ -25,7 +25,12 @@ class InvoiceStatus(StrEnum):
 
 
 class PaymentMode(StrEnum):
-    """Spec §2 `PaymentMode`. How the money actually moved."""
+    """Spec §2 `PaymentMode`. How the money actually moved.
+
+    Wider than what may be **chosen** today - see `OFFERED_PAYMENT_MODES`. A mode is removed
+    from the offer, never from this enum, because a payment recorded months ago still names the
+    mode it was taken in and that row has to keep reading back.
+    """
 
     CASH = "CASH"
     UPI = "UPI"
@@ -45,6 +50,15 @@ class ReconciliationStatus(StrEnum):
     RECONCILED = "RECONCILED"
     INVALID = "INVALID"
 
+
+#: What a payment may actually be recorded as. The agency takes cash at the gate and UPI
+#: through the QR, and nothing else - a bank transfer is arranged with the office, not handed
+#: to a driver, and offering it put a choice on the app that nobody could complete.
+#:
+#: Separate from the enum above on purpose. Dropping `NEFT` from that would make every existing
+#: NEFT payment unreadable, which is a worse answer than an option nobody picks: an old row is
+#: a record of what happened, and records do not change when a policy does.
+OFFERED_PAYMENT_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.CASH, PaymentMode.UPI})
 
 #: Modes that are settled as soon as they are recorded. Anything else waits for a bank match.
 SELF_EVIDENT_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.CASH})

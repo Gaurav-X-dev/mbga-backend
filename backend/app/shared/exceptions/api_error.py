@@ -105,7 +105,32 @@ def error_message(code: str) -> str:
 
 
 def error_detail(code: str, message: str | None = None, fields: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    return {"code": code, "message": message or error_message(code), "fields": fields or []}
+    """The error envelope. `message` is what an app that reads nothing else will show.
+
+    **One field error speaks for itself.** A refusal about a single field used to leave
+    `message` as the generic "Some fields are missing or invalid", with the sentence a person
+    could act on one level down in `fields[0].message` - and every app so far has shown the
+    envelope. A driver who mistyped a code read "Some fields are missing"; one who claimed more
+    empties than the customer held read the same thing, and reported it as an OTP fault.
+
+    So a caller who passed **no** message - `invalid()` and everything built on it - has the
+    single field's own message put in the envelope instead of the generic lookup. A caller
+    who wrote one keeps it. Apps that read `fields` are unaffected: nothing moves or
+    disappears, the summary just stops being useless. Two or more field errors keep the
+    summary either way, because no one of them describes the refusal.
+    """
+    listed = fields or []
+    # A caller who wrote a message keeps it, even against one field: that message is the
+    # considered one. "Not enough filled 19 KG in stock (3 available, 4 needed). Record a
+    # refill first." says the whole thing, where its field entry reads "3 available" - a
+    # fragment meant to sit beside the input, not to stand alone. Promoting the fragment over
+    # the sentence would be this fix doing the exact damage it was written to undo.
+    if message is not None:
+        return {"code": code, "message": message, "fields": listed}
+    summary = error_message(code)
+    if len(listed) == 1 and (only := (listed[0].get("message") or "").strip()):
+        summary = only
+    return {"code": code, "message": summary, "fields": listed}
 
 
 class ApiError(HTTPException):

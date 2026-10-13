@@ -135,6 +135,23 @@ async def test_the_three_apps_each_see_exactly_their_own(env):
     }
 
 
+async def test_customer_channel_hides_personal_delivery_history_for_same_user(env):
+    """One identity may gain a customer profile after having been a driver."""
+    _staff_token, merchant, _su = await staff(env)
+    customer_token, _profile, user = await customer(env, merchant)
+    await queue(
+        env,
+        recipient_kind="user",
+        recipient_id=user.id,
+        recipient_channel="DELIVERY",
+        event_type="DELIVERY_ASSIGNED",
+        entity_type="delivery",
+        title="Old driver assignment",
+    )
+
+    assert (await env.get(CUSTOMER, customer_token)).json() == []
+
+
 # --- Channel isolation ---------------------------------------------------------------------
 
 

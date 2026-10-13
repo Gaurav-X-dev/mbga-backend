@@ -24,6 +24,11 @@ export const NAVIGATION: Record<AuthChannel, NavSection[]> = {
       title: "Business Operations",
       items: [
         { to: "/admin/merchants", label: "Merchant Network", icon: "store", permissions: [PERMISSIONS.merchantsView] },
+        { to: "/admin/orders", label: "Orders", icon: "cart", permissions: [PERMISSIONS.ordersView] },
+        { to: "/admin/inventory", label: "Inventory", icon: "box", permissions: [PERMISSIONS.inventoryView] },
+        { to: "/admin/payments", label: "Payments", icon: "wallet", permissions: [PERMISSIONS.paymentsView] },
+        { to: "/admin/reports", label: "Reports", icon: "chart", permissions: [PERMISSIONS.reportsView] },
+        { to: "/admin/credit", label: "Credit Control", icon: "wallet", permissions: [PERMISSIONS.creditView] },
         { to: "/admin/customers", label: "Customer KYC", icon: "idCard" },
         { to: "/admin/approvals", label: "Approvals", icon: "inbox" }
       ]
@@ -64,13 +69,13 @@ export const NAVIGATION: Record<AuthChannel, NavSection[]> = {
       ]
     },
     {
-      title: "Coming soon",
+      title: "Agency Operations",
       items: [
-        { to: "/merchant/customers", label: "Customers", icon: "idCard", unavailable: true },
-        { to: "/merchant/orders", label: "Orders", icon: "cart", unavailable: true },
-        { to: "/merchant/inventory", label: "Inventory", icon: "box", unavailable: true },
-        { to: "/merchant/payments", label: "Payments", icon: "wallet", unavailable: true },
-        { to: "/merchant/reports", label: "Reports", icon: "chart", unavailable: true }
+        { to: "/merchant/customers", label: "Customers", icon: "idCard", permissions: [PERMISSIONS.customersView] },
+        { to: "/merchant/orders", label: "Orders", icon: "cart", permissions: [PERMISSIONS.ordersView] },
+        { to: "/merchant/inventory", label: "Inventory", icon: "box", permissions: [PERMISSIONS.inventoryView] },
+        { to: "/merchant/payments", label: "Payments", icon: "wallet", permissions: [PERMISSIONS.paymentsView] },
+        { to: "/merchant/reports", label: "Reports", icon: "chart", permissions: [PERMISSIONS.reportsView] }
       ]
     },
     {
@@ -135,3 +140,5 @@ export const QUICK_ACTIONS: Record<AuthChannel, QuickAction[]> = {
     }
   ]
 };
+
+

@@ -1,8 +1,17 @@
-"""The merchant's staff directory, reused as the task module's people list (spec #1).
+"""The people a task may be given to: this merchant's staff and its delivery crew.
 
 There is no "task user" concept and this does not create one. The Assign To picker and the
-`@mention` autocomplete both need the same thing the rest of the platform already has: the active
-staff of the caller's merchant. So this is a query, not a table.
+`@mention` autocomplete both need the same thing the rest of the platform already has: the
+people who work for the caller's merchant. So this is a query, not a table.
+
+**Office staff only.** Drivers and helpers are `delivery_profiles` and are deliberately not
+here: the delivery app has no task screen, so a task given to a driver is a task nobody can
+see. Their work reaches them as delivery slips, not as tasks.
+
+**A customer is never on this list either.** It is an internal board. One person can hold several
+roles - the same mobile registered as a customer and later added as staff - and such a user
+*does* belong here, as staff; but somebody whose only standing with this merchant is that they
+buy gas from them does not, and used to appear with "Customer" written under their name.
 
 Resolving a person's **role** takes a three-table join (`merchant_users` -> `user_roles` ->
 `roles`), which is why it lives here rather than being repeated in the service: every task write
@@ -21,6 +30,10 @@ from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
 
 ACTIVE = "ACTIVE"
+#: A role that signs in on the customer app and nowhere else. Holding one is not a reason to
+#: appear on an internal board - and holding one *as well as* a staff role is not a reason to be
+#: left off it, which is why this filters people with no other standing rather than the role.
+CUSTOMER_ROLE = "customer"
 #: What a staff member is called when no role resolves. Never shown in practice - every merchant
 #: user is created with one - but a blank chip on the picker would be worse than a word.
 UNKNOWN_ROLE = "STAFF"
@@ -41,13 +54,33 @@ class TeamDirectory:
         self.session = session
         self.merchant_id = merchant_id
 
+    def _internal_ids(self):
+        """The office staff of this merchant.
+
+        One subquery, used by the picker and by the membership test behind every assignment, so
+        the two can never disagree about who may be given a task.
+
+        Delivery crew are not included. They have no `merchant_users` row, and the delivery app
+        has no task screen to show them one - a task assigned to a driver would sit unread.
+        """
+        return select(MerchantUser.user_id).where(
+            MerchantUser.merchant_id == self.merchant_id,
+            MerchantUser.status == ACTIVE,
+        )
+
     async def members(self, *, search: str | None = None) -> list[TeamMember]:
         """Active staff of this merchant, for the picker (spec #1).
 
         Ordered by name so the picker is scannable and does not reorder between opens.
         """
         statement = (
-            select(User.id, User.full_name, User.username, Merchant.name.label("branch"))
+            select(
+                User.id,
+                User.full_name,
+                User.username,
+                Merchant.name.label("branch"),
+                MerchantUser.staff_type.label("staff_type"),
+            )
             .join(MerchantUser, MerchantUser.user_id == User.id)
             .join(Merchant, Merchant.id == MerchantUser.merchant_id)
             .where(
@@ -69,7 +102,11 @@ class TeamDirectory:
             TeamMember(
                 id=row.id,
                 name=_display(row.full_name, row.username),
-                role=roles.get(row.id, UNKNOWN_ROLE),
+                # The job title the office chose when they added this person, which is the
+                # answer to "what do they do here". Every merchant user was assigned the
+                # `manager` role regardless of it, so reading the role alone called an
+                # accountant a manager - and a person with no role at all nothing.
+                role=_job_title(row.staff_type) or roles.get(row.id, UNKNOWN_ROLE),
                 branch_name=row.branch,
             )
             for row in rows
@@ -84,13 +121,10 @@ class TeamDirectory:
         if not user_ids:
             return set()
         rows = await self.session.scalars(
-            select(MerchantUser.user_id)
-            .join(User, User.id == MerchantUser.user_id)
-            .where(
-                MerchantUser.merchant_id == self.merchant_id,
-                MerchantUser.user_id.in_(user_ids),
-                MerchantUser.status == ACTIVE,
+            select(User.id).where(
+                User.id.in_(user_ids),
                 User.status == ACTIVE,
+                User.id.in_(self._internal_ids()),
             )
         )
         return set(rows)
@@ -113,8 +147,14 @@ class TeamDirectory:
         return {row.id: _display(row.full_name, row.username) for row in rows}
 
     async def _roles(self, user_ids: set[str]) -> dict[str, str]:
-        """One role code per user. A user with several takes the first by code, so the picker is
-        deterministic rather than showing whichever row the database returned first."""
+        """One role code per user, and never the customer one.
+
+        A user with several takes the first by code, so the picker is deterministic rather than
+        showing whichever row the database returned first. `customer` is left out of that
+        choice because it sorts before every staff role: a manager who also buys gas from their
+        own agency - the same mobile registered twice - was listed on the internal board with
+        "Customer" written under their name.
+        """
         if not user_ids:
             return {}
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -124,6 +164,7 @@ class TeamDirectory:
                 .join(Role, Role.id == UserRole.role_id)
                 .where(
                     UserRole.user_id.in_(user_ids),
+                    Role.code != CUSTOMER_ROLE,
                     UserRole.is_active.is_(True),
                     Role.is_active.is_(True),
                     or_(UserRole.valid_from.is_(None), UserRole.valid_from <= now),
@@ -133,6 +174,11 @@ class TeamDirectory:
             )
         )
         return {row.user_id: (row.code or UNKNOWN_ROLE).upper() for row in rows}
+
+
+def _job_title(staff_type: str | None) -> str:
+    """`"ACCOUNTANT"` from whatever the panel stored, or `""` when it stored nothing."""
+    return (staff_type or "").strip().upper().replace(" ", "_")
 
 
 def _display(full_name: str | None, username: str | None) -> str:

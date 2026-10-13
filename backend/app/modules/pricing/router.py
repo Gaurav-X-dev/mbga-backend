@@ -30,6 +30,7 @@ from app.modules.pricing.schemas import (
     UpdatePriceEntryRequest,
 )
 from app.modules.pricing.service import ChangeLogFilters, PricingService
+from app.shared.date_time.query_params import BusinessDate
 from app.shared.authorization.dependencies import require_login_channel, require_permission
 from app.shared.database.session import get_db_session
 from app.shared.exceptions.openapi import error_responses
@@ -121,8 +122,8 @@ async def list_pricing_change_logs(
     cylinder_type: Annotated[str | None, Query(alias="cylinderType")] = None,
     tier: Annotated[str | None, Query()] = None,
     pricing_month_id: Annotated[str | None, Query(alias="pricingMonthId", max_length=120)] = None,
-    date_from: Annotated[date | None, Query(alias="from", description="Earliest effectiveFrom.")] = None,
-    date_to: Annotated[date | None, Query(alias="to", description="Latest effectiveFrom.")] = None,
+    date_from: Annotated[BusinessDate | None, Query(alias="from", description="Earliest effectiveFrom.")] = None,
+    date_to: Annotated[BusinessDate | None, Query(alias="to", description="Latest effectiveFrom.")] = None,
     page: Annotated[int, Query(ge=1, description="1-based page number.")] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
     limit: Annotated[int | None, Query(ge=1, le=MAX_PAGE_SIZE, description="Alias for pageSize.")] = None,

@@ -301,8 +301,20 @@ class KycReviewService:
     # --- helpers ---------------------------------------------------------------------------
 
     async def _documents(self, customer_id: str) -> list[CustomerDocument]:
+        """The customer's **current** documents - what a reviewer decides on.
+
+        A superseded row is history: it is what was submitted before the customer was asked to
+        try again. Listing it beside the replacement gave the reviewer two Aadhaars with
+        nothing to tell them apart, and approval then marked both of them approved - including
+        the one that had been turned down.
+        """
         return list(
-            await self.session.scalars(select(CustomerDocument).where(CustomerDocument.customer_id == customer_id))
+            await self.session.scalars(
+                select(CustomerDocument).where(
+                    CustomerDocument.customer_id == customer_id,
+                    CustomerDocument.superseded_at.is_(None),
+                )
+            )
         )
 
     async def _sites(self, customer_id: str) -> list[CustomerDeliverySite]:

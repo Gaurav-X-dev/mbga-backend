@@ -96,6 +96,7 @@ async def test_a_failed_dispatch_leaves_the_row_queued(env, monkeypatch):
                 event_type="ORDER_PLACED",
                 recipient_kind="customer",
                 recipient_id=str(uuid4()),
+                recipient_channel="CUSTOMER",
                 entity_type="order",
                 entity_id=str(uuid4()),
                 title="Order placed",

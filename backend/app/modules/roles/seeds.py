@@ -124,6 +124,9 @@ SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
     SeedPermission("audit_logs.view", "View audit logs", "audit_logs", "view"),
     SeedPermission("platform_settings.view", "View platform settings", "platform_settings", "view"),
     SeedPermission("platform_settings.manage", "Change platform settings", "platform_settings", "manage"),
+    SeedPermission("credit.view", "View customer credit", "credit", "view"),
+    SeedPermission("credit.manage", "Manage customer credit", "credit", "manage"),
+    SeedPermission("credit.override", "Approve a credit override", "credit", "override"),
 )
 
 
@@ -146,6 +149,8 @@ SEED_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "delivery_users.activate",
             "delivery_users.block",
             "delivery_users.assign_roles",
+            "credit.view",
+            "credit.manage",
         }
     ),
     "driver": frozenset({"deliveries.view", "deliveries.update_status", "trips.view"}),

@@ -29,9 +29,36 @@ def test_dynamic_upi_fields_and_order_reference_are_encoded() -> None:
         "pn": ["MBGA Indore & Sons"],
         "am": ["3200.50"],
         "cu": ["INR"],
-        "tr": ["order-1042"],
         "tn": ["Order #1042 / Gate 2"],
     }
+    # `tr` marks the link as a merchant collect, and a payer bank then rejects it for the
+    # merchant fields a personal VPA cannot supply. See `build_upi_link`.
+    assert "tr" not in values
+
+
+def test_without_a_note_the_order_is_still_referenced() -> None:
+    """The driver and the customer both need to see which order the money was for."""
+    link = build_upi_link(
+        upi_id="merchant@bank",
+        payee_name="MBGA",
+        amount="100.00",
+        order_id="order-7",
+    )
+
+    assert parse_qs(urlparse(link).query)["tn"] == ["Order order-7"]
+
+
+def test_a_long_note_is_cut_to_what_upi_accepts() -> None:
+    """NPCI caps `tn` at 50 characters; a longer one is refused by the payer app."""
+    link = build_upi_link(
+        upi_id="merchant@bank",
+        payee_name="MBGA",
+        amount="100.00",
+        order_id="order-7",
+        notes="x" * 200,
+    )
+
+    assert len(parse_qs(urlparse(link).query)["tn"][0]) == 50
 
 
 def test_base64_is_a_real_300_pixel_png() -> None:

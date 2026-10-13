@@ -18,9 +18,18 @@ from tests.integration.customers.conftest import (
 pytestmark = [pytest.mark.integration, pytest.mark.mysql]
 
 
-async def create_customer(env, token, *, customer_type="RETAIL", mobile=None, **overrides):
+async def create_customer(
+    env, token, *, customer_type="RETAIL", mobile=None, shared_numbers=False, **overrides
+):
     mobile = mobile or random_mobile()
-    body = await registration_body(env, MERCHANT, token, customer_type=customer_type, mobile=mobile.removeprefix("+91"))
+    body = await registration_body(
+        env,
+        MERCHANT,
+        token,
+        customer_type=customer_type,
+        mobile=mobile.removeprefix("+91"),
+        shared_numbers=shared_numbers,
+    )
     if customer_type == "INDUSTRIAL":
         body["sites"] = [site()]
     body.update(overrides)
@@ -29,7 +38,8 @@ async def create_customer(env, token, *, customer_type="RETAIL", mobile=None, **
 
 async def test_staff_can_add_a_retail_customer(env):
     token, _merchant, _staff = await reviewer(env)
-    mobile, response = await create_customer(env, token)
+    # The fixed identifiers, because the masks below are asserted literally.
+    mobile, response = await create_customer(env, token, shared_numbers=True)
     assert response.status_code == 201, response.text
 
     customer = response.json()
@@ -48,7 +58,10 @@ async def test_staff_can_add_a_retail_customer(env):
 
 async def test_staff_can_add_an_industrial_customer_with_sites(env):
     token, _, _ = await reviewer(env)
-    _, response = await create_customer(env, token, customer_type="INDUSTRIAL")
+    # The fixed identifiers, because the GSTIN and the masks below are asserted literally.
+    _, response = await create_customer(
+        env, token, customer_type="INDUSTRIAL", shared_numbers=True
+    )
     assert response.status_code == 201, response.text
 
     customer = response.json()
@@ -81,12 +94,19 @@ async def test_the_customer_can_sign_in_and_see_verification_pending(env):
     assert profile.json()["accountStatus"] == "PENDING"
 
 
-async def test_a_staff_mobile_number_cannot_become_a_customer(env):
+async def test_a_staff_mobile_reuses_one_identity_when_becoming_a_customer(env):
     token, _, staff = await reviewer(env)
     _, response = await create_customer(env, token, mobile=staff.mobile_number)
-    assert response.status_code == 422, response.text
-    reported = {item["field"]: item["code"] for item in response.json()["detail"]["fields"]}
-    assert reported["mobile"] == "staff_number"
+    assert response.status_code == 201, response.text
+
+    profile = await env.scalar(
+        select(CustomerProfile).where(CustomerProfile.id == response.json()["id"])
+    )
+    users = (
+        await env.execute(select(User).where(User.mobile_number == staff.mobile_number))
+    ).scalars().all()
+    assert profile.user_id == staff.id
+    assert [user.id for user in users] == [staff.id]
 
 
 async def test_a_duplicate_customer_mobile_is_refused(env):

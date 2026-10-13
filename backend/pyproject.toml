@@ -27,6 +27,8 @@ dependencies = [
   "email-validator>=2.0",
   # Generates in-memory PNG UPI QR codes for the Delivery App.
   "qrcode[pil]>=8.0",
+  # Makes ZoneInfo-based reminder scheduling portable to Windows/minimal containers.
+  "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]

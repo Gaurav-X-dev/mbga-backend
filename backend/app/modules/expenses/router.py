@@ -34,6 +34,7 @@ from app.modules.expenses.service import (
     ExpenseService,
     parse_filters,
 )
+from app.shared.date_time.query_params import BusinessDate
 from app.shared.authorization.dependencies import require_login_channel, require_permission
 from app.shared.database.session import get_db_session
 from app.shared.exceptions.openapi import error_responses
@@ -187,8 +188,8 @@ async def list_expenses(
     period: Annotated[str | None, Query(description="`YYYY-MM`, or `ALL`. Defaults to every period.")] = None,
     category_id: Annotated[str | None, Query(alias="categoryId")] = None,
     category: Annotated[str | None, Query(description="Category code, e.g. FUEL.")] = None,
-    date_from: Annotated[date | None, Query(alias="from", description="Earliest spend date.")] = None,
-    date_to: Annotated[date | None, Query(alias="to", description="Latest spend date.")] = None,
+    date_from: Annotated[BusinessDate | None, Query(alias="from", description="Earliest spend date.")] = None,
+    date_to: Annotated[BusinessDate | None, Query(alias="to", description="Latest spend date.")] = None,
     search: Annotated[str | None, Query(max_length=120, description="Matches the note or category name.")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,

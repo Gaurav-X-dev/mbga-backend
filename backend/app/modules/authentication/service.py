@@ -616,22 +616,15 @@ class AuthenticationService:
         )
 
     async def _find_or_create_onboarding_user(self, mobile: str) -> tuple[User, bool]:
-        user = await self._find_user_by_mobile(mobile)
-        if user:
-            return user, False
-        now = datetime.now(UTC)
-        user = User(
-            id=str(uuid4()),
-            mobile_number=mobile,
-            country_code="+91",
-            role="customer",
-            status="PENDING",
-            created_at=now,
-            updated_at=now,
+        from app.modules.users.identity import get_or_create_mobile_user
+
+        return await get_or_create_mobile_user(
+            self.db,
+            mobile=mobile,
+            full_name=None,
+            legacy_role="customer",
+            new_user_status="PENDING",
         )
-        self.db.add(user)
-        await self.db.flush()
-        return user, True
 
     async def _issue_token_pair(
         self,

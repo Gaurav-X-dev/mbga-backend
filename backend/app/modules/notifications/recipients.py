@@ -36,7 +36,9 @@ class RecipientResolver:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def devices_for(self, recipient_kind: str, recipient_id: str) -> list[Device]:
+    async def devices_for(
+        self, recipient_kind: str, recipient_id: str, recipient_channel: str
+    ) -> list[Device]:
         """Every live device that should receive this event."""
         user_ids = await self._user_ids(recipient_kind, recipient_id)
         if not user_ids:
@@ -48,6 +50,7 @@ class RecipientResolver:
                 LoginSession.push_token.is_not(None),
                 LoginSession.push_token != "",
                 LoginSession.revoked_at.is_(None),
+                LoginSession.login_channel == recipient_channel,
             )
         )
         # One device can hold several live sessions (a refresh leaves the old row behind for

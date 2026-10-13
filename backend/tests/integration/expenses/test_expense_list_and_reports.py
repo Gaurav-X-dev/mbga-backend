@@ -18,6 +18,12 @@ from tests.integration.expenses.conftest import (
 pytestmark = [pytest.mark.integration, pytest.mark.mysql]
 
 
+def _month_label(day) -> str:
+    """"September 2026". Worked out rather than written down - a month name typed into a test
+    is true for a few weeks and then fails every run until somebody edits it."""
+    return day.strftime("%B %Y")
+
+
 def _last_month():
     return business_today().replace(day=1) - timedelta(days=1)
 
@@ -38,7 +44,7 @@ async def _seed_month(env, token):
 
 
 async def test_the_summary_card_totals_the_whole_period_not_the_page(env):
-    """The header reads "Total - September 2026  Rs 28,550   5 entries" above a short page."""
+    """The header reads "Total - <this month>  Rs 28,550   5 entries" above a short page."""
     token, _merchant, _user = await expense_staff(env)
     await _seed_month(env, token)
 
@@ -49,7 +55,7 @@ async def test_the_summary_card_totals_the_whole_period_not_the_page(env):
     assert len(body["items"]) == 2
     assert body["summary"]["entryCount"] == 5
     assert Decimal(str(body["summary"]["totalAmount"])) == Decimal(28550)
-    assert body["summary"]["periodLabel"] == "September 2026"
+    assert body["summary"]["periodLabel"] == _month_label(business_today())
 
 
 async def test_the_list_is_newest_spend_first(env):
@@ -179,7 +185,7 @@ async def test_periods_list_every_month_with_its_own_total(env):
     assert [item["period"] for item in periods] == [month_key(business_today()), month_key(_last_month())]
     assert periods[0]["isCurrent"] is True
     assert Decimal(str(periods[0]["totalAmount"])) == Decimal(1000)
-    assert periods[1]["label"] == "August 2026"
+    assert periods[1]["label"] == _month_label(_last_month())
 
 
 async def test_the_current_month_is_offered_even_when_empty(env):
@@ -237,3 +243,51 @@ async def test_reports_need_expenses_view(env):
 
     assert periods.status_code == 403
     assert breakdown.status_code == 403
+
+
+async def test_the_range_takes_a_timestamp_as_well_as_a_date(env):
+    """What the Reports screen sends.
+
+    `from`/`to` mean a date here and a timestamp on the reports endpoint, so an app that sends
+    the same ISO string to both was refused here with "Datetimes provided to dates should have
+    zero time" - a true sentence that means nothing to somebody who tapped "Last 7 days".
+    """
+    token, _merchant, _user = await expense_staff(env)
+    await categories(env, token)
+    today = business_today()
+    await created_expense(env, token, category="FUEL", date=today.isoformat())
+    await created_expense(env, token, category="FUEL", date=(today - timedelta(days=20)).isoformat())
+
+    response = await env.get(
+        f"{EXPENSES}?from={(today - timedelta(days=5))}T00:00:00.000Z&to={today}T23:59:59.000Z",
+        token,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["entryCount"] == 1
+
+
+async def test_a_timestamp_is_read_on_the_indian_calendar(env):
+    """`18:40Z` is twenty past midnight in Delhi. The spend belongs to the day the person who
+    picked the range was looking at, not to the UTC one."""
+    token, _merchant, _user = await expense_staff(env)
+    await categories(env, token)
+    today = business_today()
+    await created_expense(env, token, category="FUEL", date=today.isoformat())
+
+    # 18:40Z on the previous day is already today in IST, so today's spend is inside the range.
+    response = await env.get(
+        f"{EXPENSES}?from={(today - timedelta(days=1))}T18:40:00Z&to={today}T18:00:00Z", token
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["entryCount"] == 1
+
+
+async def test_a_date_that_is_not_a_date_is_still_refused(env):
+    """Taking a timestamp does not mean taking anything."""
+    token, _merchant, _user = await expense_staff(env)
+
+    response = await env.get(f"{EXPENSES}?from=last-tuesday", token)
+
+    assert response.status_code == 422, response.text

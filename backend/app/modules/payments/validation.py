@@ -14,6 +14,7 @@ from fastapi import status as http_status
 
 from app.modules.payments.constants import (
     MAX_PAYMENT_AMOUNT,
+    OFFERED_PAYMENT_MODES,
     REFERENCE_REQUIRED_MODES,
     InvoiceStatus,
     PaymentMode,
@@ -52,14 +53,36 @@ def check_amount(amount: int, invoice: Invoice) -> int:
     return amount
 
 
-def check_reference(mode: PaymentMode, reference: str | None) -> str | None:
-    """A bank reference, required for anything but cash.
+def check_mode(mode: PaymentMode) -> PaymentMode:
+    """The mode must be one money is actually taken in today.
 
-    Without it a UPI or NEFT payment can never be matched against a statement, which leaves it
-    `PENDING` for ever - recorded, uncollectable and permanently in the way.
+    `PaymentMode` is wider than the offer so that older payments keep reading back, which means
+    the enum alone no longer answers "may this be recorded". Checked here as well as in the
+    dropdown, because a dropdown is a suggestion and this is the rule.
+    """
+    if mode not in OFFERED_PAYMENT_MODES:
+        raise invalid(
+            "mode",
+            "mode_not_offered",
+            f"Payments are not taken by {mode.value} any more.",
+        )
+    return mode
+
+
+def check_reference(
+    mode: PaymentMode, reference: str | None, *, required: bool = True
+) -> str | None:
+    """A bank reference, asked for on anything but cash.
+
+    Without it a UPI payment is harder to match against a statement, so staff recording one are
+    asked for the UTR they are reading off the receipt in front of them.
+
+    `required=False` is for the gate. The UTR is on the customer's phone there, not the
+    driver's, and demanding it would make UPI uncollectable in the one place it is collected.
+    The payment still waits to be reconciled; it is matched on the amount and the time instead.
     """
     cleaned = (reference or "").strip() or None
-    if mode in REFERENCE_REQUIRED_MODES and not cleaned:
+    if required and mode in REFERENCE_REQUIRED_MODES and not cleaned:
         raise invalid("reference", "reference_required", REFERENCE_REQUIRED_MESSAGE)
     return cleaned
 

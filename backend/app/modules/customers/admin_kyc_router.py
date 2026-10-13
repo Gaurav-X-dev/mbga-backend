@@ -9,29 +9,50 @@ and holds the relationship — head office looking over the whole network is a d
 from deciding one application, and giving both to one screen invites the wrong one.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.customers.constants import ApplicationStatus, DocumentStatus, to_mobile_document_status
+from app.modules.authentication.constants import LoginChannel
+from app.modules.audit_logs.models import AuditLog
+from app.modules.customers.business_schemas import (
+    KycApplicationResponse,
+    RevealedDocumentNumber,
+)
+from app.modules.customers.constants import (
+    ApplicationStatus,
+    DocumentStatus,
+    to_mobile_document_status,
+)
 from app.modules.customers.mapping import CustomerViewLoader, application_response
-from app.modules.customers.business_schemas import KycApplicationResponse
-from app.modules.customers.models import CustomerProfile, KycApplication
+from app.modules.customers.dependencies import get_document_cipher
+from app.modules.customers.models import CustomerDocument, CustomerProfile, KycApplication
 from app.modules.merchants.models import Merchant
-from app.shared.authorization.dependencies import require_permission
+from app.shared.authorization.context import AuthContext
+from app.shared.authorization.dependencies import (
+    require_authenticated_user,
+    require_login_channel,
+    require_permission,
+)
 from app.shared.business.pagination import Page, page_params
 from app.shared.database.session import get_db_session
 from app.shared.exceptions.api_error import ApiError
+from app.shared.crypto.field_cipher import FieldCipher
 from app.shared.exceptions.openapi import error_responses
 
 router = APIRouter(prefix="/kyc/applications", tags=["admin-customer-kyc"])
 
 REVIEW = Depends(require_permission("customers.review"))
 DOCUMENT_REVIEW = Depends(require_permission("customer_documents.review"))
+#: On top of the review rights: the one route that returns an identifier in full.
+VERIFY = Depends(require_permission("customers.verify"))
+ContextDep = Annotated[AuthContext, Depends(require_authenticated_user)]
+ADMIN_ONLY = Depends(require_login_channel(LoginChannel.ADMIN))
 SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 
@@ -70,7 +91,7 @@ class AdminKycStats(BaseModel):
 @router.get(
     "",
     response_model=AdminKycListResponse,
-    dependencies=[REVIEW],
+    dependencies=[ADMIN_ONLY, REVIEW],
     responses=error_responses(401, 403, 422),
     summary="List customer KYC applications across merchants",
 )
@@ -80,8 +101,13 @@ async def list_applications(
     status_filter: Annotated[
         str, Query(alias="status", description="PENDING (default), APPROVED, REJECTED or ALL.")
     ] = ApplicationStatus.PENDING.value,
-    merchant_id: Annotated[str | None, Query(description="Only this merchant's applications.")] = None,
-    search: Annotated[str | None, Query(description="Matches customer name or mobile number.")] = None,
+    merchant_id: Annotated[
+        str | None,
+        Query(alias="merchantId", description="Only this merchant's applications."),
+    ] = None,
+    search: Annotated[
+        str | None, Query(description="Matches customer name or mobile number.")
+    ] = None,
 ) -> AdminKycListResponse:
     statement: Select = (
         select(KycApplication, CustomerProfile, Merchant)
@@ -96,7 +122,11 @@ async def list_applications(
                 "VALIDATION_ERROR",
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 fields=[
-                    {"field": "status", "code": "invalid", "message": "Use PENDING, APPROVED, REJECTED or ALL."}
+                    {
+                        "field": "status",
+                        "code": "invalid",
+                        "message": "Use PENDING, APPROVED, REJECTED or ALL.",
+                    }
                 ],
             )
         statement = statement.where(KycApplication.status == value)
@@ -115,7 +145,10 @@ async def list_applications(
 
     # Newest submission first, matching the merchant queue: the reviewer works the freshest.
     statement = statement.order_by(KycApplication.submitted_at.desc(), KycApplication.id)
-    total = int(await session.scalar(select(func.count()).select_from(statement.order_by(None).subquery())) or 0)
+    total = int(
+        await session.scalar(select(func.count()).select_from(statement.order_by(None).subquery()))
+        or 0
+    )
     rows = (await session.execute(statement.limit(page.limit).offset(page.offset))).all()
 
     documents = await CustomerViewLoader(session).documents_for(
@@ -133,7 +166,7 @@ async def list_applications(
                 customer_type=row.CustomerProfile.customer_type,
                 city=row.CustomerProfile.address_city,
                 merchant_id=row.KycApplication.merchant_id,
-                merchant_name=row.Merchant.business_name if row.Merchant else None,
+                merchant_name=row.Merchant.name if row.Merchant else None,
                 status=row.KycApplication.status,
                 submitted_at=row.KycApplication.submitted_at,
                 reviewed_at=row.KycApplication.reviewed_at,
@@ -156,13 +189,15 @@ async def list_applications(
 @router.get(
     "/stats",
     response_model=AdminKycStats,
-    dependencies=[REVIEW],
+    dependencies=[ADMIN_ONLY, REVIEW],
     responses=error_responses(401, 403),
     summary="KYC queue counts across merchants",
 )
 async def application_stats(session: SessionDep) -> AdminKycStats:
     rows = (
-        await session.execute(select(KycApplication.status, func.count()).group_by(KycApplication.status))
+        await session.execute(
+            select(KycApplication.status, func.count()).group_by(KycApplication.status)
+        )
     ).all()
     counts = {str(value).upper(): int(count or 0) for value, count in rows}
     return AdminKycStats(
@@ -176,7 +211,7 @@ async def application_stats(session: SessionDep) -> AdminKycStats:
 @router.get(
     "/{application_id}",
     response_model=KycApplicationResponse,
-    dependencies=[REVIEW, DOCUMENT_REVIEW],
+    dependencies=[ADMIN_ONLY, REVIEW, DOCUMENT_REVIEW],
     responses=error_responses(401, 403, 404),
     summary="KYC application detail",
 )
@@ -188,7 +223,9 @@ async def application_detail(application_id: str, session: SessionDep) -> KycApp
     allowed to see what customers uploaded.
     """
     loader = CustomerViewLoader(session)
-    application = await session.scalar(select(KycApplication).where(KycApplication.id == application_id))
+    application = await session.scalar(
+        select(KycApplication).where(KycApplication.id == application_id)
+    )
     if application is None:
         raise ApiError("APPLICATION_NOT_FOUND", status.HTTP_404_NOT_FOUND)
     profile = await session.get(CustomerProfile, application.customer_id)
@@ -201,4 +238,65 @@ async def application_detail(application_id: str, session: SessionDep) -> KycApp
         profile,
         sites=sites.get(profile.id, []),
         documents=documents.get(profile.id, []),
+    )
+
+
+@router.get(
+    "/{application_id}/documents/{document_id}/number",
+    response_model=RevealedDocumentNumber,
+    dependencies=[ADMIN_ONLY, REVIEW, DOCUMENT_REVIEW, VERIFY],
+    responses=error_responses(401, 403, 404, 409),
+    summary="Reveal one document's full number, for verification",
+)
+async def reveal_document_number(
+    application_id: str,
+    document_id: str,
+    context: ContextDep,
+    session: SessionDep,
+    cipher: Annotated[FieldCipher, Depends(get_document_cipher)],
+) -> RevealedDocumentNumber:
+    """The merchant reviewer's reveal, without the tenancy check.
+
+    Same rules otherwise: one document at a time, `customers.verify` on top of the review
+    permissions, and a line in the audit log naming whoever looked. An admin reads an Aadhaar
+    on the same terms as anybody else.
+    """
+    application = await session.scalar(
+        select(KycApplication).where(KycApplication.id == application_id)
+    )
+    if application is None:
+        raise ApiError("APPLICATION_NOT_FOUND", status.HTTP_404_NOT_FOUND)
+    document = await session.scalar(
+        select(CustomerDocument).where(
+            CustomerDocument.id == document_id,
+            CustomerDocument.customer_id == application.customer_id,
+        )
+    )
+    if document is None:
+        raise ApiError("DOCUMENT_NOT_FOUND", status.HTTP_404_NOT_FOUND)
+    if not document.number_encrypted:
+        raise ApiError(
+            "DOCUMENT_NUMBER_UNAVAILABLE",
+            status.HTTP_409_CONFLICT,
+            "This document has no stored number to show.",
+        )
+
+    number = cipher.decrypt(document.number_encrypted)
+    session.add(
+        AuditLog(
+            id=str(uuid4()),
+            event_type="customer_document.number_revealed",
+            actor_user_id=context.user_id,
+            entity_type="customer_document",
+            entity_id=document.id,
+            message=f"{document.document_type} number shown for application {application_id}",
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.commit()
+    return RevealedDocumentNumber(
+        document_id=document.id,
+        document_type=document.document_type,
+        number=number,
+        number_masked=document.number_masked or "",
     )

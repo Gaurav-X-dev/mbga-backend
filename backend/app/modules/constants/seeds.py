@@ -17,11 +17,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.constants.models import Constant
 from app.modules.customers.constants import CustomerType, KycDocumentType, PricingTier
+from app.modules.deliveries.constants import (
+    CANCELLATION_REASON_LABELS,
+    CancellationReason,
+)
+from app.modules.payments.constants import OFFERED_PAYMENT_MODES, PaymentMode
 
 # Group names the app filters on.
 CUSTOMER_TYPES = "customerTypes"
 DOCUMENT_TYPES = "documentTypes"
 PRICING_TIERS = "pricingTiers"
+PAYMENT_MODES = "paymentModes"
+CANCELLATION_REASONS = "deliveryCancellationReasons"
 STATES = "states"
 
 DELIVERY_STATES = ("Madhya Pradesh", "Maharashtra", "Rajasthan", "Gujarat", "Uttar Pradesh", "Chhattisgarh")
@@ -48,12 +55,20 @@ def seed_rows() -> list[SeedConstant]:
         PricingTier.STANDARD: "Standard",
         PricingTier.BULK: "Bulk",
         PricingTier.KEY_ACCOUNT: "Key Account",
+        PaymentMode.CASH: "Cash",
+        PaymentMode.UPI: "UPI",
+        PaymentMode.NEFT: "Bank Transfer (NEFT)",
+        **CANCELLATION_REASON_LABELS,
     }
     rows: list[SeedConstant] = []
     for group, members in (
         (CUSTOMER_TYPES, list(CustomerType)),
         (DOCUMENT_TYPES, list(KycDocumentType)),
         (PRICING_TIERS, list(PricingTier)),
+        # Only the modes a payment may actually be recorded as. A dropdown offering one
+        # the write endpoint refuses is worse than no dropdown at all.
+        (PAYMENT_MODES, [mode for mode in PaymentMode if mode in OFFERED_PAYMENT_MODES]),
+        (CANCELLATION_REASONS, list(CancellationReason)),
     ):
         rows += [SeedConstant(group, member.value, labels[member], order) for order, member in enumerate(members)]
     rows += [SeedConstant(STATES, name, name, order) for order, name in enumerate(DELIVERY_STATES)]

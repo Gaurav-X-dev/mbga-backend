@@ -96,6 +96,14 @@ class PaymentService:
     async def get_invoice(self, invoice_id: str) -> InvoiceResponse:
         return _invoice_view(await self._owned_invoice(invoice_id), now=datetime.now(UTC))
 
+    async def get_invoice_row(self, invoice_id: str) -> Invoice:
+        """Scoped invoice model for the universal document renderer.
+
+        Keeping this lookup in PaymentService is important: document HTML is still an invoice
+        read, so Customer/Merchant/Admin must get exactly the same tenant boundary as the list.
+        """
+        return await self._owned_invoice(invoice_id)
+
     async def list_payments(self, filters: PaymentFilters) -> list[PaymentResponse]:
         """Payments, newest collected first (spec §12.3).
 
@@ -162,25 +170,38 @@ class PaymentService:
 
     # --- Recording a payment ----------------------------------------------------------------
 
-    async def record(self, payload: RecordPaymentRequest) -> PaymentResponse:
+    async def record(
+        self, payload: RecordPaymentRequest, *, reference_required: bool = True
+    ) -> PaymentResponse:
         """Collect money against an open invoice (spec §12.5).
 
         Everything that can refuse runs first, then everything is written, then one commit. The
         invoice is locked for the duration: two people recording against the same invoice at the
         same time would otherwise both read the old balance and both be allowed, and the
         customer would end up having overpaid with no record of the credit.
+
+        `reference_required` is who is collecting, not what is being collected. Staff record a
+        payment after the fact, from a receipt or a statement, so they have the UTR and are asked
+        for it. A driver takes it at a gate, where the UTR is on the *customer's* phone - asking
+        him for it makes UPI uncollectable in the one place UPI is collected. The payment is
+        still `PENDING` either way, and the office settles it against the statement; without a
+        reference it matches on the amount and the time, which is what the slip's `qr_amount`
+        and `qr_generated_at` are recorded for.
         """
         invoice = validation.check_open(await self._locked_invoice(payload.invoice_id))
         now = datetime.now(UTC)
         amount = validation.check_amount(payload.amount, invoice)
-        reference = validation.check_reference(payload.mode, payload.reference)
+        mode = validation.check_mode(payload.mode)
+        reference = validation.check_reference(
+            mode, payload.reference, required=reference_required
+        )
         paid_at = validation.check_paid_at(payload.paid_at, now=now)
 
         # Cash is settled the moment it is recorded - the person typing it in is holding the
         # notes. Anything else waits for somebody to find it in a bank statement.
         reconciliation = (
             ReconciliationStatus.RECONCILED
-            if payload.mode in SELF_EVIDENT_MODES
+            if mode in SELF_EVIDENT_MODES
             else ReconciliationStatus.PENDING
         )
 
@@ -201,7 +222,7 @@ class PaymentService:
             customer_name=invoice.customer_name,
             invoice_amount=invoice_total,
             amount_collected=amount,
-            mode=payload.mode.value,
+            mode=mode.value,
             paid_at=paid_at,
             reference=reference,
             reconciliation_status=reconciliation.value,
@@ -218,7 +239,7 @@ class PaymentService:
                 invoice.customer_id,
                 payment.id,
                 amount,
-                payload.mode.value.title(),
+                mode.value.title(),
                 balance=running_balance,
             )
         )

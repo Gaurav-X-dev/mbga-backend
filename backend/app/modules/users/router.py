@@ -8,12 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit_logs.models import AuditLog
 from app.modules.authentication.constants import LoginChannel
+from app.modules.authentication.mobile_number import normalize_mobile_number
 from app.modules.authentication.models import LoginSession
+from app.modules.roles.models import Role, RoleLoginChannel
 from app.modules.roles.permissions import (
     USER_ACTIVATE,
+    USER_ASSIGN_ROLES,
     USER_BLOCK,
     USER_CREATE,
-    USER_ASSIGN_ROLES,
     USER_REMOVE_ROLES,
     USER_REVOKE_SESSIONS,
     USER_UPDATE,
@@ -21,7 +23,7 @@ from app.modules.roles.permissions import (
     USER_VIEW,
     USER_VIEW_PERMISSIONS,
 )
-from app.modules.roles.models import Role, RoleLoginChannel
+from app.modules.merchants.models import Merchant, MerchantUser
 from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
 from app.modules.users.role_repository import UserRoleRepository
@@ -31,7 +33,13 @@ from app.modules.users.role_schemas import (
     UserRoleResponse,
     UserRoleUpdate,
 )
-from app.modules.users.schemas import EffectivePermissionsResponse, UserCreate, UserListResponse, UserSummary, UserUpdate
+from app.modules.users.schemas import (
+    EffectivePermissionsResponse,
+    UserCreate,
+    UserListResponse,
+    UserSummary,
+    UserUpdate,
+)
 from app.shared.authorization.dependencies import require_permission
 from app.shared.database.session import get_db_session
 
@@ -97,15 +105,16 @@ async def list_users(
 async def create_user(payload: UserCreate, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
     if not payload.email and not payload.username and not payload.mobile_number:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="email, username or mobile number required")
-    if payload.email or payload.username:
-        result = await session.execute(
-            select(User).where(
-                or_(
-                    User.email == (payload.email.lower() if payload.email else None),
-                    User.username == (payload.username.lower() if payload.username else None),
-                )
-            )
-        )
+    mobile = normalize_mobile_number(payload.mobile_number) if payload.mobile_number else None
+    if payload.email or payload.username or mobile:
+        identity_filters = []
+        if payload.email:
+            identity_filters.append(User.email == payload.email.lower())
+        if payload.username:
+            identity_filters.append(User.username == payload.username.lower())
+        if mobile:
+            identity_filters.append(User.mobile_number == mobile)
+        result = await session.execute(select(User).where(or_(*identity_filters)))
         if result.scalar_one_or_none():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
     now = datetime.now(UTC)
@@ -114,8 +123,8 @@ async def create_user(payload: UserCreate, session: Annotated[AsyncSession, Depe
         email=payload.email.lower() if payload.email else None,
         username=payload.username.lower() if payload.username else None,
         full_name=payload.full_name,
-        mobile_number=payload.mobile_number,
-        country_code=payload.country_code if payload.mobile_number else None,
+        mobile_number=mobile,
+        country_code=payload.country_code if mobile else None,
         password_hash=None,
         role=payload.role,
         status=payload.status.upper(),
@@ -123,9 +132,43 @@ async def create_user(payload: UserCreate, session: Annotated[AsyncSession, Depe
         updated_at=now,
     )
     session.add(user)
+    await _link_to_merchant(session, user, payload, now)
     await _audit(session, "user.created", None, user.id, "User created")
     await session.commit()
     return _summary(user)
+
+
+async def _link_to_merchant(session: AsyncSession, user: User, payload: UserCreate, now) -> None:
+    """Make this user part of an agency, when one was named.
+
+    A role is not membership. The team list, the task picker and every merchant-scoped screen
+    read `merchant_users`; a salesperson created here with the role alone had it, appeared on
+    none of them, and nothing said so - the account simply did not work and nobody could see
+    why. Naming the merchant now does both halves in one call.
+
+    Left out for a platform user: a super admin belongs to no agency.
+    """
+    if not payload.merchant_id:
+        return
+    merchant = await session.get(Merchant, payload.merchant_id)
+    if merchant is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found"
+        )
+    session.add(
+        MerchantUser(
+            id=str(uuid4()),
+            merchant_id=merchant.id,
+            user_id=user.id,
+            # What the office calls them on every staff screen. Falls back to the role, so a
+            # caller who names a merchant and nothing else still gets a readable title.
+            staff_type=(payload.staff_type or payload.role or "").strip().upper() or None,
+            status="ACTIVE",
+            notes=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
 
 
 @router.get("/users/{user_id}", response_model=UserSummary, dependencies=[Depends(require_permission(USER_VIEW))])
@@ -142,6 +185,14 @@ async def update_user(user_id: str, payload: UserUpdate, session: Annotated[Asyn
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     updates = payload.model_dump(exclude_unset=True)
+    if updates.get("mobile_number"):
+        mobile = normalize_mobile_number(updates["mobile_number"])
+        owner = await session.scalar(
+            select(User).where(User.mobile_number == mobile, User.id != user.id)
+        )
+        if owner is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Mobile number already exists")
+        updates["mobile_number"] = mobile
     for key, value in updates.items():
         if key in {"email", "username"} and isinstance(value, str):
             value = value.lower()

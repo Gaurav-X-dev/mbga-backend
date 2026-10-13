@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.app import Settings, get_settings
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.dependencies import ActorDep
-from app.modules.deliveries.schemas import DeliverySlipResponse
+from app.modules.deliveries.schemas import DeliverySlipResponse, ReassignDeliveryRequest
 from app.modules.deliveries.service import DeliveryService, SlipFilters
+from app.modules.vehicles.coverage import available_for_delivery
+from app.modules.vehicles.schemas import AvailableVehicleResponse
 from app.shared.authorization.dependencies import require_login_channel, require_permission
 from app.shared.database.session import get_db_session
 from app.shared.exceptions.openapi import error_responses
@@ -32,6 +34,8 @@ SlipIdPath = Annotated[str, Path(alias="deliveryId", max_length=36)]
 
 _merchant_only = Depends(require_login_channel(LoginChannel.MERCHANT))
 _read_guards = [_merchant_only, Depends(require_permission("delivery.view"))]
+#: Moving a round is a dispatch decision, so it takes the dispatch permission.
+_write_guards = [_merchant_only, Depends(require_permission("delivery.confirm"))]
 
 
 def build_service(
@@ -90,3 +94,36 @@ async def list_deliveries(
 async def get_delivery(delivery_id: SlipIdPath, service: ServiceDep) -> DeliverySlipResponse:
     """One slip. Another merchant's slip is a 404, never a 403."""
     return await service.get(delivery_id)
+
+
+@router.get(
+    "/{deliveryId}/available-vehicles",
+    response_model=list[AvailableVehicleResponse],
+    dependencies=_read_guards,
+    summary="Vehicles mapped to this delivery pincode",
+)
+async def get_available_vehicles(
+    delivery_id: SlipIdPath,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    actor: ActorDep,
+) -> list[AvailableVehicleResponse]:
+    return await available_for_delivery(session, actor.require_merchant_id(), delivery_id)
+
+
+@router.patch(
+    "/{deliveryId}/assignment",
+    response_model=DeliverySlipResponse,
+    dependencies=_write_guards,
+    responses=error_responses(401, 403, 404, 409, 422),
+    summary="Move a round to another van, crew or day",
+)
+async def reassign_delivery(
+    delivery_id: SlipIdPath, payload: ReassignDeliveryRequest, service: ServiceDep
+) -> DeliverySlipResponse:
+    """Change a slip without losing the order.
+
+    Only what is sent changes. A slip that has already left the godown is not moved - those are
+    failed and raised again, because the cylinders are on that van and the code is in the
+    customer's hand.
+    """
+    return await service.reassign(delivery_id, payload)

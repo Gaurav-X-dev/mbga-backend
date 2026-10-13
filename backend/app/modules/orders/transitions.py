@@ -55,10 +55,10 @@ def advance(
     if previous == OrderStatus.CANCELLED.value:
         # Named separately from the generic refusal because this is the one the apps act on: a
         # delivery screen that has gone stale needs to know to reload the order, not to retry.
-        raise _cancelled(target)
+        raise _cancelled(order, target)
     allowed = STATUS_TRANSITIONS.get(previous, frozenset())
     if target.value not in allowed:
-        raise _illegal(previous, target)
+        raise _illegal(order, target)
 
     moment = now or datetime.now(UTC)
     order.status = target.value
@@ -79,11 +79,45 @@ def advance(
     return True
 
 
+def note(
+    session: AsyncSession,
+    order: Order,
+    *,
+    note: str,
+    by_name: str | None = None,
+    by_user_id: str | None = None,
+    by_role: str | None = None,
+    source: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Record something that happened to an order **without** moving it.
+
+    A round being handed to another driver is not a status change - the order is still
+    confirmed, still waiting - but it is exactly the kind of thing somebody asks about a week
+    later. The row carries the same status in and out, so the trail reads as a note on the
+    timeline rather than a step in it.
+    """
+    moment = now or datetime.now(UTC)
+    session.add(
+        OrderStatusHistory(
+            order_id=order.id,
+            previous_status=order.status,
+            status=order.status,
+            changed_by_name=by_name,
+            changed_by_user_id=by_user_id,
+            changed_by_role=by_role,
+            source=source,
+            note=note.strip() or None,
+            changed_at=moment,
+        )
+    )
+
+
 def can_advance(current: str, target: OrderStatus) -> bool:
     return target.value in STATUS_TRANSITIONS.get(current, frozenset())
 
 
-def _cancelled(target: OrderStatus) -> ApiError:
+def _cancelled(order: Order, target: OrderStatus) -> ApiError:
     """The refusal a stale delivery screen gets, with a code it can branch on.
 
     A driver whose phone still shows yesterday's queue presses Start on an order the customer
@@ -94,17 +128,44 @@ def _cancelled(target: OrderStatus) -> ApiError:
     return ApiError(
         "ORDER_ALREADY_CANCELLED",
         http_status.HTTP_409_CONFLICT,
-        f"Order has already been cancelled and cannot be moved to "
+        f"Order {order.order_number} has already been cancelled, so it cannot be "
         f"{STATUS_BY_CODE[target.value].label.lower()}.",
     )
 
 
-def _illegal(current: str, target: OrderStatus) -> ApiError:
-    """Names both states in the message: the app shows it, and "invalid transition" helps nobody."""
-    current_label = STATUS_BY_CODE[current].label.lower() if current in STATUS_BY_CODE else current
+def _illegal(order: Order, target: OrderStatus) -> ApiError:
+    """Names the order and both states: the app shows this text to an operator, unchanged.
+
+    The order number is the part that matters on the bulk screen. Sixteen orders go in, one of
+    them is already on a van, and the whole round is refused - "an order that is out for
+    delivery cannot be moved to confirmed" leaves the operator to find which one by hand. With
+    the number in it, the sentence says what to deselect.
+    """
+    current_label = (
+        STATUS_BY_CODE[order.status].label.lower()
+        if order.status in STATUS_BY_CODE
+        else order.status
+    )
     target_label = STATUS_BY_CODE[target.value].label.lower()
     return ApiError(
         "INVALID_ORDER_STATUS",
         http_status.HTTP_409_CONFLICT,
-        f"An order that is {current_label} cannot be moved to {target_label}.",
+        f"Order {order.order_number} is already {current_label}, so it cannot be "
+        f"{target_label}. Remove it from the selection and try again.",
     )
+
+
+def check_can_move(order: Order, target: OrderStatus) -> None:
+    """Refuse now if `advance()` would refuse later, without writing anything.
+
+    For a caller that has to check the order early but moves it much later - dispatch reads the
+    order first so that a stale screen is told the order was **cancelled**, rather than that the
+    slip cancelling it left behind is settled. The reason is more use to the app than the
+    consequence, and the app branches on the code.
+    """
+    if order.status == target.value:
+        return
+    if order.status == OrderStatus.CANCELLED.value:
+        raise _cancelled(order, target)
+    if not can_advance(order.status, target):
+        raise _illegal(order, target)

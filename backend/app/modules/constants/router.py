@@ -58,7 +58,7 @@ async def constants(
     client: Annotated[ClientInfo, Depends(get_client_info)],
     group: Annotated[
         str | None,
-        Query(description="Return one group only, e.g. merchants, customerTypes, documentTypes, pricingTiers, states."),
+        Query(description="Return one group only, e.g. merchants, customerTypes, documentTypes, pricingTiers, paymentModes, states."),
     ] = None,
 ) -> list[ConstantOption]:
     """Every constant, or one group of them.
@@ -85,7 +85,10 @@ async def constants(
         merchants = await session.scalars(
             select(Merchant)
             .where(Merchant.status == "ACTIVE", Merchant.approval_status == "APPROVED")
-            .order_by(Merchant.name)
+            # `code` breaks ties. Two merchants may share a name, and an ORDER BY that does not
+            # distinguish them lets the database return equal rows in whatever order it likes -
+            # so two identical requests can disagree about the list they just served.
+            .order_by(Merchant.name, Merchant.code)
         )
         # `id` carries the code as well: a merchant has no row in `constants`, and the
         # internal UUID has no business reaching a public caller.
