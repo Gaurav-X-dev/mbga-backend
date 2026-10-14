@@ -317,6 +317,8 @@ class PaymentEntry(BaseModel):
     #: appears on the customer's phone, not the driver's, so demanding it would make UPI
     #: uncollectable at the gate. Sending it makes the payment easier to reconcile later.
     reference: str | None = Field(default=None, max_length=80)
+    proof_url: str | None = Field(default=None, alias="proofUrl", max_length=500)
+    proof_captured_at: UtcTime | None = Field(default=None, alias="proofCapturedAt")
     #: How the collection was split, on the way **back**. Absent on the request.
     #:
     #: A driver may be handed the arrears along with today's bill, and the money is then applied
@@ -346,6 +348,12 @@ class ConfirmDeliveryResponseData(BaseModel):
     customer_otp_required: bool = Field(alias="customerOtpRequired")
     otp_channel: str = Field(alias="otpChannel")
     message: str
+    model_config = _CAMEL
+
+
+class PaymentProofUploadResponseData(BaseModel):
+    proof_url: str = Field(alias="proofUrl")
+    proof_captured_at: UtcTime = Field(alias="capturedAt")
     model_config = _CAMEL
 
 

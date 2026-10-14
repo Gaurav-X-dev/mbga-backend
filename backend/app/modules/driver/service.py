@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from uuid import uuid4
 
-from fastapi import status as http_status
+from fastapi import UploadFile, status as http_status
 from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +69,7 @@ from app.modules.driver.schemas import (
     HistoryPaymentSummary,
     OutForDeliveryResponseData,
     PaymentEntry,
+    PaymentProofUploadResponseData,
     PaymentSummaryResponseData,
     ShiftStats,
     UpdateItemsRequest,
@@ -102,6 +104,12 @@ from app.shared.business.actor import BusinessActor
 from app.shared.date_time.business_calendar import business_day_window, business_today
 from app.shared.exceptions.api_error import ApiError
 from app.shared.geo.distance import haversine_metres
+from app.shared.storage.file_types import JPEG, PNG, SNIFF_BYTES, detect_content_type
+from app.shared.storage.provider import StorageProvider
+
+
+PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
+PAYMENT_PROOF_ERROR = "Payment proof photo and QR generation are required for UPI payments."
 
 
 def _not_found() -> ApiError:
@@ -176,10 +184,17 @@ def _as_instant(moment: datetime | None) -> str | None:
 
 
 class DriverService:
-    def __init__(self, session: AsyncSession, actor: BusinessActor, settings: Settings) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        actor: BusinessActor,
+        settings: Settings,
+        storage: StorageProvider | None = None,
+    ) -> None:
         self.session = session
         self.actor = actor
         self.settings = settings
+        self.storage = storage
         self.driver_user_id = actor.user_id
 
     # --- Reads ------------------------------------------------------------------------------
@@ -618,6 +633,64 @@ class DriverService:
             message="OTP has been sent to customer's app notification",
         )
 
+    async def upload_payment_proof(
+        self, slip_id: str, upload: UploadFile, captured_at: datetime
+    ) -> PaymentProofUploadResponseData:
+        """Validate and privately store a payment image belonging to this delivery."""
+        slip = await self._mine(slip_id)
+        self._require_dispatched(slip)
+        if self.storage is None:
+            raise ApiError("SERVICE_UNAVAILABLE", 503, "Payment proof storage is not configured.")
+        if captured_at.tzinfo is None:
+            raise ApiError("CAPTURED_AT_INVALID", 422, "capturedAt must include a timezone.")
+
+        head = await upload.read(SNIFF_BYTES)
+        detected = detect_content_type(head, upload.filename)
+        if detected.content_type not in {JPEG, PNG}:
+            raise ApiError("UNSUPPORTED_FILE_TYPE", 415, "Payment proof must be a JPEG or PNG image.")
+        declared = (upload.content_type or "").split(";")[0].strip().lower()
+        if declared not in {JPEG, PNG} or declared != detected.content_type:
+            raise ApiError("FILE_TYPE_MISMATCH", 415, "The file contents do not match its content type.")
+
+        now = datetime.now(UTC)
+        extension = ".jpg" if detected.content_type == JPEG else ".png"
+        key = f"delivery-payments/{now:%Y/%m}/{uuid4().hex}{extension}"
+        previous_key = slip.payment_proof_storage_key
+        stored = await self.storage.save(key, self._payment_proof_chunks(head, upload))
+        slip.payment_proof_storage_key = stored.storage_key
+        slip.payment_proof_content_type = detected.content_type
+        slip.payment_proof_captured_at = captured_at.astimezone(UTC)
+        slip.payment_proof_uploaded_at = now
+        slip.payment_proof_url = f"/api/v1/delivery/deliveries/{slip.id}/payment-proof"
+        slip.updated_at = now
+        await self.session.commit()
+        if previous_key and previous_key != stored.storage_key:
+            await self.storage.delete(previous_key)
+        return PaymentProofUploadResponseData(
+            proof_url=slip.payment_proof_url,
+            proof_captured_at=slip.payment_proof_captured_at,
+        )
+
+    async def _payment_proof_chunks(self, head: bytes, upload: UploadFile):
+        total = len(head)
+        if head:
+            yield head
+        while chunk := await upload.read(64 * 1024):
+            total += len(chunk)
+            if total > PAYMENT_PROOF_MAX_BYTES:
+                raise ApiError("FILE_TOO_LARGE", 413, "Payment proof must not exceed 5 MB.")
+            yield chunk
+
+    async def payment_proof_file(self, slip_id: str):
+        slip = await self._mine(slip_id)
+        if self.storage is None or not slip.payment_proof_storage_key:
+            raise ApiError("PAYMENT_PROOF_NOT_FOUND", 404, "Payment proof was not found.")
+        try:
+            stream = self.storage.open(slip.payment_proof_storage_key)
+        except FileNotFoundError as exc:
+            raise ApiError("PAYMENT_PROOF_NOT_FOUND", 404, "Payment proof was not found.") from exc
+        return stream, slip.payment_proof_content_type or JPEG
+
     async def _record_empties(self, slip: DeliverySlip, collected: list[Any]) -> None:
         """Write the per-size empties beside the per-size handover.
 
@@ -705,6 +778,12 @@ class DriverService:
         # collected. The payment lands `PENDING` and the office settles it against the bank
         # statement, matching on the amount and the time - which is what `qr_amount` and
         # `qr_generated_at` are recorded for.
+
+        if mode == PaymentMode.UPI:
+            proof_matches = not payment.proof_url or payment.proof_url == slip.payment_proof_url
+            qr_matches = slip.qr_generated_at is not None and int(slip.qr_amount or 0) == amount
+            if not (qr_matches and slip.payment_proof_storage_key and proof_matches):
+                raise ApiError("UPI_EVIDENCE_REQUIRED", 400, PAYMENT_PROOF_ERROR)
 
         payable = await self._collectable(slip)
         if amount > payable:
@@ -983,6 +1062,8 @@ class DriverService:
                 ),
                 # The gate, not the office. See `PaymentService.record`.
                 reference_required=False,
+                proof_url=slip.payment_proof_url,
+                proof_captured_at=slip.payment_proof_captured_at,
             )
 
     async def _allocate(
@@ -1079,6 +1160,8 @@ class DriverService:
             "totalAmount": payable,
             "amountPaid": paid,
             "pendingBalance": pending,
+            "proofUrl": slip.payment_proof_url,
+            "proofCapturedAt": _as_instant(slip.payment_proof_captured_at),
         }
 
     async def list_history(

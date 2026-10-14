@@ -20,6 +20,13 @@ class OtpChallenge(Base):
     purpose: Mapped[str] = mapped_column(String(40), index=True)
     login_channel: Mapped[str] = mapped_column(String(30), index=True)
     otp_hash: Mapped[str] = mapped_column(String(255))
+    #: The code in the clear, for the admin OTP log screen. Written only while
+    #: `OTP_LOG_PLAINTEXT_ENABLED` is on; null on every row created without it.
+    #:
+    #: This is the one field that makes a copy of this table enough to sign in as anybody, so it
+    #: sits beside `otp_hash` rather than replacing it. Verification still goes through the hash,
+    #: which means turning the switch off leaves the system working exactly as it did before.
+    otp_plain: Mapped[str | None] = mapped_column(String(10), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=5)
     device_id: Mapped[str | None] = mapped_column(String(100), nullable=True)

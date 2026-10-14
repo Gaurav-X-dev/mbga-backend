@@ -24,12 +24,15 @@ from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.dependencies import ActorDep, CustomerActorDep
 from app.modules.orders.models import Order
 from app.modules.orders.schemas import (
+    BulkAssignmentPreviewRequest,
+    BulkAssignmentPreviewResponse,
     BulkConfirmRequest,
     BulkConfirmResponse,
     CancelOrderRequest,
     ConfirmOrderRequest,
     CreateOrderRequest,
     CutoffResponse,
+    GroupedBulkConfirmRequest,
     OrderCylinderTypeResponse,
     OrderQuoteRequest,
     OrderQuoteResponse,
@@ -358,6 +361,31 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
     if not is_customer:
         # Staff only, and not built through `write_guards`: confirming is an acceptance of the
         # order by the merchant, which is not something a customer can do to their own order.
+        # These static two-segment routes must be registered before `/{orderId}/confirm`.
+        @router.post(
+            "/bulk-assignment/preview",
+            response_model=BulkAssignmentPreviewResponse,
+            dependencies=[*staff_guards, Depends(require_permission("orders.update"))],
+            responses=error_responses(401, 403, 404, 409, 422),
+            summary="Group selected orders by pincode and list eligible vehicles",
+        )
+        async def bulk_assignment_preview(
+            service: ServiceDep, payload: BulkAssignmentPreviewRequest
+        ) -> BulkAssignmentPreviewResponse:
+            return await service.bulk_assignment_preview(payload)
+
+        @router.post(
+            "/bulk-assignment/confirm",
+            response_model=BulkConfirmResponse,
+            dependencies=[*staff_guards, Depends(require_permission("orders.update"))],
+            responses=error_responses(401, 403, 404, 409, 422),
+            summary="Confirm pincode-wise bulk assignment groups",
+        )
+        async def confirm_bulk_assignment_groups(
+            service: ServiceDep, payload: GroupedBulkConfirmRequest
+        ) -> BulkConfirmResponse:
+            return await service.confirm_grouped(payload)
+
         @router.post(
             "/{orderId}/confirm",
             response_model=OrderResponse,

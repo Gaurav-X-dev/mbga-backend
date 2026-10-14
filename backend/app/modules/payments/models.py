@@ -147,6 +147,12 @@ class Payment(Base):
     #: UTR, UPI transaction id, cheque number. Required for anything but cash, because without
     #: it the payment can never be matched against a bank statement.
     reference: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    #: Delivery-app evidence for a UPI collection. Copied from the delivery slip so the
+    #: merchant payment/audit history remains useful after the delivery is archived.
+    proof_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    proof_captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     reconciliation_status: Mapped[str] = mapped_column(String(20), index=True)
     #: Why the bank match failed. Free text: it is read by a person deciding what to do next.

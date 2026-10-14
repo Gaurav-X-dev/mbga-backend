@@ -36,9 +36,9 @@ from app.modules.deliveries.constants import (
     DeliveryStatus,
 )
 from app.modules.deliveries.models import DeliverySlip
-from app.modules.notifications.events import deliveries as delivery_events
 from app.modules.deliveries.schemas import CreateDeliverySlipRequest
 from app.modules.deliveries.service import DeliveryService
+from app.modules.notifications.events import deliveries as delivery_events
 from app.modules.notifications.events.orders import order_confirmed
 from app.modules.orders import reorder as reorder_rules
 from app.modules.orders import transitions, validation
@@ -69,12 +69,18 @@ from app.modules.orders.numbering import OrderNumberAllocator
 from app.modules.orders.quoting import Quote, QuoteEngine
 from app.modules.orders.reorder import ReorderPlan, ReorderPlanner
 from app.modules.orders.schemas import (
+    BulkAssignmentGroupResponse,
+    BulkAssignmentOrderResponse,
+    BulkAssignmentPreviewRequest,
+    BulkAssignmentPreviewResponse,
+    BulkAssignmentVehicleResponse,
     BulkConfirmRequest,
     BulkConfirmResponse,
     ConfirmOrderRequest,
     CreateOrderRequest,
     CutoffResponse,
     DeliveryAssignment,
+    GroupedBulkConfirmRequest,
     OrderCylinderTypeResponse,
     OrderItemResponse,
     OrderQuoteRequest,
@@ -89,6 +95,7 @@ from app.modules.orders.schemas import (
 )
 from app.modules.platform_settings import service as platform_settings
 from app.modules.pricing.constants import CylinderType, cylinders_for
+from app.modules.vehicles.coverage import available_for_pincode
 from app.shared.business.actor import BusinessActor
 from app.shared.crypto.field_cipher import FieldCipher
 from app.shared.exceptions.api_error import ApiError
@@ -672,6 +679,140 @@ class OrderService:
         await self.session.commit()
         return BulkConfirmResponse(
             confirmed=len(orders), orders=[await self._view(order) for order in orders]
+        )
+
+    async def bulk_assignment_preview(
+        self, payload: BulkAssignmentPreviewRequest
+    ) -> BulkAssignmentPreviewResponse:
+        """Group the selected orders by their immutable delivery pincode."""
+        order_ids = list(dict.fromkeys(payload.order_ids))
+        orders = [await self._owned(order_id) for order_id in order_ids]
+        grouped: dict[str | None, list[Order]] = {}
+        for order in orders:
+            grouped.setdefault(order.address_pincode, []).append(order)
+
+        groups: list[BulkAssignmentGroupResponse] = []
+        for pincode, rows in sorted(grouped.items(), key=lambda item: item[0] or ""):
+            vehicles = (
+                await available_for_pincode(self.session, self.merchant_id, pincode)
+                if pincode
+                else []
+            )
+            if not pincode:
+                blocked_reason = "Delivery pincode is missing for one or more selected orders."
+            elif not vehicles:
+                blocked_reason = f"No active vehicle is mapped to pincode {pincode}."
+            else:
+                blocked_reason = None
+            first = rows[0]
+            address_label = ", ".join(
+                part for part in (first.address_city, first.address_state, pincode) if part
+            ) or "Pincode missing"
+            groups.append(
+                BulkAssignmentGroupResponse(
+                    pincode=pincode,
+                    addressLabel=address_label,
+                    orderCount=len(rows),
+                    totalCylinders=sum(row.total_cylinders for row in rows),
+                    totalAmount=sum(row.total_amount for row in rows),
+                    canAssign=blocked_reason is None,
+                    blockedReason=blocked_reason,
+                    orders=[
+                        BulkAssignmentOrderResponse(
+                            id=row.id,
+                            orderNumber=row.order_number,
+                            customerId=row.customer_id,
+                            customerName=row.customer_name,
+                            deliverySiteName=row.delivery_site_name,
+                            addressLine1=row.address_line1,
+                            city=row.address_city,
+                            state=row.address_state,
+                            pincode=row.address_pincode,
+                            itemsSummary=row.items_summary,
+                            totalCylinders=row.total_cylinders,
+                            totalAmount=row.total_amount,
+                            status=row.status,
+                        )
+                        for row in rows
+                    ],
+                    availableVehicles=[
+                        BulkAssignmentVehicleResponse(
+                            id=vehicle.id,
+                            number=vehicle.number,
+                            label=vehicle.label,
+                            notes=vehicle.notes,
+                            priority=vehicle.priority,
+                            matchedPincode=vehicle.matched_pincode,
+                        )
+                        for vehicle in vehicles
+                    ],
+                )
+            )
+        return BulkAssignmentPreviewResponse(
+            selectedOrderCount=len(orders), groupCount=len(groups), groups=groups
+        )
+
+    async def confirm_grouped(self, payload: GroupedBulkConfirmRequest) -> BulkConfirmResponse:
+        """Atomically confirm several pincode groups, each with its own vehicle and crew."""
+        flattened = [order_id for group in payload.groups for order_id in group.order_ids]
+        unique_ids = list(dict.fromkeys(flattened))
+        if len(flattened) != len(unique_ids):
+            raise ApiError(
+                "DUPLICATE_ORDER_IN_BULK_ASSIGNMENT",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "An order can appear in only one pincode group.",
+            )
+        if len(unique_ids) > 50:
+            raise ApiError(
+                "BULK_ASSIGNMENT_LIMIT_EXCEEDED",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A maximum of 50 orders can be assigned at once.",
+            )
+
+        confirmed: list[Order] = []
+        for group in payload.groups:
+            rows = [await self._owned(order_id, lock=True) for order_id in group.order_ids]
+            pincodes = {row.address_pincode for row in rows}
+            if None in pincodes or "" in pincodes:
+                raise ApiError(
+                    "ORDER_PINCODE_MISSING",
+                    status.HTTP_409_CONFLICT,
+                    "Every selected order needs a delivery pincode before assignment.",
+                )
+            if len(pincodes) != 1:
+                raise ApiError(
+                    "MIXED_PINCODE_ASSIGNMENT",
+                    status.HTTP_409_CONFLICT,
+                    "Each bulk assignment group must contain orders from one pincode only.",
+                )
+            for order in rows:
+                moved = transitions.advance(
+                    self.session,
+                    order,
+                    OrderStatus.CONFIRMED,
+                    by_name=self.actor.display_name,
+                    by_user_id=self.actor.user_id,
+                    by_role=self.actor.role_label,
+                    source=self.actor.source,
+                    note=_confirmation_note(order.scheduled_delivery_date),
+                )
+                if moved:
+                    NotificationOutboxWriter(self.session).queue(
+                        order_confirmed(
+                            order.customer_id,
+                            order.id,
+                            order.order_number,
+                            order.scheduled_delivery_date.isoformat(),
+                        )
+                    )
+                # DeliveryService revalidates the vehicle-to-pincode mapping here, so a stale
+                # or manually altered preview cannot bypass coverage rules.
+                await self._assign(order, group.delivery)
+                confirmed.append(order)
+        await self.session.commit()
+        return BulkConfirmResponse(
+            confirmed=len(confirmed),
+            orders=[await self._view(order) for order in confirmed],
         )
 
     async def _assign(self, order: Order, assignment: DeliveryAssignment) -> None:

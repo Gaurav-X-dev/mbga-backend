@@ -38,6 +38,9 @@ class OTPService:
             purpose=purpose,
             login_channel=login_channel.value,
             otp_hash=hash_secret(otp),
+            # Null unless the deployment has asked for readable codes. The hash is written
+            # either way, and is still the only thing verification reads.
+            otp_plain=otp if self.settings.otp_log_plaintext_enabled else None,
             attempts=0,
             max_attempts=self.settings.otp_max_attempts,
             device_id=payload.device.device_id if payload.device else None,

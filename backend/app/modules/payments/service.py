@@ -25,6 +25,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.customers.models import CustomerProfile
+from app.modules.deliveries.models import DeliverySlip
 from app.modules.notifications.events import payments as payment_events
 from app.modules.payments import validation
 from app.modules.payments.constants import (
@@ -46,6 +47,7 @@ from app.modules.payments.schemas import (
 from app.shared.business.actor import BusinessActor
 from app.shared.exceptions.api_error import ApiError
 from app.shared.notifications.outbox import NotificationOutboxWriter
+from app.shared.storage.provider import StorageProvider
 
 
 def _invoice_not_found() -> ApiError:
@@ -76,9 +78,15 @@ class PaymentFilters:
 
 
 class PaymentService:
-    def __init__(self, session: AsyncSession, actor: BusinessActor) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        actor: BusinessActor,
+        storage: StorageProvider | None = None,
+    ) -> None:
         self.session = session
         self.actor = actor
+        self.storage = storage
         self.notifications = NotificationOutboxWriter(session)
 
     # --- Reads ------------------------------------------------------------------------------
@@ -116,10 +124,59 @@ class PaymentService:
             statement = statement.where(Payment.customer_id == filters.customer_id)
         statement = self._apply_reconciliation(statement, filters.reconciliation_status)
         statement = self._apply_search(statement, filters.search)
-        return [_payment_view(row) for row in await self.session.scalars(statement)]
+        return [self._payment_view(row) for row in await self.session.scalars(statement)]
 
     async def get_payment(self, payment_id: str) -> PaymentResponse:
-        return _payment_view(await self._owned_payment(payment_id))
+        return self._payment_view(await self._owned_payment(payment_id))
+
+    async def payment_proof_file(self, payment_id: str):
+        """Stream UPI evidence only after applying the current app's payment scope."""
+        payment = await self._owned_payment(payment_id)
+        if self.storage is None or not payment.proof_url:
+            raise ApiError(
+                "PAYMENT_PROOF_NOT_FOUND",
+                http_status.HTTP_404_NOT_FOUND,
+                "Payment proof was not found.",
+            )
+
+        proof_path = payment.proof_url.split("?", 1)[0].rstrip("/")
+        marker = "/deliveries/"
+        if marker not in proof_path or not proof_path.endswith("/payment-proof"):
+            raise ApiError(
+                "PAYMENT_PROOF_NOT_FOUND",
+                http_status.HTTP_404_NOT_FOUND,
+                "Payment proof was not found.",
+            )
+        slip_id = proof_path.split(marker, 1)[1].split("/", 1)[0]
+        slip = await self.session.scalar(
+            select(DeliverySlip).where(
+                DeliverySlip.id == slip_id,
+                DeliverySlip.merchant_id == payment.merchant_id,
+                DeliverySlip.customer_id == payment.customer_id,
+            )
+        )
+        if slip is None or not slip.payment_proof_storage_key:
+            raise ApiError(
+                "PAYMENT_PROOF_NOT_FOUND",
+                http_status.HTTP_404_NOT_FOUND,
+                "Payment proof was not found.",
+            )
+        try:
+            stream = self.storage.open(slip.payment_proof_storage_key)
+        except FileNotFoundError as exc:
+            raise ApiError(
+                "PAYMENT_PROOF_NOT_FOUND",
+                http_status.HTTP_404_NOT_FOUND,
+                "Payment proof was not found.",
+            ) from exc
+        return stream, slip.payment_proof_content_type or "image/jpeg"
+
+    def _payment_view(self, payment: Payment) -> PaymentResponse:
+        proof_url = None
+        if payment.proof_url:
+            channel = self.actor.login_channel.value.lower()
+            proof_url = f"/api/v1/{channel}/payments/{payment.id}/proof"
+        return _payment_view(payment, proof_url=proof_url)
 
     async def summary(self, customer_id: str) -> CustomerPaymentSummary:
         """The header of the customer's Payments tab (spec §12.1).
@@ -171,7 +228,12 @@ class PaymentService:
     # --- Recording a payment ----------------------------------------------------------------
 
     async def record(
-        self, payload: RecordPaymentRequest, *, reference_required: bool = True
+        self,
+        payload: RecordPaymentRequest,
+        *,
+        reference_required: bool = True,
+        proof_url: str | None = None,
+        proof_captured_at: datetime | None = None,
     ) -> PaymentResponse:
         """Collect money against an open invoice (spec §12.5).
 
@@ -225,6 +287,8 @@ class PaymentService:
             mode=mode.value,
             paid_at=paid_at,
             reference=reference,
+            proof_url=proof_url,
+            proof_captured_at=proof_captured_at,
             reconciliation_status=reconciliation.value,
             collected_by_user_id=self.actor.user_id,
             collected_by_name=self.actor.display_name,
@@ -244,7 +308,7 @@ class PaymentService:
             )
         )
         await self.session.commit()
-        return _payment_view(payment)
+        return self._payment_view(payment)
 
     # --- Reconciliation ---------------------------------------------------------------------
 
@@ -294,7 +358,7 @@ class PaymentService:
         payment.reconciled_by_name = self.actor.display_name
         payment.updated_at = now
         await self.session.commit()
-        return _payment_view(payment)
+        return self._payment_view(payment)
 
     # --- The only place invoice money is written --------------------------------------------
 
@@ -447,7 +511,7 @@ def _invoice_view(invoice: Invoice, *, now: datetime) -> InvoiceResponse:
     )
 
 
-def _payment_view(payment: Payment) -> PaymentResponse:
+def _payment_view(payment: Payment, *, proof_url: str | None = None) -> PaymentResponse:
     return PaymentResponse(
         id=payment.id,
         payment_number=payment.payment_number,
@@ -460,6 +524,8 @@ def _payment_view(payment: Payment) -> PaymentResponse:
         mode=PaymentMode(payment.mode),
         paid_at=payment.paid_at,
         reference=payment.reference,
+        proof_url=proof_url,
+        proof_captured_at=payment.proof_captured_at,
         reconciliation_status=ReconciliationStatus(payment.reconciliation_status),
         invalid_reason=payment.invalid_reason,
         collected_by=payment.collected_by_name,

@@ -120,6 +120,8 @@ class PaymentResponse(BaseModel):
     mode: PaymentMode
     paid_at: UtcTime = Field(alias="paidAt")
     reference: str | None = None
+    proof_url: str | None = Field(default=None, alias="proofUrl")
+    proof_captured_at: UtcTime | None = Field(default=None, alias="proofCapturedAt")
 
     reconciliation_status: ReconciliationStatus = Field(alias="reconciliationStatus")
     invalid_reason: str | None = Field(default=None, alias="invalidReason")

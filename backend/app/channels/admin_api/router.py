@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.modules.audit_logs.router import router as audit_logs_router
 from app.modules.authentication.admin_sessions_router import router as login_sessions_router
+from app.modules.authentication.admin_otp_logs_router import router as otp_logs_router
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
 from app.modules.constants.router import router as constants_router
@@ -71,6 +72,7 @@ router.include_router(locations_router)
 router.include_router(postal_locations_router)
 # Who is signed in, across every channel, and the ability to end a session.
 router.include_router(login_sessions_router)
+router.include_router(otp_logs_router)
 # Customer KYC across the whole network, read-only: the approve/reject decision stays with
 # the merchant that holds the customer relationship.
 router.include_router(customer_kyc_router)

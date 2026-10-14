@@ -68,6 +68,31 @@ class Settings(BaseSettings):
     otp_provider: str = "development"
     dev_fixed_otp_enabled: bool = False
     dev_fixed_otp_code: str | None = None
+    # Mobile numbers that take `otp_test_code` instead of a random one, and are never sent an
+    # SMS. Unlike DEV_FIXED_OTP_ENABLED - which does this to **every** number and is refused
+    # outside local - this names the accounts it applies to, so the blast radius is the list.
+    #
+    # It exists because the SMS credit can run out, and when it does nobody can sign in at all.
+    # A named test account that works without the provider is what keeps the apps testable
+    # until the account is topped up. Every other number still gets a random code and a real
+    # message; a number not on this list is unaffected.
+    #
+    # Numbers are written however is convenient (`9876543210`, `+919876543210`) and normalised
+    # on load, so the list cannot miss a match on formatting alone.
+    otp_test_numbers: list[str] = Field(default_factory=list)
+    otp_test_code: str | None = None
+    # Stores each OTP in the clear alongside its hash, and lets the admin OTP log screen print
+    # it. Asked for so the office can read a code off a screen when no SMS can be sent.
+    #
+    # What it costs: anybody who can open that screen can sign into any account, and so can
+    # anybody holding a copy of the database or a backup of it. The OTP stops being a second
+    # factor for as long as this is on. It is guarded by `authentication.view_otp_logs` and
+    # every view is written to the audit log, but a permission is not a substitute for the
+    # code not being there.
+    #
+    # Off by default. Turning it off stops new rows carrying a code; the codes already stored
+    # stay until the rows are deleted or the column is dropped (migration 20261013_0044).
+    otp_log_plaintext_enabled: bool = False
     # Returns the plaintext code in the OTP request/resend response so app developers can test
     # sign-in before SMS auto-read is wired up. Refused outside local/development/test.
     dev_expose_otp_in_response: bool = False
@@ -279,6 +304,43 @@ class Settings(BaseSettings):
         if info.data.get("dev_fixed_otp_enabled") and (value is None or not value.isdigit() or len(value) != length):
             raise ValueError("DEV_FIXED_OTP_CODE must be a numeric code of OTP_LENGTH digits")
         return value
+
+    @field_validator("otp_test_numbers", mode="after")
+    @classmethod
+    def normalise_test_numbers(cls, value: list[str]) -> list[str]:
+        """Store them the way the sign-in path has them, so the comparison cannot miss.
+
+        A number typed as `9876543210` in the environment file and arriving as `+919876543210`
+        on the request is the same account, and a list that fails to say so is a list that
+        silently does nothing - the worst outcome for a switch somebody reaches for when
+        nobody can sign in.
+        """
+        from app.modules.authentication.mobile_number import (
+            InvalidMobileNumberError,
+            normalize_mobile_number,
+        )
+
+        normalised = []
+        for raw in value:
+            try:
+                normalised.append(normalize_mobile_number(raw))
+            except InvalidMobileNumberError as exc:
+                raise ValueError(f"OTP_TEST_NUMBERS contains an invalid mobile number: {raw!r}") from exc
+        return normalised
+
+    @model_validator(mode="after")
+    def require_code_for_test_numbers(self):
+        """A listed number with no code would fall back to a random one and send no SMS.
+
+        That account could then never sign in - the opposite of what the list is for - and
+        nothing would say why. Refusing to boot is the louder failure and the kinder one.
+        """
+        if self.otp_test_numbers and not self.otp_test_code:
+            raise ValueError("OTP_TEST_NUMBERS requires OTP_TEST_CODE to be set")
+        if self.otp_test_code is not None:
+            if not self.otp_test_code.isdigit() or len(self.otp_test_code) != self.otp_length:
+                raise ValueError(f"OTP_TEST_CODE must be {self.otp_length} digits")
+        return self
 
     @field_validator("dev_fixed_otp_enabled", mode="after")
     @classmethod

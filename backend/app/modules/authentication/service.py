@@ -509,7 +509,8 @@ class AuthenticationService:
         The plaintext is only ever handed back to the caller so that `_request_response` can echo it
         under DEV_EXPOSE_OTP_IN_RESPONSE. It is never stored: the row keeps only the hash.
         """
-        otp = self._development_or_random_otp()
+        is_test_number = mobile in self.settings.otp_test_numbers
+        otp = self.settings.otp_test_code if is_test_number else self._development_or_random_otp()
         challenge = await self.otp_service.store_hashed_otp(
             payload=payload,
             mobile_number=mobile,
@@ -519,6 +520,22 @@ class AuthenticationService:
             ip_address=self.client.ip_address,
         )
         challenge.dispatch_suppressed = False
+        if is_test_number:
+            # No provider call: the whole point is that this account signs in while there is no
+            # SMS credit left. The row says so rather than claiming a message was sent, because
+            # the OTP log screen is read when somebody is working out why a code never arrived.
+            challenge.delivery_status = "TEST_BYPASS"
+            challenge.delivery_provider = "test-number"
+            challenge.delivery_reference = None
+            await self.audit.record(
+                AuthEventType.OTP_REQUESTED,
+                channel=channel,
+                success=True,
+                mobile_number=mobile,
+                client=self.client,
+                reason="TEST_NUMBER_FIXED_OTP",
+            )
+            return challenge, otp
         try:
             result = await self.otp_provider.send_otp(
                 mobile_number=mobile,

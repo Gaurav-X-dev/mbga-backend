@@ -273,6 +273,82 @@ class BulkConfirmResponse(BaseModel):
     model_config = _CAMEL
 
 
+class BulkAssignmentPreviewRequest(BaseModel):
+    """Orders selected on the bulk-assignment screen."""
+
+    order_ids: list[str] = Field(alias="orderIds", min_length=1, max_length=50)
+
+    model_config = _CAMEL
+
+
+class BulkAssignmentOrderResponse(BaseModel):
+    id: str
+    order_number: str = Field(alias="orderNumber")
+    customer_id: str = Field(alias="customerId")
+    customer_name: str = Field(alias="customerName")
+    delivery_site_name: str = Field(alias="deliverySiteName")
+    address_line1: str | None = Field(default=None, alias="addressLine1")
+    city: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+    items_summary: str = Field(alias="itemsSummary")
+    total_cylinders: int = Field(alias="totalCylinders")
+    total_amount: int = Field(alias="totalAmount")
+    status: OrderStatus
+
+    model_config = _CAMEL
+
+
+class BulkAssignmentVehicleResponse(BaseModel):
+    id: str
+    number: str
+    label: str | None = None
+    notes: str | None = None
+    priority: int = 0
+    matched_pincode: str = Field(alias="matchedPincode")
+
+    model_config = _CAMEL
+
+
+class BulkAssignmentGroupResponse(BaseModel):
+    """One automatically-created destination group on the assignment sheet."""
+
+    pincode: str | None = None
+    address_label: str = Field(alias="addressLabel")
+    order_count: int = Field(alias="orderCount")
+    total_cylinders: int = Field(alias="totalCylinders")
+    total_amount: int = Field(alias="totalAmount")
+    can_assign: bool = Field(alias="canAssign")
+    blocked_reason: str | None = Field(default=None, alias="blockedReason")
+    orders: list[BulkAssignmentOrderResponse]
+    available_vehicles: list[BulkAssignmentVehicleResponse] = Field(alias="availableVehicles")
+
+    model_config = _CAMEL
+
+
+class BulkAssignmentPreviewResponse(BaseModel):
+    selected_order_count: int = Field(alias="selectedOrderCount")
+    group_count: int = Field(alias="groupCount")
+    groups: list[BulkAssignmentGroupResponse]
+
+    model_config = _CAMEL
+
+
+class BulkAssignmentConfirmGroup(BaseModel):
+    """One pincode group and the crew selected for it."""
+
+    order_ids: list[str] = Field(alias="orderIds", min_length=1, max_length=50)
+    delivery: DeliveryAssignment
+
+    model_config = _CAMEL
+
+
+class GroupedBulkConfirmRequest(BaseModel):
+    groups: list[BulkAssignmentConfirmGroup] = Field(min_length=1, max_length=50)
+
+    model_config = _CAMEL
+
+
 # --- Reorder ---------------------------------------------------------------------------------
 
 

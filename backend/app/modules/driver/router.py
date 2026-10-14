@@ -2,12 +2,15 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, File, Form, Path, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings, get_settings
 from app.modules.authentication.constants import LoginChannel
-from app.modules.customers.dependencies import ActorDep
+from app.modules.customers.dependencies import ActorDep, StorageDep
 from app.modules.driver.schemas import (
     AvailableCylinderTypesResponseData,
     CancelDeliveryRequest,
@@ -26,6 +29,7 @@ from app.modules.driver.schemas import (
     OutForDeliveryBulkRequest,
     OutForDeliveryResponseData,
     PaymentSummaryResponseData,
+    PaymentProofUploadResponseData,
     UpdateDutyRequest,
     UpdateItemsRequest,
     VerifyCustomerOtpRequest,
@@ -50,8 +54,9 @@ def build_service(
     actor: ActorDep,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     settings: Annotated[Settings, Depends(get_settings)],
+    storage: StorageDep,
 ) -> DriverService:
-    return DriverService(session, actor, settings)
+    return DriverService(session, actor, settings, storage)
 
 
 ServiceDep = Annotated[DriverService, Depends(build_service)]
@@ -185,6 +190,33 @@ async def generate_qr(
 ) -> GenerateQrResponseData:
     """Generate a QR locally; this does not contact or verify with a payment gateway."""
     return await service.generate_qr(delivery_id, payload)
+
+
+@deliveries_router.post(
+    "/{deliveryId}/payment-proof",
+    response_model=PaymentProofUploadResponseData,
+    dependencies=_write_guards,
+    responses=error_responses(401, 403, 404, 409, 413, 415, 422),
+    summary="Upload UPI payment proof",
+)
+async def upload_payment_proof(
+    delivery_id: DeliveryIdPath,
+    service: ServiceDep,
+    file: Annotated[UploadFile, File(description="JPEG or PNG, maximum 5 MB")],
+    captured_at: Annotated[datetime, Form(alias="capturedAt")],
+) -> PaymentProofUploadResponseData:
+    return await service.upload_payment_proof(delivery_id, file, captured_at)
+
+
+@deliveries_router.get(
+    "/{deliveryId}/payment-proof",
+    dependencies=_read_guards,
+    responses=error_responses(401, 403, 404),
+    summary="View this delivery's payment proof",
+)
+async def view_payment_proof(delivery_id: DeliveryIdPath, service: ServiceDep):
+    stream, content_type = await service.payment_proof_file(delivery_id)
+    return StreamingResponse(stream, media_type=content_type)
 
 
 @deliveries_router.post(

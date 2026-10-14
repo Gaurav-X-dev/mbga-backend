@@ -32,6 +32,7 @@ SEED_ROLES: tuple[SeedRole, ...] = (
 SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
     SeedPermission("authentication.view_sessions", "View auth sessions", "authentication", "view_sessions"),
     SeedPermission("authentication.revoke_sessions", "Revoke auth sessions", "authentication", "revoke_sessions"),
+    SeedPermission("authentication.view_otp_logs", "View OTP delivery logs", "authentication", "view_otp_logs"),
     SeedPermission("orders.view", "View orders", "orders", "view"),
     SeedPermission("orders.create", "Create orders", "orders", "create"),
     SeedPermission("orders.update", "Update orders", "orders", "update"),

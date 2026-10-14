@@ -142,6 +142,18 @@ class DeliverySlip(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Evidence captured by the delivery app for a UPI collection. The public URL is an
+    # authenticated API URL; the opaque storage key is never returned to a client.
+    payment_proof_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payment_proof_storage_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_proof_content_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payment_proof_captured_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    payment_proof_uploaded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     status: Mapped[str] = mapped_column(String(20), index=True)
     # Why a slip failed. The cancelled order is final, but staff still need the reason for the
     # customer conversation and for deciding whether to accept a fresh order.

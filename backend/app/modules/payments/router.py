@@ -16,11 +16,11 @@ Permissions follow spec §2.1: `payments.view` reads, `payments.collect` records
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
-from app.modules.customers.dependencies import ActorDep, CustomerActorDep
+from app.modules.customers.dependencies import ActorDep, CustomerActorDep, StorageDep
 from app.modules.customers.models import CustomerProfile
 from app.modules.merchants.models import Merchant
 from app.modules.orders.models import Order
@@ -83,10 +83,11 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
     def build_service(
         actor: actor_dependency,
         session: Annotated[AsyncSession, Depends(get_db_session)],
+        storage: StorageDep,
     ) -> PaymentService:
         """FastAPI caches `get_db_session` per request, so the actor and the service share one
         session and therefore one transaction."""
-        return PaymentService(session, actor)
+        return PaymentService(session, actor, storage)
 
     ServiceDep = Annotated[PaymentService, Depends(build_service)]
 
@@ -286,6 +287,21 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
     async def get_payment(payment_id: PaymentIdPath, service: ServiceDep) -> PaymentResponse:
         """One receipt (spec §12.4)."""
         return await service.get_payment(payment_id)
+
+    @router.get(
+        "/payments/{paymentId}/proof",
+        dependencies=read_guards,
+        responses=error_responses(401, 403, 404),
+        summary="View payment proof image",
+    )
+    async def get_payment_proof(payment_id: PaymentIdPath, service: ServiceDep):
+        """Stream UPI evidence scoped to the current Merchant, Customer or Admin actor."""
+        stream, content_type = await service.payment_proof_file(payment_id)
+        return StreamingResponse(
+            stream,
+            media_type=content_type,
+            headers={"Cache-Control": "private, no-store"},
+        )
 
     @router.get(
         "/customers/{customerId}/payments/summary",

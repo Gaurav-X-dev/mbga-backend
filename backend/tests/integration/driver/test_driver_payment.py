@@ -11,8 +11,10 @@ mode the driver chose, with the customer's balance moving by that amount and no 
 """
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
+from app.modules.deliveries.models import DeliverySlip
+from app.modules.merchants.models import Merchant
 from app.modules.orders.models import Order
 from app.modules.payments.models import Invoice, Payment
 from tests.integration.driver.conftest import DRIVER_DELIVERIES, on_the_road
@@ -48,6 +50,8 @@ async def payable_of(env, slip) -> int:
 
 async def handover(env, token, slip, delivered, **payment):
     """Confirm the counts, then complete the handover with the customer's code."""
+    if payment.get("method") == "UPI" and payment.get("amount", 0) > 0:
+        await add_upi_evidence(env, token, slip, payment["amount"], payment)
     confirmed = await env.post(
         f"{DRIVER_DELIVERIES}/{slip['id']}/confirm", token, confirmation(delivered, **payment)
     )
@@ -59,6 +63,31 @@ async def handover(env, token, slip, delivered, **payment):
     )
     assert verified.status_code == 200, verified.text
     return verified
+
+
+async def add_upi_evidence(env, token, slip, amount, payment):
+    """Generate the delivery-bound QR and upload a real image-shaped proof."""
+    merchant_id = await env.scalar(
+        select(DeliverySlip.merchant_id).where(DeliverySlip.id == slip["id"])
+    )
+    await env.execute(
+        update(Merchant)
+        .where(Merchant.id == merchant_id)
+        .values(upi_id="mbga@okhdfcbank", upi_payee_name="MBGA Gas Agency")
+    )
+    qr = await env.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/generate-qr", token, {"amount": amount}
+    )
+    assert qr.status_code == 200, qr.text
+    proof = await env.client.post(
+        f"{DRIVER_DELIVERIES}/{slip['id']}/payment-proof",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("upi-proof.png", b"\x89PNG\r\n\x1a\nproof", "image/png")},
+        data={"capturedAt": "2026-10-13T14:30:00Z"},
+    )
+    assert proof.status_code == 200, proof.text
+    payment["proofUrl"] = proof.json()["proofUrl"]
+    payment["proofCapturedAt"] = proof.json()["capturedAt"]
 
 
 async def test_cash_taken_at_the_gate_lands_on_the_invoice(env):
@@ -93,6 +122,8 @@ async def test_the_payment_records_how_it_was_paid_and_who_took_it(env):
     assert payment.amount_collected == payable
     assert payment.reference == "UTR9988776655"
     assert payment.collected_by_user_id == driver.id
+    assert payment.proof_url is not None
+    assert payment.proof_captured_at is not None
     # UPI is evidence of nothing until somebody finds it in a statement; cash is the money itself.
     assert payment.reconciliation_status == "PENDING"
 
@@ -152,9 +183,7 @@ async def test_a_part_delivery_may_only_be_collected_for_what_was_handed_over(en
     assert response.json()["detail"]["code"] == "PAYMENT_EXCEEDS_PAYABLE"
 
 
-async def test_upi_is_collectable_without_a_reference(env):
-    """The UTR appears on the *customer's* phone, and the driver's screen has nowhere to put it.
-    Demanding one made UPI uncollectable at the gate, which is where UPI is collected."""
+async def test_upi_without_qr_and_proof_is_refused(env):
     _staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 2))
     payable = await payable_of(env, slip)
 
@@ -164,7 +193,11 @@ async def test_upi_is_collectable_without_a_reference(env):
         confirmation([("LPG_19KG", 2)], method="UPI", amount=payable),
     )
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["code"] == "UPI_EVIDENCE_REQUIRED"
+    assert response.json()["detail"]["message"] == (
+        "Payment proof photo and QR generation are required for UPI payments."
+    )
 
 
 async def test_an_unreferenced_upi_payment_waits_for_the_bank(env):
@@ -224,6 +257,8 @@ async def test_the_receipt_says_how_it_was_actually_paid(env):
     assert payment["split"] == "full"
     assert payment["amountPaid"] == payable
     assert payment["pendingBalance"] == 0
+    assert payment["proofUrl"] is not None
+    assert payment["proofCapturedAt"] == "2026-10-13T14:30:00.000Z"
 
 
 async def test_an_unpaid_delivery_names_no_payment_method(env):
