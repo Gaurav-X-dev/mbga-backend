@@ -8,9 +8,10 @@ The existing onboarding schemas in `schemas.py` are untouched — the authentica
 onboarding-session contracts are frozen, and the app already ships against them.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 from app.modules.customers.constants import (
     ApplicationStatus,
@@ -20,6 +21,17 @@ from app.modules.customers.constants import (
     PricingTier,
 )
 from app.shared.validation.names import check_name
+
+
+def _as_utc(value: datetime) -> str:
+    """Serialize MySQL's naive UTC datetimes unambiguously for JS clients."""
+    moment = value if value.tzinfo else value.replace(tzinfo=UTC)
+    return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+UtcTime = Annotated[
+    datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")
+]
 
 
 class Address(BaseModel):
@@ -117,7 +129,7 @@ class KycDocumentResponse(BaseModel):
     number_masked: str = Field(alias="numberMasked")
     file_name: str = Field(alias="fileName")
     file_id: str | None = Field(default=None, alias="fileId")
-    uploaded_at: datetime = Field(alias="uploadedAt")
+    uploaded_at: UtcTime = Field(alias="uploadedAt")
     status: DocumentStatus
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
@@ -151,13 +163,13 @@ class CustomerResponse(BaseModel):
     sites: list[DeliverySiteResponse] = Field(default_factory=list)
     documents: list[KycDocumentResponse] = Field(default_factory=list)
     gstin: str | None = None
-    registered_at: datetime | None = Field(default=None, alias="registeredAt")
-    approved_at: datetime | None = Field(default=None, alias="approvedAt")
+    registered_at: UtcTime | None = Field(default=None, alias="registeredAt")
+    approved_at: UtcTime | None = Field(default=None, alias="approvedAt")
     rejection_reason: str | None = Field(default=None, alias="rejectionReason")
     # Sum of open invoice balances. The invoice module does not exist yet, so this is 0 for
     # every customer; the field is present because the apps read it unconditionally.
     running_balance: int = Field(default=0, alias="runningBalance")
-    last_order_at: datetime | None = Field(default=None, alias="lastOrderAt")
+    last_order_at: UtcTime | None = Field(default=None, alias="lastOrderAt")
     # Credit terms are editable by authorised admin/merchant users, but read-only in the
     # customer app. Values are always returned so all three clients share one contract.
     credit_enabled: bool = Field(default=False, alias="creditEnabled")
@@ -185,8 +197,8 @@ class KycApplicationResponse(BaseModel):
     delivery_address: Address = Field(alias="deliveryAddress")
     sites: list[DeliverySiteResponse] = Field(default_factory=list)
     status: ApplicationStatus
-    submitted_at: datetime = Field(alias="submittedAt")
-    reviewed_at: datetime | None = Field(default=None, alias="reviewedAt")
+    submitted_at: UtcTime = Field(alias="submittedAt")
+    reviewed_at: UtcTime | None = Field(default=None, alias="reviewedAt")
     reviewed_by: str | None = Field(default=None, alias="reviewedBy")
     rejection_reason: str | None = Field(default=None, alias="rejectionReason")
 
@@ -245,8 +257,8 @@ class RegistrationProgressResponse(BaseModel):
     profile_complete: bool = Field(alias="profileComplete")
     application_id: str | None = Field(default=None, alias="applicationId")
     application_status: str | None = Field(default=None, alias="applicationStatus")
-    submitted_at: datetime | None = Field(default=None, alias="submittedAt")
-    reviewed_at: datetime | None = Field(default=None, alias="reviewedAt")
+    submitted_at: UtcTime | None = Field(default=None, alias="submittedAt")
+    reviewed_at: UtcTime | None = Field(default=None, alias="reviewedAt")
     rejection_reason: str | None = Field(default=None, alias="rejectionReason")
     missing_fields: list[str] = Field(default_factory=list, alias="missingFields")
     missing_documents: list[str] = Field(default_factory=list, alias="missingDocumentTypes")

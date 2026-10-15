@@ -13,6 +13,7 @@ from app.shared.middleware.delivery_envelope import (
     DeliveryEnvelopeMiddleware,
 )
 from app.shared.middleware.request_context import REQUEST_ID_HEADER, RequestContextMiddleware
+from app.shared.middleware.utc_timestamps import UtcTimestampMiddleware
 
 CHANNEL_DOC_PREFIXES = {
     "admin": ["/api/v1/admin"],
@@ -191,6 +192,9 @@ def create_app() -> FastAPI:
     # The switch is read per request off `app.state`, so it is one boolean to flip.
     setattr(app.state, ENVELOPE_STATE_FLAG, settings.delivery_response_envelope)
     app.add_middleware(DeliveryEnvelopeMiddleware)
+    # All four apps receive the same ISO-8601 UTC contract. This is outside the optional
+    # delivery envelope, so timestamps inside either raw or wrapped responses are normalized.
+    app.add_middleware(UtcTimestampMiddleware)
     # Outermost, so request IDs and security headers are also set on CORS and error responses.
     app.add_middleware(RequestContextMiddleware, hsts=not settings.is_local_environment)
     app.include_router(api_router, prefix=settings.api_prefix)

@@ -24,6 +24,7 @@ from fastapi import status as http_status
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.models import CustomerProfile
 from app.modules.deliveries.models import DeliverySlip
 from app.modules.notifications.events import payments as payment_events
@@ -252,7 +253,15 @@ class PaymentService:
         """
         invoice = validation.check_open(await self._locked_invoice(payload.invoice_id))
         now = datetime.now(UTC)
-        amount = validation.check_amount(payload.amount, invoice)
+        # Platform admins may intentionally record money above this invoice's remaining
+        # balance (for example, when the bank receipt includes an advance).  Merchant and
+        # delivery channels retain the strict balance ceiling so this exception cannot be
+        # obtained by changing the request body.
+        amount = validation.check_amount(
+            payload.amount,
+            invoice,
+            allow_excess=self.actor.login_channel is LoginChannel.ADMIN,
+        )
         mode = validation.check_mode(payload.mode)
         reference = validation.check_reference(
             mode, payload.reference, required=reference_required

@@ -184,11 +184,15 @@ async def test_approval_updates_the_customer_the_documents_and_the_application(e
     assert body["accountStatus"] == "APPROVED"
     assert body["kycStatus"] == "VERIFIED"
     assert body["approvedAt"] is not None
+    assert body["approvedAt"].endswith("Z")
+    assert all(document["uploadedAt"].endswith("Z") for document in body["documents"])
     assert {document["status"] for document in body["documents"]} == {"VERIFIED"}
 
     application = await application_of(env, token, customer["id"])
     assert application["status"] == "APPROVED"
     assert application["reviewedAt"] is not None
+    assert application["submittedAt"].endswith("Z")
+    assert application["reviewedAt"].endswith("Z")
     assert application["reviewedBy"]  # the reviewer's name, taken from the token
 
 
