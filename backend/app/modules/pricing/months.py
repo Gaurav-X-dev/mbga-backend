@@ -24,10 +24,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.pricing import calendar as cal
+from app.modules.business_catalogue.models import CylinderTypeDefinition
 from app.modules.pricing.constants import (
     ACTIVE_TIER,
     DEFAULT_GST_PERCENT,
-    DEFAULT_STANDARD_RATES,
     PricingMonthStatus,
 )
 from app.modules.pricing.models import PricingEntry, PricingMonth
@@ -122,7 +122,7 @@ class PricingMonthProvisioner:
         Account back on does not lose the rates they were last sold at.
         """
         if previous is None:
-            return _default_card()
+            return await self._default_card()
         entries = await self.session.scalars(
             select(PricingEntry).where(PricingEntry.pricing_month_id == previous.id)
         )
@@ -132,20 +132,24 @@ class PricingMonthProvisioner:
         # A month that somehow has no entries still opens with a usable card rather than an
         # empty tab the screen cannot price anything from.
         if not carried:
-            return _default_card()
+            return await self._default_card()
         # Carrying forward alone means a cylinder type added since last month never appears: the
         # previous month had no row for it, so neither does this one, and neither will the next.
         # That is how `LPG_10KG` was invisible on every price list after it was introduced. Any
         # type the default card knows and this month does not is opened at its default rate, for
         # staff to change like any other.
         known = {(cylinder_type, tier) for cylinder_type, tier, _base, _markup in carried}
-        carried.extend(row for row in _default_card() if (row[0], row[1]) not in known)
+        carried.extend(row for row in await self._default_card() if (row[0], row[1]) not in known)
         return carried
 
-
-def _default_card() -> list[tuple[str, str, Decimal, Decimal]]:
-    """The opening STANDARD card for a merchant with no pricing history."""
-    return [
-        (kind.value, ACTIVE_TIER.value, base, markup)
-        for kind, (base, markup) in DEFAULT_STANDARD_RATES.items()
-    ]
+    async def _default_card(self) -> list[tuple[str, str, Decimal, Decimal]]:
+        """Opening card from the active admin-managed cylinder catalogue."""
+        definitions = await self.session.scalars(
+            select(CylinderTypeDefinition)
+            .where(CylinderTypeDefinition.is_active.is_(True))
+            .order_by(CylinderTypeDefinition.sort_order, CylinderTypeDefinition.code)
+        )
+        return [
+            (row.code, ACTIVE_TIER.value, row.default_base_rate, row.default_markup)
+            for row in definitions
+        ]

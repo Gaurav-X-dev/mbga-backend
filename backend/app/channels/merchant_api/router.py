@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
+from app.modules.business_catalogue.router import build_catalogue_router
 from app.modules.constants.router import router as constants_router
 from app.modules.credit.merchant_router import router as merchant_credit_router
 from app.modules.customers.document_router import build_document_router
@@ -30,6 +31,7 @@ router.include_router(delivery_users_router)
 # existing paths. Both mount under /customers; the paths do not overlap.
 router.include_router(merchant_customers_router)
 router.include_router(merchant_credit_router)
+router.include_router(build_catalogue_router(LoginChannel.MERCHANT))
 router.include_router(customer_review_router)
 router.include_router(kyc_router)
 # Reviewers open customer documents, so this channel's document routes require the document

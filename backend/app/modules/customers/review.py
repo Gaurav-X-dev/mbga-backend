@@ -24,13 +24,11 @@ from app.modules.authentication.account_state import (
     CUSTOMER_REJECTED,
     CUSTOMER_ROLE_CODE,
 )
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.constants import (
     APPLICATION_TRANSITIONS,
     DOCUMENT_APPROVED,
-    REQUIRED_ANY_DOCUMENTS,
-    REQUIRED_DOCUMENTS,
     ApplicationStatus,
-    CustomerType,
     DocumentStatus,
     KycStatus,
     ScanStatus,
@@ -192,45 +190,58 @@ class KycReviewService:
                 status.HTTP_409_CONFLICT,
                 "The customer profile is incomplete.",
             )
-        customer_type = CustomerType(profile.customer_type)
+        catalogue = BusinessCatalogueService(self.session)
+        customer_type = await catalogue.require_active_customer_type(profile.customer_type)
+        rules = await catalogue.active_kyc_requirements(customer_type.code)
         by_type = {document.document_type: document for document in documents}
-        required = REQUIRED_DOCUMENTS[customer_type]
-        required_any = REQUIRED_ANY_DOCUMENTS[customer_type]
-        selected_any = [kind for kind in required_any if kind.value in by_type]
-        if required_any and not selected_any:
-            choices = ", ".join(kind.value for kind in required_any)
-            raise ApiError(
-                "DOCUMENTS_PENDING_APPROVAL",
-                status.HTTP_409_CONFLICT,
-                f"Upload any one of: {choices}.",
-            )
-        for required_kind in (*required, *selected_any):
-            document = by_type.get(required_kind.value)
+        definitions = {rule.document_type_code: definition for rule, definition in rules}
+        required = {rule.document_type_code for rule, _definition in rules if rule.requirement_mode == "REQUIRED"}
+        selected_group_documents: set[str] = set()
+        groups: dict[str, tuple[int, set[str]]] = {}
+        for rule, _definition in rules:
+            if rule.requirement_mode == "ANY_OF":
+                group = rule.requirement_group or "DEFAULT"
+                minimum, codes = groups.get(group, (rule.min_required or 1, set()))
+                codes.add(rule.document_type_code)
+                groups[group] = (max(minimum, rule.min_required or 1), codes)
+        for _group, (minimum, codes) in groups.items():
+            selected = codes.intersection(by_type)
+            if len(selected) < minimum:
+                choices = ", ".join(sorted(codes))
+                raise ApiError(
+                    "DOCUMENTS_PENDING_APPROVAL",
+                    status.HTTP_409_CONFLICT,
+                    f"Upload at least {minimum} of: {choices}.",
+                )
+            selected_group_documents.update(selected)
+        for required_kind in sorted(required | selected_group_documents):
+            document = by_type.get(required_kind)
             if document is None or document.finalized_at is None:
                 raise ApiError(
                     "DOCUMENTS_PENDING_APPROVAL",
                     status.HTTP_409_CONFLICT,
-                    f"The {required_kind.value} document is missing.",
+                    f"The {required_kind} document is missing.",
                 )
             if document.status == DocumentStatus.REJECTED.value:
                 raise ApiError(
                     "DOCUMENTS_PENDING_APPROVAL",
                     status.HTTP_409_CONFLICT,
-                    f"The {required_kind.value} document was rejected.",
+                    f"The {required_kind} document was rejected.",
                 )
-            if not self._scan_is_approvable(document.scan_status):
+            definition = definitions[required_kind]
+            if definition.scan_required and not self._scan_is_approvable(document.scan_status):
                 raise ApiError(
                     "DOCUMENT_SCAN_PENDING",
                     status.HTTP_409_CONFLICT,
-                    f"The {required_kind.value} document has not passed the security scan.",
+                    f"The {required_kind} document has not passed the security scan.",
                 )
             if not document.number_masked or not document.number_encrypted:
                 raise ApiError(
                     "DOCUMENTS_PENDING_APPROVAL",
                     status.HTTP_409_CONFLICT,
-                    f"The {required_kind.value} number is missing.",
+                    f"The {required_kind} number is missing.",
                 )
-        if customer_type is CustomerType.INDUSTRIAL:
+        if customer_type.requires_delivery_sites:
             primaries = [site for site in sites if site.is_primary and site.is_active]
             if len(primaries) != 1:
                 raise ApiError(

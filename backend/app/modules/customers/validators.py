@@ -114,13 +114,14 @@ def validate_address(address, errors: FieldErrors, *, prefix: str = "deliveryAdd
     return {"line1": line1, "line2": line2, "city": city, "state": state, "pincode": pincode}
 
 
-def normalize_document_number(document_type: KycDocumentType, raw: str | None) -> str:
+def normalize_document_number(document_type: str | KycDocumentType, raw: str | None) -> str:
     """Strip the formatting people type (spaces, hyphens, lower case) before validating."""
-    if document_type is KycDocumentType.MSME:
+    code = getattr(document_type, "value", document_type)
+    if code == KycDocumentType.MSME.value:
         # Hyphens are part of the published Udyam identifier, unlike Aadhaar/PAN formatting.
         return re.sub(r"\s", "", str(raw or "")).upper()
     text = re.sub(r"[\s-]", "", str(raw or ""))
-    if document_type in {KycDocumentType.PAN, KycDocumentType.GST, KycDocumentType.MSME}:
+    if code in {KycDocumentType.PAN.value, KycDocumentType.GST.value, KycDocumentType.MSME.value}:
         return text.upper()
     return text
 
@@ -149,23 +150,52 @@ def validate_document_number(document_type: KycDocumentType, raw: str | None, er
     return value
 
 
-def mask_document_number(document_type: KycDocumentType, value: str) -> str:
+def validate_dynamic_document_number(document_type: str, raw: str | None, definition, errors: FieldErrors) -> str | None:
+    """Validate an identifier using the administrator-managed catalogue definition."""
+    code = document_type.upper()
+    field = f"doc.{code}.number"
+    value = normalize_document_number(code, raw)
+    if not value:
+        errors.add(field, "required", "Enter the document number.")
+        return None
+    if definition.min_length is not None and len(value) < definition.min_length:
+        errors.add(field, "invalid", f"Enter at least {definition.min_length} characters.")
+        return None
+    if definition.max_length is not None and len(value) > definition.max_length:
+        errors.add(field, "invalid", f"Enter at most {definition.max_length} characters.")
+        return None
+    if definition.number_pattern:
+        try:
+            matches = re.fullmatch(definition.number_pattern, value)
+        except re.error:
+            errors.add(field, "configuration_error", "This document type is not configured correctly.")
+            return None
+        if not matches:
+            errors.add(field, "invalid", f"Enter a valid {definition.label} number.")
+            return None
+    return value
+
+
+def mask_document_number(document_type: str | KycDocumentType, value: str) -> str:
     """The only form of an identifier that leaves the backend (spec §3.4).
 
     Each mask keeps just enough for a reviewer to match the number against the document
     image on screen, and no more.
     """
-    if document_type is KycDocumentType.AADHAAR:
+    code = getattr(document_type, "value", document_type)
+    if code == KycDocumentType.AADHAAR.value:
         return f"XXXX XXXX {value[-4:]}"
-    if document_type is KycDocumentType.PAN:
+    if code == KycDocumentType.PAN.value:
         # The last five (serial digits + check letter) are what a reviewer cross-checks.
         return f"XXXXX{value[-5:]}"
-    if document_type is KycDocumentType.FSSAI:
+    if code == KycDocumentType.FSSAI.value:
         return f"{'X' * 10}{value[-4:]}"
-    if document_type is KycDocumentType.MSME:
+    if code == KycDocumentType.MSME.value:
         return f"UDYAM-XX-XX-{'X' * 3}{value[-4:]}"
     # GSTIN: the state code is not secret and identifies the registration at a glance.
-    return f"{value[:2]}{'X' * 10}{value[-3:]}"
+    if code == KycDocumentType.GST.value:
+        return f"{value[:2]}{'X' * 10}{value[-3:]}"
+    return f"{'X' * max(len(value) - 4, 0)}{value[-4:]}"
 
 
 def required_documents(customer_type: CustomerType) -> tuple[KycDocumentType, ...]:

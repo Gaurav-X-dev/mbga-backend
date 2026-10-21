@@ -19,6 +19,8 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
+from app.modules.business_catalogue.models import CylinderTypeDefinition
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.models import CustomerProfile
 from app.modules.notifications.events import pricing as pricing_events
 from app.modules.pricing import calendar as cal
@@ -26,11 +28,8 @@ from app.modules.pricing import validation
 from app.modules.pricing.constants import (
     ACTIVE_TIER,
     CLOSED_MONTH_STATUSES,
-    CYLINDER_LABELS,
-    CylinderType,
     OverrideAction,
     PricingTier,
-    cylinders_for,
 )
 from app.modules.pricing.models import (
     CustomerPriceOverride,
@@ -155,6 +154,7 @@ class PricingService:
         base_rate = validation.money(payload.bpcl_base_rate, field="bpclBaseRate")
         markup = validation.money(payload.tier_markup, field="tierMarkup", allow_zero=True)
         effective_from = validation.effective_from(payload.effective_from, today=today)
+        definition = await self._cylinder_definition(payload.cylinder_type)
 
         month = await self._owned_month(pricing_month_id)
         if month.status in CLOSED_MONTH_STATUSES:
@@ -166,12 +166,20 @@ class PricingService:
         entry = await self.session.scalar(
             select(PricingEntry).where(
                 PricingEntry.pricing_month_id == month.id,
-                PricingEntry.cylinder_type == payload.cylinder_type.value,
+                PricingEntry.cylinder_type == payload.cylinder_type,
                 PricingEntry.tier == payload.tier.value,
             )
         )
         if entry is None:
-            raise _not_found()
+            entry = PricingEntry(
+                pricing_month_id=month.id,
+                cylinder_type=definition.code,
+                tier=payload.tier.value,
+                bpcl_base_rate=definition.default_base_rate,
+                tier_markup=definition.default_markup,
+            )
+            self.session.add(entry)
+            await self.session.flush()
 
         # Read the old values before the update - they are what the log row preserves.
         old_base_rate, old_markup, old_price = entry.bpcl_base_rate, entry.tier_markup, entry.customer_price
@@ -211,7 +219,7 @@ class PricingService:
             pricing_events.rate_changed(
                 merchant_id=self.merchant_id,
                 change_log_id=str(change_log.id),
-                cylinder_label=CYLINDER_LABELS[payload.cylinder_type],
+                cylinder_label=definition.label,
                 old_price=int(old_price) if old_price is not None else None,
                 new_price=int(base_rate + markup),
                 changed_by=self.actor.display_name,
@@ -260,9 +268,6 @@ class PricingService:
                     customer_price=entry.customer_price,
                 )
                 for entry in entries
-                # A type that is no longer a known enum value stays in the database but is
-                # not offered to the app, which only knows the five it renders.
-                if entry.cylinder_type in CylinderType.__members__
             ],
             updated_by=month.updated_by,
             updated_at=month.updated_at,
@@ -307,13 +312,19 @@ class PricingService:
     ) -> CustomerPriceItem:
         """Upsert one customer's price for one cylinder type, and log the change."""
         today = cal.business_today()
-        kind = _cylinder(cylinder_type)
+        kind = await self._cylinder_definition(cylinder_type)
         price = validation.money(payload.override_price, field="overridePrice")
         effective_from = validation.effective_from(payload.effective_from, today=today)
         reason = _clean(payload.reason)
 
         profile = await self._owned_customer(customer_id)
-        if kind not in cylinders_for(profile.customer_type):
+        eligible = {
+            definition.code
+            for _mapping, definition in await BusinessCatalogueService(self.session).eligible_cylinders(
+                profile.customer_type
+            )
+        }
+        if kind.code not in eligible:
             # The screen does not offer this type for this customer, so accepting a price
             # for it would store an override nothing could ever apply.
             raise _not_found()
@@ -325,7 +336,7 @@ class PricingService:
             self.session.add(
                 CustomerPriceOverride(
                     customer_id=profile.id,
-                    cylinder_type=kind.value,
+                    cylinder_type=kind.code,
                     override_price=price,
                     effective_from=effective_from,
                     reason=reason,
@@ -359,7 +370,7 @@ class PricingService:
             pricing_events.customer_price_set(
                 customer_id=profile.id,
                 change_log_id=str(override_log.id),
-                cylinder_label=CYLINDER_LABELS[kind],
+                cylinder_label=kind.label,
                 price=int(price),
                 set_by=self.actor.display_name,
                 reason=reason,
@@ -370,7 +381,7 @@ class PricingService:
 
     async def remove_override(self, customer_id: str, cylinder_type: str) -> CustomerPriceItem:
         """Drop the override; the customer goes back to the tier price. Logged as REMOVE."""
-        kind = _cylinder(cylinder_type)
+        kind = await self._cylinder_definition(cylinder_type)
         profile = await self._owned_customer(customer_id)
         existing = await self._override_of(profile.id, kind)
         if existing is None:
@@ -393,12 +404,12 @@ class PricingService:
         self.session.add(removal_log)
         await self.session.flush()
         _tier, prices = await self._tier_card(profile)
-        standard = prices.get(kind.value)
+        standard = prices.get(kind.code)
         NotificationOutboxWriter(self.session).queue(
             pricing_events.customer_price_removed(
                 customer_id=profile.id,
                 change_log_id=str(removal_log.id),
-                cylinder_label=CYLINDER_LABELS[kind],
+                cylinder_label=kind.label,
                 standard_price=int(standard) if standard is not None else None,
                 removed_by=self.actor.display_name,
             )
@@ -412,18 +423,18 @@ class PricingService:
             raise ApiError("CUSTOMER_NOT_FOUND", status.HTTP_404_NOT_FOUND)
         return profile
 
-    async def _override_of(self, customer_id: str, kind: CylinderType) -> CustomerPriceOverride | None:
+    async def _override_of(self, customer_id: str, kind: CylinderTypeDefinition) -> CustomerPriceOverride | None:
         return await self.session.scalar(
             select(CustomerPriceOverride).where(
                 CustomerPriceOverride.customer_id == customer_id,
-                CustomerPriceOverride.cylinder_type == kind.value,
+                CustomerPriceOverride.cylinder_type == kind.code,
             )
         )
 
     async def _override_log(
         self,
         customer_id: str,
-        kind: CylinderType,
+        kind: CylinderTypeDefinition,
         *,
         action: OverrideAction,
         old_price: Decimal | None,
@@ -434,7 +445,7 @@ class PricingService:
     ) -> CustomerPriceOverrideLog:
         return CustomerPriceOverrideLog(
             customer_id=customer_id,
-            cylinder_type=kind.value,
+            cylinder_type=kind.code,
             action=action.value,
             old_override_price=old_price,
             new_override_price=new_price,
@@ -454,18 +465,35 @@ class PricingService:
                 select(CustomerPriceOverride).where(CustomerPriceOverride.customer_id == profile.id)
             )
         }
+        eligible = await BusinessCatalogueService(self.session).eligible_cylinders(profile.customer_type)
         return CustomerPricingResponse(
             customer_id=profile.id,
             tier=tier,
             items=[
-                _item_view(kind, prices.get(kind.value), overrides.get(kind.value))
-                for kind in cylinders_for(profile.customer_type)
+                _item_view(definition, prices.get(definition.code), overrides.get(definition.code))
+                for _mapping, definition in eligible
             ],
         )
 
-    async def _customer_item(self, profile: CustomerProfile, kind: CylinderType) -> CustomerPriceItem:
+    async def _customer_item(self, profile: CustomerProfile, kind: CylinderTypeDefinition) -> CustomerPriceItem:
         _tier, prices = await self._tier_card(profile)
-        return _item_view(kind, prices.get(kind.value), await self._override_of(profile.id, kind))
+        return _item_view(kind, prices.get(kind.code), await self._override_of(profile.id, kind))
+
+    async def _cylinder_definition(self, value: str) -> CylinderTypeDefinition:
+        try:
+            return await BusinessCatalogueService(self.session).require_active_cylinder(str(value).upper())
+        except ApiError as error:
+            if error.code in {"CYLINDER_TYPE_NOT_FOUND", "CYLINDER_TYPE_INACTIVE"}:
+                raise ApiError(
+                    "VALIDATION_ERROR",
+                    status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    fields=[{
+                        "field": "cylinderType",
+                        "code": "invalid_choice",
+                        "message": "Select an active cylinder type",
+                    }],
+                ) from error
+            raise
 
     async def _tier_card(self, profile: CustomerProfile) -> tuple[str, dict[str, Decimal]]:
         """This customer's tier, and the current month's prices for it.
@@ -509,11 +537,11 @@ class PricingService:
 
 
 def _item_view(
-    kind: CylinderType, tier_price: Decimal | None, override: CustomerPriceOverride | None
+    kind: CylinderTypeDefinition, tier_price: Decimal | None, override: CustomerPriceOverride | None
 ) -> CustomerPriceItem:
     return CustomerPriceItem(
-        cylinder_type=kind,
-        cylinder_label=CYLINDER_LABELS[kind],
+        cylinder_type=kind.code,
+        cylinder_label=kind.label,
         tier_price=tier_price,
         override=(
             CustomerPriceOverrideResponse(
@@ -553,7 +581,7 @@ def _log_view(row: PricingChangeLog) -> PricingChangeLogItem:
 
 def _apply_log_filters(statement: Select, filters: ChangeLogFilters) -> Select:
     if filters.cylinder_type:
-        statement = statement.where(PricingChangeLog.cylinder_type == _cylinder(filters.cylinder_type).value)
+        statement = statement.where(PricingChangeLog.cylinder_type == filters.cylinder_type.upper())
     if filters.tier:
         statement = statement.where(PricingChangeLog.tier == _tier(filters.tier).value)
     if filters.pricing_month_id:
@@ -563,14 +591,6 @@ def _apply_log_filters(statement: Select, filters: ChangeLogFilters) -> Select:
     if filters.date_to:
         statement = statement.where(PricingChangeLog.effective_from <= filters.date_to)
     return statement
-
-
-def _cylinder(value: str) -> CylinderType:
-    """Parse a cylinder type from a path or query parameter, or 422."""
-    try:
-        return CylinderType(str(value).upper())
-    except ValueError as error:
-        raise _unknown_value("cylinderType", "unknown_cylinder_type", CylinderType) from error
 
 
 def _tier(value: str) -> PricingTier:

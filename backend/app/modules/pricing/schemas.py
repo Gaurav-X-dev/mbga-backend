@@ -14,9 +14,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
-from app.modules.pricing.constants import CylinderType, PricingMonthStatus, PricingTier
+from app.modules.pricing.constants import PricingMonthStatus, PricingTier
 
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -48,10 +48,20 @@ Money = Annotated[Decimal, PlainSerializer(_as_number, return_type=float, when_u
 UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")]
 
 
-class PriceEntryResponse(BaseModel):
+class CylinderCodeModel(BaseModel):
+    @field_validator("cylinder_type", mode="before", check_fields=False)
+    @classmethod
+    def _cylinder_code(cls, value) -> str:
+        code = str(getattr(value, "value", value) or "").strip().upper()
+        if not code or len(code) > 40 or not code.replace("_", "").isalnum():
+            raise ValueError("Enter a valid cylinder type code.")
+        return code
+
+
+class PriceEntryResponse(CylinderCodeModel):
     """One rate in a month. `customerPrice` is server-computed and read-only."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     tier: PricingTier
     bpcl_base_rate: Money = Field(alias="bpclBaseRate")
     tier_markup: Money = Field(alias="tierMarkup")
@@ -75,10 +85,10 @@ class PricingMonthResponse(BaseModel):
     model_config = _CAMEL
 
 
-class UpdatePriceEntryRequest(BaseModel):
+class UpdatePriceEntryRequest(CylinderCodeModel):
     """A mid-month rate change. `customerPrice` is deliberately absent - it is derived."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     # Only STANDARD is populated today, so an omitted tier means the tab the app is on.
     tier: PricingTier = Field(default=PricingTier.STANDARD)
     bpcl_base_rate: Money = Field(alias="bpclBaseRate")
@@ -145,7 +155,7 @@ class CustomerPriceOverrideResponse(BaseModel):
     model_config = _CAMEL
 
 
-class CustomerPriceItem(BaseModel):
+class CustomerPriceItem(CylinderCodeModel):
     """One cylinder type as the Price Setting tab shows it.
 
     `effectivePrice` is what the customer actually pays: the override when one exists, the
@@ -153,7 +163,7 @@ class CustomerPriceItem(BaseModel):
     number on this screen is the number that will be billed.
     """
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     tier_price: Money | None = Field(alias="tierPrice")
     override: CustomerPriceOverrideResponse | None = None

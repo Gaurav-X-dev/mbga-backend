@@ -15,6 +15,7 @@ from app.modules.constants.models import Constant
 from app.modules.constants.seeds import CANCELLATION_REASONS
 from app.modules.credit.service import CreditLimitService
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.business_catalogue.models import CylinderTypeDefinition
 from app.modules.deliveries import validation
 from app.modules.deliveries.constants import (
     ALL_STATUSES,
@@ -81,7 +82,7 @@ from app.modules.driver.upi_qr import build_upi_link, png_base64
 from app.modules.merchants.models import Merchant
 from app.modules.orders import transitions
 from app.modules.orders.amendment import AmendedLine, OrderAmender, merge
-from app.modules.orders.constants import ORDER_LABELS, OrderStatus
+from app.modules.orders.constants import OrderStatus
 from app.modules.orders.models import Order, OrderItem
 from app.modules.payments.constants import (
     OFFERED_PAYMENT_MODES,
@@ -92,12 +93,8 @@ from app.modules.payments.invoicing import delivered_total
 from app.modules.payments.models import Invoice, Payment
 from app.modules.payments.schemas import RecordPaymentRequest
 from app.modules.payments.service import PaymentService
-from app.modules.pricing.constants import (
-    ACTIVE_TIER,
-    CYLINDER_LABELS,
-    CylinderType,
-    cylinders_for,
-)
+from app.modules.business_catalogue.service import BusinessCatalogueService
+from app.modules.pricing.constants import ACTIVE_TIER
 from app.modules.pricing.service import resolve_customer_price, tier_prices_for_month
 from app.modules.users.models import User
 from app.shared.business.actor import BusinessActor
@@ -196,6 +193,7 @@ class DriverService:
         self.settings = settings
         self.storage = storage
         self.driver_user_id = actor.user_id
+        self._cylinder_labels: dict[str, str] = {}
 
     # --- Reads ------------------------------------------------------------------------------
 
@@ -256,7 +254,13 @@ class DriverService:
                 "This order has no pricing month, so its doorstep prices cannot be resolved.",
             )
 
-        customer_type = (customer.customer_type or order.customer_type or "RETAIL").upper()
+        catalogue = BusinessCatalogueService(self.session)
+        configured_type = customer.customer_type or order.customer_type
+        customer_type = (
+            configured_type.upper()
+            if configured_type
+            else (await catalogue.default_customer_type()).code
+        )
         tier = customer.pricing_tier or ACTIVE_TIER.value
         tier_prices = await tier_prices_for_month(self.session, order.pricing_month_id, tier)
         if not tier_prices and tier != ACTIVE_TIER.value:
@@ -265,23 +269,24 @@ class DriverService:
             )
 
         items: list[AvailableCylinderTypeItem] = []
-        for cylinder_type in cylinders_for(customer_type):
+        eligible = await catalogue.eligible_cylinders(customer_type)
+        for mapping, definition in eligible:
             price = await resolve_customer_price(
                 self.session,
                 customer.id,
-                cylinder_type.value,
-                tier_prices.get(cylinder_type.value),
+                definition.code,
+                tier_prices.get(definition.code),
             )
             if price is None:
                 raise ApiError(
                     "CYLINDER_PRICE_NOT_CONFIGURED",
                     http_status.HTTP_409_CONFLICT,
-                    f"Price is not configured for {cylinder_type.value}.",
+                    f"Price is not configured for {definition.code}.",
                 )
             items.append(
                 AvailableCylinderTypeItem(
-                    cylinderType=cylinder_type.value,
-                    label=CYLINDER_LABELS[cylinder_type],
+                    cylinderType=definition.code,
+                    label=definition.label,
                     unitPrice=float(price),
                 )
             )
@@ -1332,18 +1337,20 @@ class DriverService:
             )
         )
 
-        by_type = [
-            DaySummaryLine(
-                cylinder_type=cylinder_type,
-                label=_label(cylinder_type),
-                delivered=int(delivered or 0),
-                empties_collected=int(returned or 0),
-            )
+        by_type: list[DaySummaryLine] = []
+        for cylinder_type, delivered, returned in rows:
             # A size that neither went out nor came back is left out rather than shown as two
             # zeroes: the screen is a tally of the day's work, not a price list.
-            for cylinder_type, delivered, returned in rows
-            if delivered or returned
-        ]
+            if not (delivered or returned):
+                continue
+            by_type.append(
+                DaySummaryLine(
+                    cylinder_type=cylinder_type,
+                    label=await self._cylinder_label(cylinder_type),
+                    delivered=int(delivered or 0),
+                    empties_collected=int(returned or 0),
+                )
+            )
         return DaySummaryResponseData(
             date=today.isoformat(),
             deliveries_completed=int(completed or 0),
@@ -1385,15 +1392,16 @@ class DriverService:
             )
         )
 
-        stock_by_type = [
-            DriverInventoryLine(
-                cylinder_type=cylinder_type,
-                label=_label(cylinder_type),
-                full_count=int(total or 0),
-                empty_count=int(returned or 0),
+        stock_by_type: list[DriverInventoryLine] = []
+        for cylinder_type, total, returned in lines:
+            stock_by_type.append(
+                DriverInventoryLine(
+                    cylinder_type=cylinder_type,
+                    label=await self._cylinder_label(cylinder_type),
+                    full_count=int(total or 0),
+                    empty_count=int(returned or 0),
+                )
             )
-            for cylinder_type, total, returned in lines
-        ]
 
         return DriverInventoryResponseData(
             total_full_cylinders=sum(int(total or 0) for _, total, _r in lines),
@@ -1568,17 +1576,20 @@ class DriverService:
             .where(DeliverySlipItem.slip_id == slip.id)
             .order_by(DeliverySlipItem.position)
         )
-        return [
-            DeliveryItemResponse(
-                cylinder_type=row.cylinder_type,
-                label=_label(row.cylinder_type),
-                quantity=row.empties_collected,
-                unit_price=None,
-                total_price=None,
+        returns: list[DeliveryItemResponse] = []
+        for row in rows:
+            if not row.empties_collected:
+                continue
+            returns.append(
+                DeliveryItemResponse(
+                    cylinder_type=row.cylinder_type,
+                    label=await self._cylinder_label(row.cylinder_type),
+                    quantity=row.empties_collected,
+                    unit_price=None,
+                    total_price=None,
+                )
             )
-            for row in rows
-            if row.empties_collected
-        ]
+        return returns
 
     async def _items(self, slip_id: str, order_id: str | None = None) -> list[DeliveryItemResponse]:
         """The slip's lines, priced from the order they were cut from.
@@ -1612,7 +1623,7 @@ class DriverService:
             items.append(
                 DeliveryItemResponse(
                     cylinder_type=row.cylinder_type,
-                    label=_label(row.cylinder_type),
+                    label=await self._cylinder_label(row.cylinder_type),
                     quantity=row.quantity,
                     unit_price=unit,
                     # Priced on what this slip carries, not what the order asked for: a part load
@@ -1651,17 +1662,18 @@ class DriverService:
             for i in items
         ]
         today = {i.cylinder_type for i in items}
-        returns.extend(
-            EmptyReturnItem(
-                cylinder_type=kind,
-                label=_label(kind),
-                current_order_quantity=0,
-                customer_previous_due=due,
-                expected_quantity=due,
+        for kind, due in sorted(previous.items()):
+            if kind in today:
+                continue
+            returns.append(
+                EmptyReturnItem(
+                    cylinder_type=kind,
+                    label=await self._cylinder_label(kind),
+                    current_order_quantity=0,
+                    customer_previous_due=due,
+                    expected_quantity=due,
+                )
             )
-            for kind, due in sorted(previous.items())
-            if kind not in today
-        )
         return returns
 
     async def _capture_destination(
@@ -1791,6 +1803,13 @@ class DriverService:
             ),
         )
 
+    async def _cylinder_label(self, cylinder_type: str) -> str:
+        code = cylinder_type.strip().upper()
+        if code not in self._cylinder_labels:
+            row = await self.session.get(CylinderTypeDefinition, code)
+            self._cylinder_labels[code] = row.label if row is not None else cylinder_type
+        return self._cylinder_labels[code]
+
 
 def _billing(grand_total: float, *, tax: float, previous: float) -> BillingSummary:
     """The money panel, with both of its sums made to hold.
@@ -1811,13 +1830,6 @@ def _billing(grand_total: float, *, tax: float, previous: float) -> BillingSumma
         customer_previous_balance=previous,
         total_payable_amount=round(grand_total + previous, 2),
     )
-
-
-def _label(cylinder_type: str) -> str:
-    try:
-        return ORDER_LABELS[CylinderType(cylinder_type)]
-    except (KeyError, ValueError):
-        return cylinder_type
 
 
 def _one_line(slip: DeliverySlip) -> str:

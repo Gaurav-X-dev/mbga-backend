@@ -26,13 +26,8 @@ from app.modules.customers.business_schemas import (
     CustomerRegistrationRequest,
     RegistrationProgressResponse,
 )
-from app.modules.customers.constants import (
-    ALLOWED_DOCUMENTS,
-    REQUIRED_ANY_DOCUMENTS,
-    REQUIRED_DOCUMENTS,
-    CustomerType as BusinessCustomerType,
-    to_mobile_account_status,
-)
+from app.modules.customers.constants import to_mobile_account_status
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.dependencies import OnboardingActorDep, RegistrationDep
 from app.modules.customers.models import CustomerProfile, KycApplication
 from app.modules.customers.schemas import (
@@ -41,7 +36,6 @@ from app.modules.customers.schemas import (
     CustomerProfilePayload,
     CustomerProfileResponse,
     CustomerProfileUpdate,
-    CustomerType,
     RegistrationField,
     RegistrationFieldsResponse,
     KycDocumentRequirement,
@@ -95,7 +89,10 @@ async def check_mobile(
 
 
 @router.get("/registration/fields", response_model=RegistrationFieldsResponse)
-async def registration_fields() -> RegistrationFieldsResponse:
+async def registration_fields(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> RegistrationFieldsResponse:
+    customer_types = await BusinessCatalogueService(session).list_customer_types()
     return RegistrationFieldsResponse(
         fields=[
             RegistrationField(
@@ -112,7 +109,7 @@ async def registration_fields() -> RegistrationFieldsResponse:
                 data_type="enum",
                 required=True,
                 source="Customer App sheet",
-                allowed_values=[item.value for item in CustomerType],
+                allowed_values=[item.code for item in customer_types],
             ),
             RegistrationField(
                 api_field_name="merchant_code",
@@ -140,14 +137,7 @@ async def registration_fields() -> RegistrationFieldsResponse:
     )
 
 
-DOCUMENT_LABELS = {
-    "AADHAAR": "Aadhaar Card",
-    "PAN": "PAN Card",
-    "GST": "GST Certificate",
-    "FSSAI": "FSSAI Licence",
-    "MSME": "MSME / Udyam Certificate",
-}
-DOCUMENT_FORMATS = {
+DOCUMENT_FORMAT_HINTS = {
     "AADHAAR": "12 digits",
     "PAN": "ABCDE1234F",
     "GST": "15-character GSTIN",
@@ -158,23 +148,37 @@ DOCUMENT_FORMATS = {
 
 @router.get("/registration/kyc-requirements", response_model=KycRequirementsResponse)
 async def kyc_requirements(
-    customer_type: Annotated[BusinessCustomerType, Query(alias="customerType")],
+    customer_type: Annotated[str, Query(alias="customerType", min_length=1, max_length=40)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
 ) -> KycRequirementsResponse:
     """Dynamic KYC form rules for the selected customer type."""
-    required = set(REQUIRED_DOCUMENTS[customer_type])
-    required_any = set(REQUIRED_ANY_DOCUMENTS[customer_type])
+    customer_type_code = customer_type.strip().upper()
+    requirements = await BusinessCatalogueService(session).active_kyc_requirements(
+        customer_type_code
+    )
+    required_count = sum(1 for rule, _ in requirements if rule.requirement_mode == "REQUIRED")
+    groups: dict[str, int] = {}
+    for rule, _ in requirements:
+        if rule.requirement_mode == "ANY_OF" and rule.requirement_group:
+            groups[rule.requirement_group] = max(
+                groups.get(rule.requirement_group, 0), rule.min_required
+            )
     return KycRequirementsResponse(
-        customer_type=customer_type.value,
-        minimum_documents=max(len(required), 1 if required_any else 0),
+        customer_type=customer_type_code,
+        minimum_documents=required_count + sum(groups.values()),
         documents=[
             KycDocumentRequirement(
-                type=kind.value,
-                label=DOCUMENT_LABELS[kind.value],
-                required=kind in required,
-                required_group="ANY_ONE" if kind in required_any else None,
-                number_format=DOCUMENT_FORMATS[kind.value],
+                type=document.code,
+                label=document.label,
+                required=rule.requirement_mode == "REQUIRED",
+                required_group=rule.requirement_group
+                if rule.requirement_mode == "ANY_OF"
+                else None,
+                number_format=DOCUMENT_FORMAT_HINTS.get(
+                    document.code, document.number_pattern or "Configured by administrator"
+                ),
             )
-            for kind in ALLOWED_DOCUMENTS[customer_type]
+            for rule, document in requirements
         ],
     )
 
@@ -189,13 +193,18 @@ def _has_spec_fields(updates: dict) -> bool:
     return any(field in updates for field in SPEC_FIELDS)
 
 
-def _registration_request(payload, profile: CustomerProfile) -> CustomerRegistrationRequest:
+def _registration_request(
+    payload,
+    profile: CustomerProfile,
+    *,
+    default_customer_type: str,
+) -> CustomerRegistrationRequest:
     """Build the shared registration body from an onboarding payload plus what is stored.
 
     Merging with the stored row is what makes a partial save work: the app can send the
     address on one call and the documents on the next without the first being wiped.
     """
-    customer_type = payload.customer_type.value if payload.customer_type else profile.customer_type
+    customer_type = payload.customer_type if payload.customer_type else profile.customer_type
     address = payload.delivery_address or Address(
         line1=profile.address_line1 or "",
         line2=profile.address_line2,
@@ -204,7 +213,7 @@ def _registration_request(payload, profile: CustomerProfile) -> CustomerRegistra
         pincode=profile.address_pincode or "",
     )
     return CustomerRegistrationRequest(
-        customer_type=BusinessCustomerType(customer_type or BusinessCustomerType.RETAIL.value),
+        customer_type=customer_type or default_customer_type,
         business_name=payload.business_name or payload.name or profile.name or "",
         owner_name=payload.owner_name or profile.owner_name or "",
         mobile=payload.mobile,
@@ -271,7 +280,7 @@ async def create_registration_profile(
         user_id=user.id,
         merchant_id=merchant.id,
         merchant_code=merchant.code,
-        customer_type=payload.customer_type.value if payload.customer_type else None,
+        customer_type=payload.customer_type if payload.customer_type else None,
         mobile_number=user.mobile_number,
         name=payload.name,
         gst_number=payload.gst_number,
@@ -289,7 +298,15 @@ async def create_registration_profile(
         # The full API_SPEC contract was sent. It goes through the same service the merchant
         # create path uses, so both actors get identical validation.
         await session.flush()
-        await service.save_self_profile(profile, _registration_request(payload, profile), actor, verified_mobile=user.mobile_number)
+        default_type = (await BusinessCatalogueService(session).default_customer_type()).code
+        await service.save_self_profile(
+            profile,
+            _registration_request(
+                payload, profile, default_customer_type=default_type
+            ),
+            actor,
+            verified_mobile=user.mobile_number,
+        )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -329,12 +346,20 @@ async def update_registration_profile(
         merchant = await _active_merchant(session, updates["merchant_code"])
         profile.merchant_id, profile.merchant_code = merchant.id, merchant.code
     if "customer_type" in updates:
-        profile.customer_type = updates["customer_type"].value if updates["customer_type"] else None
+        profile.customer_type = updates["customer_type"] or None
     for field in ("name", "gst_number"):
         if field in updates:
             setattr(profile, field, updates[field])
     if _has_spec_fields(updates):
-        await service.save_self_profile(profile, _registration_request(payload, profile), actor, verified_mobile=user.mobile_number)
+        default_type = (await BusinessCatalogueService(session).default_customer_type()).code
+        await service.save_self_profile(
+            profile,
+            _registration_request(
+                payload, profile, default_customer_type=default_type
+            ),
+            actor,
+            verified_mobile=user.mobile_number,
+        )
     profile.updated_at = datetime.now(UTC)
     await session.commit()
     return _response(profile)

@@ -240,7 +240,7 @@ class DocumentAccessService:
             raise not_found()
         return document
 
-    async def attachable(self, actor: BusinessActor, file_id: str, document_type: KycDocumentType) -> CustomerDocument:
+    async def attachable(self, actor: BusinessActor, file_id: str, document_type: str | KycDocumentType) -> CustomerDocument:
         """Load an upload the actor may attach to a registration they are performing.
 
         Stricter than `readable`: an already-finalized file cannot be attached again, and the
@@ -248,10 +248,11 @@ class DocumentAccessService:
         could be submitted in the Aadhaar slot.
         """
         document = await self.session.scalar(select(CustomerDocument).where(CustomerDocument.file_id == file_id))
-        field = f"doc.{document_type.value}.file"
+        code = getattr(document_type, "value", document_type)
+        field = f"doc.{code}.file"
         if document is None:
             raise self._file_error(field, "not_found", "Upload this document again.")
-        if document.document_type != document_type.value:
+        if document.document_type != code:
             raise self._file_error(field, "type_mismatch", "This file was uploaded as a different document type.")
         if document.finalized_at is not None:
             raise self._file_error(field, "already_used", "This file is already attached to a registration.")

@@ -29,6 +29,7 @@ from app.modules.authentication.account_state import (
     CUSTOMER_PROFILE_INCOMPLETE,
     CUSTOMER_UNDER_REVIEW,
 )
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.business_schemas import (
     CustomerRegistrationRequest,
     DocumentSubmission,
@@ -37,14 +38,9 @@ from app.modules.customers.business_schemas import (
 from app.modules.customers.codes import CustomerCodeAllocator
 from app.modules.customers.constants import (
     ACCOUNT_TRANSITIONS,
-    ALLOWED_DOCUMENTS,
     EDITABLE_ACCOUNT_STATUSES,
-    REQUIRED_ANY_DOCUMENTS,
-    REQUIRED_DOCUMENTS,
     ApplicationStatus,
-    CustomerType,
     DocumentStatus,
-    KycDocumentType,
     KycStatus,
     PricingTier,
 )
@@ -61,7 +57,7 @@ from app.modules.customers.validators import (
     clean_text,
     mask_document_number,
     validate_address,
-    validate_document_number,
+    validate_dynamic_document_number,
     validate_email,
     validate_mobile,
     validate_name,
@@ -90,12 +86,12 @@ class ValidatedRegistration:
     Produced by one function for both actors, so a rule can never apply to only one of them.
     """
 
-    customer_type: CustomerType
+    customer_type: str
     business_name: str
     owner_name: str
     email: str | None
     address: dict
-    documents: list[tuple[KycDocumentType, str, CustomerDocument]] = field(default_factory=list)
+    documents: list[tuple[str, str, CustomerDocument]] = field(default_factory=list)
     sites: list[dict] = field(default_factory=list)
     gstin: str | None = None
 
@@ -135,13 +131,20 @@ class CustomerRegistrationService:
         """
         errors = FieldErrors()
         customer_type = request.customer_type
+        catalogue = BusinessCatalogueService(self.session)
+        customer_definition = await catalogue.require_active_customer_type(customer_type)
         business_name = validate_name(request.business_name, "businessName", errors)
         owner_name = validate_name(request.owner_name, "ownerName", errors)
         email = validate_email(request.email, errors)
         address = validate_address(request.delivery_address, errors)
         documents = await self._validate_documents(request.documents, customer_type, actor, errors, require=require_documents)
-        sites = self._validate_sites(request.sites, customer_type, address, errors)
-        gstin = next((number for kind, number, _ in documents if kind is KycDocumentType.GST), None)
+        sites = self._validate_sites(
+            request.sites,
+            requires_delivery_sites=customer_definition.requires_delivery_sites,
+            address=address,
+            errors=errors,
+        )
+        gstin = next((number for kind, number, _ in documents if kind == "GST"), None)
         errors.raise_if_any()
         return ValidatedRegistration(
             customer_type=customer_type,
@@ -157,36 +160,46 @@ class CustomerRegistrationService:
     async def _validate_documents(
         self,
         submissions: list[DocumentSubmission],
-        customer_type: CustomerType,
+        customer_type: str,
         actor: BusinessActor,
         errors: FieldErrors,
         *,
         require: bool,
-    ) -> list[tuple[KycDocumentType, str, CustomerDocument]]:
-        required = REQUIRED_DOCUMENTS[customer_type]
-        required_any = REQUIRED_ANY_DOCUMENTS[customer_type]
-        allowed = ALLOWED_DOCUMENTS[customer_type]
+    ) -> list[tuple[str, str, CustomerDocument]]:
+        rules = await BusinessCatalogueService(self.session).active_kyc_requirements(customer_type)
+        definitions = {definition.code: definition for _rule, definition in rules}
+        required = {rule.document_type_code for rule, _definition in rules if rule.requirement_mode == "REQUIRED"}
+        groups: dict[str, tuple[int, set[str]]] = {}
+        for rule, _definition in rules:
+            if rule.requirement_mode == "ANY_OF":
+                group = rule.requirement_group or "DEFAULT"
+                minimum, codes = groups.get(group, (rule.min_required or 1, set()))
+                codes.add(rule.document_type_code)
+                groups[group] = (max(minimum, rule.min_required or 1), codes)
+        allowed = set(definitions)
         supplied = {submission.type: submission for submission in submissions}
         for extra in set(supplied) - set(allowed):
             errors.add(
-                f"doc.{extra.value}",
+                f"doc.{extra}",
                 "not_applicable",
-                f"A {customer_type.value.lower()} customer does not submit a {extra.value} document.",
+                f"A {customer_type.lower()} customer does not submit a {extra} document.",
             )
-        if require and required_any and not any(kind in supplied for kind in required_any):
-            choices = ", ".join(kind.value for kind in required_any)
-            errors.add("documents", "one_required", f"Upload any one of: {choices}.")
-        resolved: list[tuple[KycDocumentType, str, CustomerDocument]] = []
-        for document_type in allowed:
+        if require:
+            for group, (minimum, codes) in groups.items():
+                if len(codes.intersection(supplied)) < minimum:
+                    choices = ", ".join(sorted(codes))
+                    errors.add("documents", "one_required", f"Upload at least {minimum} of: {choices}.")
+        resolved: list[tuple[str, str, CustomerDocument]] = []
+        for document_type, definition in definitions.items():
             submission = supplied.get(document_type)
             if submission is None:
                 if require and document_type in required:
-                    errors.add(f"doc.{document_type.value}", "required", f"Upload the {document_type.value} document.")
+                    errors.add(f"doc.{document_type}", "required", f"Upload the {document_type} document.")
                 continue
-            number = validate_document_number(document_type, submission.number, errors)
+            number = validate_dynamic_document_number(document_type, submission.number, definition, errors)
             upload_id = submission.upload_id
             if not upload_id:
-                errors.add(f"doc.{document_type.value}.file", "required", "Upload the document file first.")
+                errors.add(f"doc.{document_type}.file", "required", "Upload the document file first.")
                 continue
             try:
                 upload = await self.documents.attachable(actor, upload_id, document_type)
@@ -200,11 +213,12 @@ class CustomerRegistrationService:
     def _validate_sites(
         self,
         submissions: list[SiteSubmission],
-        customer_type: CustomerType,
+        *,
+        requires_delivery_sites: bool,
         address: dict,
         errors: FieldErrors,
     ) -> list[dict]:
-        if customer_type is CustomerType.RETAIL:
+        if not requires_delivery_sites:
             if submissions:
                 errors.add("sites", "not_applicable", "Retail customers do not have delivery sites.")
             return []
@@ -276,7 +290,7 @@ class CustomerRegistrationService:
         they are, and everything that stamps an actor name reads `users` - so without this a
         self-registered customer signs every row they touch as "Unknown user".
         """
-        profile.customer_type = data.customer_type.value
+        profile.customer_type = data.customer_type
         profile.name = data.business_name
         profile.owner_name = data.owner_name
         profile.email = data.email
@@ -371,20 +385,20 @@ class CustomerRegistrationService:
         seen: set[str] = set()
         for row in clashes:
             document_type = by_hash.get(row.number_lookup_hash)
-            if document_type is None or document_type.value in seen:
+            if document_type is None or document_type in seen:
                 continue
-            seen.add(document_type.value)
+            seen.add(document_type)
             errors.add(
-                f"doc.{document_type.value}.number",
+                f"doc.{document_type}.number",
                 "already_registered",
-                f"This {document_type.value} number is already registered with another customer.",
+                f"This {document_type} number is already registered with another customer.",
             )
         errors.raise_if_any()
 
     async def _supersede_previous(
         self,
         profile: CustomerProfile,
-        document_type: KycDocumentType,
+        document_type: str,
         replacement: CustomerDocument,
         now: datetime,
     ) -> None:
@@ -396,7 +410,7 @@ class CustomerRegistrationService:
         previous = await self.session.scalars(
             select(CustomerDocument).where(
                 CustomerDocument.customer_id == profile.id,
-                CustomerDocument.document_type == document_type.value,
+                CustomerDocument.document_type == document_type,
                 CustomerDocument.finalized_at.is_not(None),
                 CustomerDocument.superseded_at.is_(None),
                 CustomerDocument.file_id != replacement.file_id,
@@ -481,7 +495,7 @@ class CustomerRegistrationService:
         profile.submitted_at = now
         profile.updated_at = now
 
-    async def ensure_code(self, profile: CustomerProfile, customer_type: CustomerType) -> None:
+    async def ensure_code(self, profile: CustomerProfile, customer_type: str) -> None:
         """Allocate the display code once. A resubmission keeps the code it already has."""
         if not profile.code:
             profile.code = await self.codes.allocate(customer_type)
@@ -550,7 +564,7 @@ class CustomerRegistrationService:
         await self._require_submittable(profile)
         now = datetime.now(UTC)
         if profile.customer_type:
-            await self.ensure_code(profile, CustomerType(profile.customer_type))
+            await self.ensure_code(profile, profile.customer_type)
         self.move_to_review(profile, now)
         application = await self.open_application(profile, actor.user_id, now)
         self.queue_submission_events(profile, application)
@@ -608,11 +622,19 @@ class CustomerRegistrationService:
                     )
                 )
             }
-            required = REQUIRED_DOCUMENTS[CustomerType(profile.customer_type)]
-            missing_documents = [kind.value for kind in required if kind.value not in linked]
-            required_any = REQUIRED_ANY_DOCUMENTS[CustomerType(profile.customer_type)]
-            if required_any and not any(kind.value in linked for kind in required_any):
-                missing_documents.append("ANY_OF:" + "|".join(kind.value for kind in required_any))
+            rules = await BusinessCatalogueService(self.session).active_kyc_requirements(profile.customer_type)
+            required = {rule.document_type_code for rule, _definition in rules if rule.requirement_mode == "REQUIRED"}
+            missing_documents = sorted(required - linked)
+            groups: dict[str, tuple[int, set[str]]] = {}
+            for rule, _definition in rules:
+                if rule.requirement_mode == "ANY_OF":
+                    group = rule.requirement_group or "DEFAULT"
+                    minimum, codes = groups.get(group, (rule.min_required or 1, set()))
+                    codes.add(rule.document_type_code)
+                    groups[group] = (max(minimum, rule.min_required or 1), codes)
+            for _group, (minimum, codes) in groups.items():
+                if len(codes.intersection(linked)) < minimum:
+                    missing_documents.append("ANY_OF:" + "|".join(sorted(codes)))
         return missing_fields, missing_documents
 
     @staticmethod
@@ -636,7 +658,8 @@ class CustomerRegistrationService:
         ]
         if fields:
             raise ApiError("REGISTRATION_INCOMPLETE", status.HTTP_422_UNPROCESSABLE_CONTENT, fields=fields)
-        if profile.customer_type == CustomerType.INDUSTRIAL.value and self._on_kyc_contract(profile):
+        definition = await BusinessCatalogueService(self.session).require_active_customer_type(profile.customer_type)
+        if definition.requires_delivery_sites and self._on_kyc_contract(profile):
             primaries = list(
                 await self.session.scalars(
                     select(CustomerDeliverySite).where(

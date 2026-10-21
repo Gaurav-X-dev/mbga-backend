@@ -142,5 +142,5 @@ def test_every_non_auth_merchant_operation_has_an_admin_counterpart():
 
     # Bumped with each merchant operation added, deliberately: the number is the tripwire
     # that makes somebody check the admin side has kept up.
-    assert len(merchant_operations) == 103
+    assert len(merchant_operations) == 116
     assert merchant_operations <= admin_operations
