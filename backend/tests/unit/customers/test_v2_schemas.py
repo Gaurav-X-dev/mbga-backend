@@ -46,3 +46,27 @@ def test_legacy_file_ids_must_match_canonical_files() -> None:
                 "fileId": "different",
             }
         )
+
+
+def test_v2_document_accepts_dynamic_document_types() -> None:
+    value = DocumentSubmissionV2.model_validate(
+        {
+            "type": "trade_license",
+            "number": "TL-999",
+            "files": [_file("doc_1", "FRONT")],
+        }
+    )
+    assert value.type == "TRADE_LICENSE"
+
+
+def test_v2_profile_payload_accepts_dynamic_customer_type() -> None:
+    from app.modules.customers.v2_schemas import CustomerProfileV2Payload
+
+    payload = CustomerProfileV2Payload.model_validate(
+        {
+            "merchant_code": "MERCH1",
+            "customer_type": "commercial_bulk",
+            "name": "Acme Corp",
+        }
+    )
+    assert payload.customer_type == "COMMERCIAL_BULK"

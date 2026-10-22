@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # from one app) is refused without revoking the whole sign-in. Later replays revoke the family.
     refresh_reuse_grace_seconds: int = Field(default=10, ge=0, le=60)
 
-    otp_length: int = Field(default=6, ge=4, le=8)
+    otp_length: int = Field(default=4, ge=4, le=8)
     otp_expires_seconds: int = 300
     otp_expiry_seconds: int = 300
     otp_max_attempts: int = 5
@@ -300,7 +300,7 @@ class Settings(BaseSettings):
     @field_validator("dev_fixed_otp_code", mode="after")
     @classmethod
     def validate_fixed_code_format(cls, value: str | None, info) -> str | None:
-        length = info.data.get("otp_length", 6)
+        length = info.data.get("otp_length", 4)
         if info.data.get("dev_fixed_otp_enabled") and (value is None or not value.isdigit() or len(value) != length):
             raise ValueError("DEV_FIXED_OTP_CODE must be a numeric code of OTP_LENGTH digits")
         return value
