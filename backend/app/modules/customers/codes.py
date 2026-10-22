@@ -25,7 +25,10 @@ PAD_WIDTH = 4
 
 
 def format_code(type_prefix: str, value: int) -> str:
-    return f"{CODE_PREFIX}-{type_prefix}-{value:0{PAD_WIDTH}d}"
+    prefix = getattr(type_prefix, "value", type_prefix)
+    if prefix in {"RETAIL", "INDUSTRIAL"}:
+        prefix = prefix[:1]
+    return f"{CODE_PREFIX}-{prefix}-{value:0{PAD_WIDTH}d}"
 
 
 class CustomerCodeAllocator:
