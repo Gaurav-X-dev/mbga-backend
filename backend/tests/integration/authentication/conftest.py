@@ -40,11 +40,6 @@ TEST_OTP = "4826"
 DATA_TABLES = [
     "auth_throttle_events",
     "audit_logs",
-    # The delivery area and the vans. Both are reference data a test may add to, and a row
-    # left behind is read by the next test as though the agency really had it.
-    "cities",
-    "states",
-    "vehicles",
     "login_sessions",
     "otp_challenges",
     # Orders, expenses and pricing hang off merchants and customer_profiles, so they
@@ -222,12 +217,12 @@ class AuthEnv:
             await db.commit()
         return merchant
 
-    async def create_merchant_staff(self, merchant: Merchant | None = None, *, roles: tuple[str, ...] = ("manager",), link_status: str = "ACTIVE", staff_type: str = "PRIMARY_MANAGER") -> tuple[User, Merchant]:
+    async def create_merchant_staff(self, merchant: Merchant | None = None, *, roles: tuple[str, ...] = ("manager",), link_status: str = "ACTIVE") -> tuple[User, Merchant]:
         merchant = merchant or await self.create_merchant()
         user = await self.create_user(roles=roles, name="Test Manager")
         now = datetime.now(UTC)
         async with self.sessions() as db:
-            db.add(MerchantUser(id=str(uuid4()), merchant_id=merchant.id, user_id=user.id, staff_type=staff_type, status=link_status, created_at=now, updated_at=now))
+            db.add(MerchantUser(id=str(uuid4()), merchant_id=merchant.id, user_id=user.id, staff_type="PRIMARY_MANAGER", status=link_status, created_at=now, updated_at=now))
             await db.commit()
         return user, merchant
 

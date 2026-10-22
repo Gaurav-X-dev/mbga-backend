@@ -20,28 +20,10 @@ class SeedState:
 
 #: Haryana's districts, alphabetical. The order a dropdown shows them in is this one.
 HARYANA_CITIES = (
-    "Ambala",
-    "Bhiwani",
-    "Charkhi Dadri",
-    "Faridabad",
-    "Fatehabad",
-    "Gurugram",
-    "Hisar",
-    "Jhajjar",
-    "Jind",
-    "Kaithal",
-    "Karnal",
-    "Kurukshetra",
-    "Mahendragarh",
-    "Nuh",
-    "Palwal",
-    "Panchkula",
-    "Panipat",
-    "Rewari",
-    "Rohtak",
-    "Sirsa",
-    "Sonipat",
-    "Yamunanagar",
+    "Ambala", "Bhiwani", "Charkhi Dadri", "Faridabad", "Fatehabad", "Gurugram",
+    "Hisar", "Jhajjar", "Jind", "Kaithal", "Karnal", "Kurukshetra", "Mahendragarh",
+    "Nuh", "Palwal", "Panchkula", "Panipat", "Rewari", "Rohtak", "Sirsa",
+    "Sonipat", "Yamunanagar",
 )
 
 SEED_STATES: tuple[SeedState, ...] = (SeedState("HR", "Haryana", HARYANA_CITIES),)

@@ -39,7 +39,7 @@ def invalid(field: str, code: str, message: str) -> ApiError:
     )
 
 
-def check_amount(amount: int, invoice: Invoice, *, allow_excess: bool = False) -> int:
+def check_amount(amount: int, invoice: Invoice) -> int:
     """The amount collected, or a field error naming what is wrong.
 
     Over-collection is refused rather than held as credit. The platform has no customer wallet,
@@ -48,7 +48,7 @@ def check_amount(amount: int, invoice: Invoice, *, allow_excess: bool = False) -
     """
     if amount <= 0 or amount > MAX_PAYMENT_AMOUNT:
         raise invalid("amount", "invalid_amount", INVALID_AMOUNT_MESSAGE)
-    if amount > invoice.balance and not allow_excess:
+    if amount > invoice.balance:
         raise invalid("amount", "exceeds_balance", EXCEEDS_BALANCE_MESSAGE)
     return amount
 

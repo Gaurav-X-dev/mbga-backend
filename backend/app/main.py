@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
 
-from app.api import api_router
+from app.api import api_router, api_v2_router
 from app.config.app import get_settings
 from app.shared.exceptions.handlers import register_exception_handlers
 from app.shared.middleware.delivery_envelope import (
@@ -198,6 +198,7 @@ def create_app() -> FastAPI:
     # Outermost, so request IDs and security headers are also set on CORS and error responses.
     app.add_middleware(RequestContextMiddleware, hsts=not settings.is_local_environment)
     app.include_router(api_router, prefix=settings.api_prefix)
+    app.include_router(api_v2_router, prefix='/api/v2')
     if docs_enabled:
         _register_channel_docs(app)
     register_exception_handlers(app)

@@ -8,7 +8,6 @@ from, and a driver to assign. `ready_to_dispatch()` assembles the whole chain so
 themselves read as the thing under test rather than as fixture plumbing.
 """
 
-from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -132,39 +131,8 @@ async def refill(auth_env, token: str, cylinder: str = "LPG_19KG", quantity: int
     assert response.status_code == 201, response.text
 
 
-async def deliver_today(auth_env) -> None:
-    """Push the order cut-off past the end of the day, for this test's database.
-
-    Without it these tests pass in the morning and fail every afternoon. An order placed at or
-    after the cut-off is promised for *tomorrow*, so the slip is scheduled for tomorrow, and
-    `/deliveries/today` is then correctly empty - the test has not found a bug, it has found
-    four o'clock. The cut-off is a real rule with its own tests; here it is noise, so it is
-    moved out of the way rather than worked around.
-    """
-    from sqlalchemy import update
-
-    from app.modules.platform_settings.models import SINGLETON_ID, PlatformSettings
-
-    changed = await auth_env.execute(
-        update(PlatformSettings)
-        .where(PlatformSettings.id == SINGLETON_ID)
-        .values(order_cutoff_hour=23)
-    )
-    if not changed.rowcount:
-        async with auth_env.sessions() as db:
-            db.add(
-                PlatformSettings(
-                    id=SINGLETON_ID,
-                    order_cutoff_hour=23,
-                    updated_at=datetime.now(UTC),
-                )
-            )
-            await db.commit()
-
-
 async def place_order(auth_env, token: str, customer_id: str, *lines) -> dict:
     """Place an order and confirm it, so a slip may be raised against it."""
-    await deliver_today(auth_env)
     items = [{"cylinderType": code, "quantity": qty} for code, qty in (lines or (("LPG_19KG", 4),))]
     created = await auth_env.post(
         ORDERS, token, {"customerId": customer_id, "items": items, "orderMode": "NEW"}

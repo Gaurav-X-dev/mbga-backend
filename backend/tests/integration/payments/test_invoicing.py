@@ -6,8 +6,6 @@ check the bill that falls out of it.
 """
 
 import pytest
-
-from app.shared.date_time.business_calendar import business_today, financial_year
 from sqlalchemy import func, select
 
 from app.modules.orders.models import Order
@@ -22,7 +20,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.mysql, pytest.mark.asyncio]
 async def test_confirming_a_delivery_raises_the_invoice(env):
     _token, _merchant, _customer, invoice = await billed(env)
 
-    assert invoice["invoiceNumber"].startswith(f"MBGA/{financial_year(business_today())}/")
+    assert invoice["invoiceNumber"].startswith("MBGA/INV/")
     assert invoice["status"] == InvoiceStatus.UNPAID.value
     assert invoice["balance"] == invoice["totalAmount"]
     assert invoice["paidAmount"] == 0
@@ -147,9 +145,8 @@ async def test_each_merchant_numbers_its_own_invoices_from_one(env):
     _token, _merchant, _customer, first = await billed(env)
     _t2, _m2, _c2, second = await billed(env)
 
-    opening = f"MBGA/{financial_year(business_today())}/0001"
-    assert first["invoiceNumber"] == opening
-    assert second["invoiceNumber"] == opening
+    assert first["invoiceNumber"] == "MBGA/INV/0001"
+    assert second["invoiceNumber"] == "MBGA/INV/0001"
     assert first["id"] != second["id"]
 
 

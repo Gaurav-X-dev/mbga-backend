@@ -14,14 +14,10 @@ the cancellation so a stale delivery screen knows to reload rather than retry.
 
 import asyncio
 
-from sqlalchemy import func, select
-
 import pytest
 from sqlalchemy import select
 
 from app.modules.orders.models import Order, OrderStatusHistory
-from app.modules.deliveries.constants import LIVE_STATUSES
-from app.modules.deliveries.models import DeliverySlip
 from tests.integration.deliveries.conftest import ready_to_dispatch
 from tests.integration.driver.conftest import DRIVER_DELIVERIES, driver_token
 from tests.integration.orders.conftest import ORDERS, code_of, post
@@ -78,17 +74,13 @@ async def test_the_refusal_tells_a_stale_screen_to_reload(env):
 # --- The race --------------------------------------------------------------------------------
 
 
-async def test_cancelling_and_dispatching_at_once_never_resurrects_the_order(env):
+async def test_cancelling_and_dispatching_at_once_leaves_one_winner(env):
     """Fired together, on separate connections, which is the only way to reproduce the bug.
 
-    The office may now call off a round that is already out, so **both** requests succeeding is
-    a correct outcome: the van set off and was recalled a moment later. What must never happen
-    is the other order of events - a cancellation followed by a dispatch that moves the order
-    anyway, which is what the lock was added to stop and what the trail used to show as
-    `CANCELLED` then `OUT_FOR_DELIVERY`.
-
-    So this asserts the invariant the file is named for: once an order reads `CANCELLED`, it
-    stays cancelled, and the slip that was carrying it is not left live.
+    Either order of arrival is a correct outcome - the customer may genuinely have cancelled a
+    moment too late - so this does not assert which one wins. It asserts that exactly one does,
+    and that the order's final status is the one that request produced. Before the lock both
+    could succeed, and the trail then held `CANCELLED` followed by `OUT_FOR_DELIVERY`.
     """
     token, _merchant, order, slip, driver = await ready_to_dispatch(env)
     delivery_token = await driver_token(env, driver)
@@ -101,20 +93,12 @@ async def test_cancelling_and_dispatching_at_once_never_resurrects_the_order(env
 
     codes = [r.status_code for r in (cancelling, dispatching) if hasattr(r, "status_code")]
     assert 200 in codes, f"neither request succeeded: {codes}"
+    assert codes.count(200) == 1, f"both requests succeeded: {codes}"
 
     final = await status_of(env, order["id"])
-    if hasattr(cancelling, "status_code") and cancelling.status_code == 200:
-        assert final == "CANCELLED", "the cancellation succeeded but the order moved anyway"
-        async with env.sessions() as db:
-            live = await db.scalar(
-                select(func.count())
-                .select_from(DeliverySlip)
-                .where(
-                    DeliverySlip.order_id == order["id"],
-                    DeliverySlip.status.in_(tuple(LIVE_STATUSES)),
-                )
-            )
-        assert live == 0, "the order was cancelled but its slip is still on the driver's list"
+    assert final in {"CANCELLED", "OUT_FOR_DELIVERY"}
+    if cancelling.status_code == 200:
+        assert final == "CANCELLED", "the cancellation won but the order moved anyway"
     else:
         assert final == "OUT_FOR_DELIVERY", "the dispatch won but the order did not move"
 

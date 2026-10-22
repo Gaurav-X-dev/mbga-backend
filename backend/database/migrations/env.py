@@ -18,6 +18,7 @@ from app.modules.authentication import otp_models as otp_models
 from app.modules.constants import models as constant_models  # noqa: F401
 from app.modules.credit import models as credit_models  # noqa: F401
 from app.modules.customers import models as customer_models  # noqa: F401
+from app.modules.customers import v2_models as customer_v2_models  # noqa: F401
 from app.modules.deliveries import models as delivery_slip_models  # noqa: F401
 from app.modules.delivery_users import models as delivery_user_models  # noqa: F401
 from app.modules.expenses import models as expense_models  # noqa: F401

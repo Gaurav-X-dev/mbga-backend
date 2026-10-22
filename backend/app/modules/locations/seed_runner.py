@@ -43,7 +43,9 @@ class LocationSeedRunner:
             # and re-running must not put "Gurugram" back beside it.
             existing = {
                 row.slug
-                for row in await self.session.scalars(select(City).where(City.state_id == state.id))
+                for row in await self.session.scalars(
+                    select(City).where(City.state_id == state.id)
+                )
             }
             for city_order, name in enumerate(seed.cities):
                 slug = slugify(name)

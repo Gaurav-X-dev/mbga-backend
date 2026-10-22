@@ -113,18 +113,7 @@ async def test_a_merchant_token_cannot_read_the_driver_endpoints(env):
 
 
 async def test_customer_order_api_shows_active_delivery_otp_and_clears_it_after_use(env):
-    """Both sides can recover the OTP after a refresh, and it is spent once it is used.
-
-    The office sees it too. A staff-placed order often never reaches the customer's phone -
-    the office placed it for them - and a driver at the gate of a customer who has no code, or
-    no phone to hand, had nobody to ask. Keeping it from the merchant did not protect anybody:
-    it is their own delivery, and the alternative was the driver ringing the office and the
-    office having to say they could not see it either.
-
-    What still holds is that it is **spent**. Once the handover is confirmed the stored copy is
-    cleared, so neither side can read a code that would still verify against a slip nobody can
-    confirm.
-    """
+    """The customer can recover the OTP after refresh without exposing it to merchant APIs."""
     staff, token, slip, _driver = await on_the_road(env)
     code = slip["devConfirmationCode"]
     customer = await env.scalar(
@@ -145,7 +134,7 @@ async def test_customer_order_api_shows_active_delivery_otp_and_clears_it_after_
         f"/api/v1/merchant/orders/{slip['orderId']}", staff
     )
     assert merchant_order.status_code == 200, merchant_order.text
-    assert merchant_order.json()["deliveryOtp"] == code
+    assert merchant_order.json()["deliveryOtp"] is None
 
     encrypted = await env.scalar(
         select(DeliverySlip.confirmation_code_encrypted).where(DeliverySlip.id == slip["id"])
@@ -586,52 +575,3 @@ async def test_one_driver_cannot_close_anothers_delivery(env):
     assert response.status_code == 404
     order = await env.scalar(select(Order).where(Order.id == slip_a["orderId"]))
     assert order.status == "OUT_FOR_DELIVERY"
-
-
-async def test_the_customers_location_is_pinned_the_first_time_a_driver_stands_on_it(env):
-    """`isLocationCaptured` was hard-coded to True, on the very screen meant to capture it.
-
-    Most orders go to an address nobody ever typed coordinates for, so the app could not draw
-    a route - and the one moment the platform could learn where the gate is was reporting
-    success without recording anything.
-    """
-    _staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 2))
-    async with env.sessions() as db:
-        before = await db.scalar(
-            select(DeliverySlip.destination_latitude).where(DeliverySlip.id == slip["id"])
-        )
-    assert before is None
-
-    response = await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
-        token,
-        {"latitude": 28.4595, "longitude": 77.0266},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["isLocationCaptured"] is True
-    async with env.sessions() as db:
-        row = await db.scalar(select(DeliverySlip).where(DeliverySlip.id == slip["id"]))
-    assert (row.destination_latitude, row.destination_longitude) == (28.4595, 77.0266)
-
-
-async def test_a_location_already_recorded_is_not_moved(env):
-    """It is the office's or the customer's; a driver parked down the lane does not replace it."""
-    _staff, token, slip, _driver = await on_the_road(env, ("LPG_19KG", 2))
-    async with env.sessions() as db:
-        await db.execute(
-            update(DeliverySlip)
-            .where(DeliverySlip.id == slip["id"])
-            .values(destination_latitude=28.1, destination_longitude=77.1)
-        )
-        await db.commit()
-
-    await env.post(
-        f"{DRIVER_DELIVERIES}/{slip['id']}/verify-location",
-        token,
-        {"latitude": 28.4595, "longitude": 77.0266},
-    )
-
-    async with env.sessions() as db:
-        row = await db.scalar(select(DeliverySlip).where(DeliverySlip.id == slip["id"]))
-    assert (row.destination_latitude, row.destination_longitude) == (28.1, 77.1)

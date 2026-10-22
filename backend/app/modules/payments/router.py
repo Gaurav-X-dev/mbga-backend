@@ -358,10 +358,8 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
             and NEFT land `PENDING` until somebody matches the reference against a statement,
             and the reference is required for exactly that reason.
 
-            A merchant receives `422` for an amount above the balance. Platform admins may
-            record an intentional excess collection; the full amount remains on the payment
-            audit row while the invoice balance becomes zero. A missing UTR is still `422`,
-            and `409` means the invoice was already settled before this request.
+            A `422` names the field: `amount` for a figure above the balance, `reference` for a
+            missing UTR. `409` means the invoice is already settled in full.
             """
             return await service.record(payload)
 

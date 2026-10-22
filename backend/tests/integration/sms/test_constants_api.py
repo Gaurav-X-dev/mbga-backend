@@ -77,23 +77,13 @@ async def test_an_unknown_group_is_simply_empty(env):
         ("customerTypes", CustomerType),
         ("documentTypes", KycDocumentType),
         ("pricingTiers", PricingTier),
+        ("paymentModes", PaymentMode),
     ],
 )
 async def test_the_keys_are_exactly_what_the_write_endpoints_accept(env, group, enum):
     """An option the backend would reject is worse than no option at all."""
     keys = {r["constKey"] for r in (await env.client.get(CUSTOMER, params={"group": group})).json()}
     assert keys == {member.value for member in enum}
-
-
-async def test_payment_modes_offer_only_what_is_still_taken(env):
-    """`PaymentMode` is wider than the offer, so that a payment recorded in a withdrawn mode
-    keeps reading back. The dropdown must follow the offer, not the enum."""
-    from app.modules.payments.constants import OFFERED_PAYMENT_MODES
-
-    rows = (await env.client.get(CUSTOMER, params={"group": "paymentModes"})).json()
-
-    assert {r["constKey"] for r in rows} == {mode.value for mode in OFFERED_PAYMENT_MODES}
-    assert "NEFT" not in {r["constKey"] for r in rows}
 
 
 async def test_the_seeder_is_idempotent_and_keeps_edited_labels(env):

@@ -289,15 +289,8 @@ async def test_a_placed_order_can_be_cancelled(env):
     assert trail[1]["note"] == "Customer changed their mind"
 
 
-async def test_the_office_may_cancel_an_order_on_the_van(env):
-    """The agency can reach its own driver.
-
-    An office that could not call off a round until the van came back had to let a delivery
-    nobody wanted run all the way to the gate. Nothing is booked back: counts only drop at
-    handover, so an order cancelled while the van is out never took a cylinder off the books.
-
-    The customer's own app is stricter - see `test_cancel_window.py`.
-    """
+async def test_merchant_cannot_cancel_an_order_on_the_van(env):
+    """In-transit cancellation belongs to the driver flow and requires customer OTP."""
     token, merchant, _user = await order_staff(env)
     customer = await make_customer(env, merchant)
     order = await created_order(env, token, customer.id)
@@ -305,23 +298,6 @@ async def test_the_office_may_cancel_an_order_on_the_van(env):
         Order.__table__.update()
         .where(Order.__table__.c.id == order["id"])
         .values(status="OUT_FOR_DELIVERY")
-    )
-
-    response = await post(env, f"{ORDERS}/{order['id']}/cancel", token)
-
-    assert response.status_code == 200, response.text
-    assert response.json()["status"] == "CANCELLED"
-
-
-async def test_the_office_may_not_cancel_a_delivered_order(env):
-    """Past the handover the cylinders are the customer's and the invoice exists."""
-    token, merchant, _user = await order_staff(env)
-    customer = await make_customer(env, merchant)
-    order = await created_order(env, token, customer.id)
-    await env.execute(
-        Order.__table__.update()
-        .where(Order.__table__.c.id == order["id"])
-        .values(status="DELIVERED")
     )
 
     response = await post(env, f"{ORDERS}/{order['id']}/cancel", token)

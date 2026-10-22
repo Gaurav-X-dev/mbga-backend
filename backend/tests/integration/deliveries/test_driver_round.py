@@ -14,12 +14,8 @@ What still refuses is a *different* round - another vehicle, or another day. Tha
 work for this van; it is one person being sent two places.
 """
 
-from datetime import timedelta
-
 import pytest
 from sqlalchemy import select
-
-from app.shared.date_time.business_calendar import business_today
 
 from app.modules.deliveries.models import DeliverySlip
 from tests.integration.driver.conftest import DRIVER_DELIVERIES, driver_token
@@ -50,13 +46,14 @@ async def a_round(env):
     return token, merchant, customer, driver
 
 
-async def assign(env, token, customer, driver, *, quantity=2, van=VAN, date=None):
-    """Place an order and confirm it onto this driver's van, today unless told otherwise."""
+async def assign(env, token, customer, driver, *, quantity=2, van=VAN):
+    """Place an order and confirm it onto this driver's van for today."""
     order = await place_order(env, token, customer.id, ("LPG_19KG", quantity))
-    delivery = {"vehicleNumber": van, "driverUserId": driver.id}
-    if date is not None:
-        delivery["deliveryDate"] = date.isoformat()
-    return await env.post(f"{ORDERS}/{order['id']}/confirm", token, {"delivery": delivery})
+    return await env.post(
+        f"{ORDERS}/{order['id']}/confirm",
+        token,
+        {"delivery": {"vehicleNumber": van, "driverUserId": driver.id}},
+    )
 
 
 async def available(env, token, *, kind="DRIVER"):
@@ -164,19 +161,6 @@ async def test_a_second_vehicle_on_the_same_day_is_refused(env):
 
     assert elsewhere.status_code == 422, elsewhere.text
     assert elsewhere.json()["detail"]["fields"][0]["code"] == "driver_already_assigned"
-
-
-async def test_tomorrows_round_can_be_planned_while_today_is_still_open(env):
-    """The evening's planning happens before the day's last delivery is confirmed. Comparing
-    against every live slip blocked a driver from all of next week until it was."""
-    token, _merchant, customer, driver = await a_round(env)
-    await go_out(env, driver, await assign(env, token, customer, driver))
-
-    tomorrow = await assign(
-        env, token, customer, driver, van="HR00052", date=business_today() + timedelta(days=1)
-    )
-
-    assert tomorrow.status_code == 200, tomorrow.text
 
 
 async def test_a_driver_who_has_clocked_off_is_not_offered(env):

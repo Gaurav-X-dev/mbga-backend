@@ -47,10 +47,6 @@ def test_one_rupee_over_the_balance_is_not():
     assert caught.value.detail["fields"][0]["message"] == "Exceeds balance"
 
 
-def test_admin_can_explicitly_allow_an_amount_above_the_balance():
-    assert validation.check_amount(1200, invoice(1000), allow_excess=True) == 1200
-
-
 def test_the_remaining_balance_after_a_part_payment_is_what_counts():
     part_paid = invoice(1000, paid=400)
 
