@@ -8,12 +8,9 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.business_schemas import CustomerRegistrationRequest, DocumentSubmission
-from app.modules.customers.constants import (
-    ALLOWED_DOCUMENTS,
-    CustomerType,
-    DocumentStatus,
-)
+from app.modules.customers.constants import DocumentStatus
 from app.modules.customers.documents import DocumentAccessService
 from app.modules.customers.models import CustomerDocument, CustomerProfile, KycApplication
 from app.modules.customers.registration import CustomerRegistrationService, ValidatedRegistration
@@ -22,7 +19,7 @@ from app.modules.customers.v2_schemas import DocumentSubmissionV2
 from app.modules.customers.validators import (
     FieldErrors,
     mask_document_number,
-    validate_document_number,
+    validate_dynamic_document_number,
 )
 from app.shared.business.actor import BusinessActor
 from app.shared.exceptions.api_error import ApiError
@@ -60,20 +57,26 @@ class CustomerRegistrationV2Service:
         profile: CustomerProfile | None,
         actor: BusinessActor,
         submissions: list[DocumentSubmissionV2],
-        customer_type: CustomerType,
+        customer_type: str,
     ) -> list[PreparedDocumentV2]:
         errors = FieldErrors()
         seen_types: set = set()
         prepared: list[PreparedDocumentV2] = []
-        allowed = set(ALLOWED_DOCUMENTS[customer_type])
+        customer_type_code = str(customer_type).strip().upper()
+        catalogue = BusinessCatalogueService(self.session)
+        await catalogue.require_active_customer_type(customer_type_code)
+        rules = await catalogue.active_kyc_requirements(customer_type_code)
+        definitions = {definition.code: definition for _rule, definition in rules}
+        allowed = set(definitions)
 
         for doc_index, submission in enumerate(submissions):
             prefix = f"documents.{doc_index}"
-            if submission.type in seen_types:
+            sub_type = str(getattr(submission.type, "value", submission.type) or "").strip().upper()
+            if sub_type in seen_types:
                 errors.add(prefix, "duplicate_type", "Submit each document type only once.")
                 continue
-            seen_types.add(submission.type)
-            if submission.type not in allowed:
+            seen_types.add(sub_type)
+            if sub_type not in allowed:
                 errors.add(prefix, "not_applicable", "This document is not applicable to the customer type.")
                 continue
             sides = [item.side for item in submission.files]
@@ -84,7 +87,8 @@ class CustomerRegistrationV2Service:
             if len(set(file_ids)) != len(file_ids):
                 errors.add(f"{prefix}.files", "duplicate_file", "The same image cannot be submitted twice.")
                 continue
-            number = validate_document_number(submission.type, submission.number, errors)
+            definition = definitions[sub_type]
+            number = validate_dynamic_document_number(sub_type, submission.number, definition, errors)
             if number is None:
                 continue
 
@@ -93,7 +97,7 @@ class CustomerRegistrationV2Service:
                     await self.session.scalars(
                         select(CustomerDocumentFileV2).where(
                             CustomerDocumentFileV2.customer_id == profile.id,
-                            CustomerDocumentFileV2.document_type == submission.type.value,
+                            CustomerDocumentFileV2.document_type == sub_type,
                             CustomerDocumentFileV2.superseded_at.is_(None),
                         )
                     )
@@ -113,7 +117,7 @@ class CustomerRegistrationV2Service:
                         continue
                 else:
                     try:
-                        upload = await self.access.attachable(actor, item.file_id, submission.type)
+                        upload = await self.access.attachable(actor, item.file_id, sub_type)
                     except ApiError:
                         errors.add(f"{prefix}.files.{file_index}.fileId", "not_found", "Upload this document again.")
                         continue
@@ -178,7 +182,14 @@ class CustomerRegistrationV2Service:
         await self.base.ensure_numbers_are_unique(profile, uniqueness_data)
         # `apply_profile_fields` derives GSTIN from the documents it received. Preserve the
         # value when an idempotent v2 save reuses the already-linked GST primary.
-        gst = next((item.number for item in prepared if item.submission.type.value == "GST"), None)
+        gst = next(
+            (
+                item.number
+                for item in prepared
+                if str(getattr(item.submission.type, "value", item.submission.type) or "").strip().upper() == "GST"
+            ),
+            None,
+        )
         if gst is not None:
             profile.gst_number = gst
         await self._replace_mappings(profile, prepared)
@@ -188,11 +199,12 @@ class CustomerRegistrationV2Service:
     ) -> None:
         now = datetime.now(UTC)
         for item in prepared:
+            sub_type = str(getattr(item.submission.type, "value", item.submission.type) or "").strip().upper()
             current = list(
                 await self.session.scalars(
                     select(CustomerDocumentFileV2).where(
                         CustomerDocumentFileV2.customer_id == profile.id,
-                        CustomerDocumentFileV2.document_type == item.submission.type.value,
+                        CustomerDocumentFileV2.document_type == sub_type,
                         CustomerDocumentFileV2.superseded_at.is_(None),
                     )
                 )
@@ -206,11 +218,11 @@ class CustomerRegistrationV2Service:
 
             primary = item.primary
             if primary.customer_id != profile.id:
-                await self.base._supersede_previous(profile, item.submission.type, primary, now)
+                await self.base._supersede_previous(profile, sub_type, primary, now)
                 primary.customer_id = profile.id
             primary.merchant_id = profile.merchant_id
             primary.number_encrypted = self.base.cipher.encrypt(item.number)
-            primary.number_masked = mask_document_number(item.submission.type, item.number)
+            primary.number_masked = mask_document_number(sub_type, item.number)
             primary.number_lookup_hash = self.base.cipher.lookup_hash(item.number)
             primary.document_number = None
             for index, (file_data, upload) in enumerate(zip(item.submission.files, item.uploads, strict=True), start=1):
@@ -232,7 +244,7 @@ class CustomerRegistrationV2Service:
                     mapping = CustomerDocumentFileV2(
                         id=str(uuid4()),
                         customer_id=profile.id,
-                        document_type=item.submission.type.value,
+                        document_type=sub_type,
                         file_id=upload.file_id,
                         superseded_at=None,
                         created_at=now,

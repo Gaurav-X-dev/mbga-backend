@@ -6,8 +6,6 @@ from enum import StrEnum
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.customers.business_schemas import Address, SiteSubmission
-from app.modules.customers.constants import KycDocumentType
-from app.modules.customers.schemas import CustomerType
 
 
 class DocumentSide(StrEnum):
@@ -34,7 +32,7 @@ class DocumentFileSubmissionV2(BaseModel):
 
 
 class DocumentSubmissionV2(BaseModel):
-    type: KycDocumentType
+    type: str = Field(min_length=1, max_length=40)
     number: str = Field(max_length=40)
     files: list[DocumentFileSubmissionV2] = Field(min_length=1, max_length=2)
     # Accepted only for compatibility with the already-built frontend. `files` remains the
@@ -44,6 +42,15 @@ class DocumentSubmissionV2(BaseModel):
     file_name: str | None = Field(default=None, alias="fileName", max_length=180)
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def normalize_type(cls, value):
+        code = getattr(value, "value", value)
+        code = str(code or "").strip().upper()
+        if not code or len(code) > 40 or not code.replace("_", "").isalnum():
+            raise ValueError("Enter a valid document type code.")
+        return code
 
     @model_validator(mode="after")
     def duplicated_legacy_fields_must_match(self):
@@ -58,7 +65,7 @@ class DocumentSubmissionV2(BaseModel):
 class CustomerProfileV2Payload(BaseModel):
     mobile_number: str | None = None
     merchant_code: str = Field(min_length=1, max_length=80)
-    customer_type: CustomerType | None = Field(
+    customer_type: str | None = Field(
         default=None, validation_alias=AliasChoices("customer_type", "customerType")
     )
     name: str | None = Field(default=None, min_length=2, max_length=160)
@@ -87,7 +94,7 @@ class CustomerProfileV2Payload(BaseModel):
 
 class CustomerProfileV2Update(BaseModel):
     merchant_code: str | None = Field(default=None, min_length=1, max_length=80)
-    customer_type: CustomerType | None = Field(
+    customer_type: str | None = Field(
         default=None, validation_alias=AliasChoices("customer_type", "customerType")
     )
     name: str | None = Field(default=None, min_length=2, max_length=160)
