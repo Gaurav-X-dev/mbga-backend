@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.customers.constants import CustomerType
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.models import CustomerProfile
 from app.modules.orders.models import Order, OrderItem
 from app.modules.payments.constants import DEFAULT_PAYMENT_TERM_DAYS, InvoiceStatus
@@ -104,6 +104,9 @@ class InvoiceRaiser:
             on=moment.date()
         )
 
+        customer_type = await BusinessCatalogueService(self.session).require_active_customer_type(
+            order.customer_type
+        )
         invoice = Invoice(
             id=str(uuid4()),
             invoice_number=number,
@@ -126,7 +129,7 @@ class InvoiceRaiser:
             due_at=moment + timedelta(days=DEFAULT_PAYMENT_TERM_DAYS),
             # An industrial buyer claims input credit, so their document is a tax invoice. The
             # GST split is on both; this decides which one is printed.
-            is_gst_invoice=(order.customer_type == CustomerType.INDUSTRIAL.value),
+            is_gst_invoice=customer_type.requires_gst_invoice,
             gstin=(customer.gst_number if customer else None),
             created_at=moment,
             updated_at=moment,

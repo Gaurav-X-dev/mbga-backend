@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import (
     CustomerListResponse,
@@ -22,7 +23,7 @@ from app.modules.customers.business_schemas import (
     CustomerResponse,
     EligibilityResponse,
 )
-from app.modules.customers.constants import MOBILE_TO_ACCOUNT_STATUSES, CustomerType
+from app.modules.customers.constants import MOBILE_TO_ACCOUNT_STATUSES
 from app.modules.customers.dependencies import ActorDep, RegistrationDep
 from app.modules.customers.mapping import CustomerViewLoader
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
@@ -123,8 +124,6 @@ def _apply_filters(statement, *, search: str | None, customer_type: str | None, 
         )
     if customer_type and customer_type.upper() not in {"ALL", ""}:
         value = customer_type.upper()
-        if value not in CustomerType.__members__:
-            raise _invalid_filter("customerType", "Use RETAIL, INDUSTRIAL or ALL.")
         statement = statement.where(CustomerProfile.customer_type == value)
     if account_status and account_status.upper() not in {"ALL", ""}:
         value = account_status.upper()
@@ -172,5 +171,10 @@ async def customer_eligibility(customer_id: str, actor: ActorDep, session: Sessi
     sites = list(
         await session.scalars(select(CustomerDeliverySite).where(CustomerDeliverySite.customer_id == profile.id))
     )
-    outcome = eligibility_policy.evaluate(profile, sites)
+    definition = await BusinessCatalogueService(session).require_active_customer_type(
+        profile.customer_type
+    )
+    outcome = eligibility_policy.evaluate(
+        profile, sites, requires_delivery_sites=definition.requires_delivery_sites
+    )
     return EligibilityResponse(eligible=outcome.eligible, reasons=outcome.reasons)

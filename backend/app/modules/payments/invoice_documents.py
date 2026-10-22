@@ -19,9 +19,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.customers.models import CustomerProfile
+from app.modules.business_catalogue.models import CylinderTypeDefinition
 from app.modules.deliveries.models import DeliverySlip
 from app.modules.merchants.models import Merchant
-from app.modules.orders.constants import ORDER_LABELS
 from app.modules.orders.models import Order, OrderItem
 from app.modules.payments.models import Invoice
 
@@ -129,14 +129,20 @@ async def build_issue_snapshot(
         select(DeliverySlip).where(DeliverySlip.order_id == order.id).order_by(DeliverySlip.created_at.desc())
     )
     lines = list(await session.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.position)))
+    line_codes = {line.cylinder_type.strip().upper() for line in lines}
+    label_rows = await session.execute(
+        select(CylinderTypeDefinition.code, CylinderTypeDefinition.label).where(
+            CylinderTypeDefinition.code.in_(line_codes)
+        )
+    ) if line_codes else []
+    cylinder_labels = {code: label for code, label in label_rows}
     invoice_lines: list[dict[str, Any]] = []
     for line in lines:
         quantity = line.quantity if delivered is None else min(delivered.get(line.cylinder_type, 0), line.quantity)
         if quantity <= 0:
             continue
-        label = next(
-            (value for key, value in ORDER_LABELS.items() if key.value == line.cylinder_type),
-            line.cylinder_type.replace("_", " "),
+        label = cylinder_labels.get(
+            line.cylinder_type.strip().upper(), line.cylinder_type.replace("_", " ")
         )
         invoice_lines.append(
             {

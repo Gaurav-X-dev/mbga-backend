@@ -25,12 +25,11 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.customers.constants import CustomerType
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
-from app.modules.orders.constants import ORDER_LABELS, QUANTITY_LIMITS, REGISTERED_ADDRESS_LABEL
+from app.modules.orders.constants import REGISTERED_ADDRESS_LABEL
 from app.modules.orders.models import Order, OrderItem
 from app.modules.orders.schemas import OrderLineRequest
-from app.modules.pricing.constants import CylinderType, cylinders_for
+from app.modules.business_catalogue.service import BusinessCatalogueService
 
 # Reasons the app renders verbatim next to a dropped line.
 UNKNOWN_TYPE = "This cylinder is no longer offered."
@@ -44,13 +43,10 @@ SITE_GONE = "The delivery site on the original order is no longer available. Cho
 class DroppedLine:
     """A source line that cannot be repeated, with the sentence explaining why."""
 
-    cylinder_type: CylinderType
+    cylinder_type: str
     quantity: int
     reason: str
-
-    @property
-    def label(self) -> str:
-        return ORDER_LABELS[self.cylinder_type]
+    label: str
 
 
 @dataclass
@@ -98,22 +94,33 @@ class ReorderPlanner:
         basket = items if items is not None else await self._source_basket(source)
         plan = ReorderPlan(source=source, customer=customer)
         customer_type = (customer.customer_type or "").upper()
+        catalogue = BusinessCatalogueService(self.session)
+        customer_definition = await catalogue.require_active_customer_type(customer_type)
+        eligible = await catalogue.eligible_cylinders(customer_type)
+        rules = {
+            definition.code: (mapping, definition)
+            for mapping, definition in eligible
+        }
 
         for line in basket:
-            reason = self._why_not(line, customer_type)
+            rule = rules.get(line.cylinder_type)
+            reason = self._why_not(line, rule)
             if reason is None:
                 plan.items.append(line)
             else:
                 plan.dropped.append(
-                    DroppedLine(cylinder_type=line.cylinder_type, quantity=line.quantity, reason=reason)
+                    DroppedLine(
+                        cylinder_type=line.cylinder_type,
+                        quantity=line.quantity,
+                        reason=reason,
+                        label=(rule[1].short_label or rule[1].label) if rule else line.cylinder_type,
+                    )
                 )
 
         plan.site = await self._resolve_site(source, customer, delivery_site_id)
         # An industrial customer always needs a live site. The source order's may have been
         # deactivated since, which is not something the customer can see from the old order.
-        plan.site_required_but_missing = (
-            customer_type == CustomerType.INDUSTRIAL.value and plan.site is None
-        )
+        plan.site_required_but_missing = customer_definition.requires_delivery_sites and plan.site is None
         return plan
 
     async def _source_basket(self, source: Order) -> list[OrderLineRequest]:
@@ -125,28 +132,20 @@ class ReorderPlanner:
         )
         basket: list[OrderLineRequest] = []
         for row in rows:
-            try:
-                cylinder_type = CylinderType(row.cylinder_type)
-            except ValueError:
-                # A type retired since the order was placed. It is reported as dropped by
-                # `_why_not` below, which needs a known enum member - so it is carried
-                # through as a raw marker instead.
-                basket.append(_retired_line(row))
-                continue
             basket.append(
-                OrderLineRequest.model_construct(cylinder_type=cylinder_type, quantity=row.quantity)
+                OrderLineRequest.model_construct(cylinder_type=row.cylinder_type, quantity=row.quantity)
             )
         return basket
 
     @staticmethod
-    def _why_not(line: OrderLineRequest, customer_type: str) -> str | None:
+    def _why_not(line: OrderLineRequest, rule) -> str | None:
         """The reason this line cannot be repeated, or None when it can."""
-        if not isinstance(line.cylinder_type, CylinderType):
-            return UNKNOWN_TYPE
-        if line.cylinder_type not in cylinders_for(customer_type):
+        if rule is None:
             return INDUSTRIAL_ONLY
-        minimum, maximum = QUANTITY_LIMITS[line.cylinder_type]
-        if not minimum <= line.quantity <= maximum:
+        mapping, _definition = rule
+        if line.quantity < mapping.min_quantity or (
+            mapping.max_quantity is not None and line.quantity > mapping.max_quantity
+        ):
             return OVER_LIMIT
         return None
 

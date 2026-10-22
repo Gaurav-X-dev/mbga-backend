@@ -16,7 +16,7 @@ from app.modules.authentication.account_state import (
     CUSTOMER_SUSPENDED,
     CUSTOMER_UNDER_REVIEW,
 )
-from app.modules.customers.constants import CustomerType, KycStatus
+from app.modules.customers.constants import KycStatus
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 
 
@@ -39,7 +39,12 @@ KYC_REASONS = {
 }
 
 
-def evaluate(profile: CustomerProfile, sites: list[CustomerDeliverySite]) -> Eligibility:
+def evaluate(
+    profile: CustomerProfile,
+    sites: list[CustomerDeliverySite],
+    *,
+    requires_delivery_sites: bool = False,
+) -> Eligibility:
     """Collect **every** blocking reason, not just the first.
 
     The app shows the list, so a customer who is both unapproved and unverified should see
@@ -52,6 +57,6 @@ def evaluate(profile: CustomerProfile, sites: list[CustomerDeliverySite]) -> Eli
         reasons.append(KYC_REASONS.get(profile.kyc_status, "KYC is not verified."))
     # Spec 18.2: an industrial order carries a delivery site, so a customer with none
     # cannot have an order placed for them even once approved.
-    if profile.customer_type == CustomerType.INDUSTRIAL.value and not any(site.is_active for site in sites):
+    if requires_delivery_sites and not any(site.is_active for site in sites):
         reasons.append("Add a delivery site before placing an order.")
     return Eligibility(eligible=not reasons, reasons=reasons)

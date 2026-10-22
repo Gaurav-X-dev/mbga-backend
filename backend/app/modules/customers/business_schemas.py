@@ -15,9 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_valida
 
 from app.modules.customers.constants import (
     ApplicationStatus,
-    CustomerType,
     DocumentStatus,
-    KycDocumentType,
     PricingTier,
 )
 from app.shared.validation.names import check_name
@@ -55,12 +53,21 @@ class DocumentSubmission(BaseModel):
     field name it had when uploads were mocked, so the backend accepts either spelling.
     """
 
-    type: KycDocumentType
+    type: str
     number: str = Field(max_length=40)
     file_name: str | None = Field(default=None, alias="fileName", max_length=80)
     file_id: str | None = Field(default=None, alias="fileId", max_length=80)
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _document_code(cls, value) -> str:
+        code = getattr(value, "value", value)
+        code = str(code or "").strip().upper()
+        if not code or len(code) > 40 or not code.replace("_", "").isalnum():
+            raise ValueError("Enter a valid document type code.")
+        return code
 
     @property
     def upload_id(self) -> str:
@@ -93,7 +100,7 @@ class CustomerRegistrationRequest(BaseModel):
     onboarding session — a customer can never register a number they did not verify.
     """
 
-    customer_type: CustomerType = Field(alias="customerType")
+    customer_type: str = Field(alias="customerType")
     business_name: str = Field(default="", alias="businessName", max_length=160)
     owner_name: str = Field(default="", alias="ownerName", max_length=160)
     mobile: str | None = Field(default=None, max_length=20)
@@ -116,6 +123,15 @@ class CustomerRegistrationRequest(BaseModel):
         in the way was `max_length`.
         """
         return check_name(value, field=info.field_name, required=False)
+
+    @field_validator("customer_type", mode="before")
+    @classmethod
+    def _customer_type_code(cls, value) -> str:
+        code = getattr(value, "value", value)
+        code = str(code or "").strip().upper()
+        if not code or len(code) > 40 or not code.replace("_", "").isalnum():
+            raise ValueError("Enter a valid customer type code.")
+        return code
 
 
 

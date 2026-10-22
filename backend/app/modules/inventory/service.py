@@ -23,7 +23,6 @@ from app.modules.inventory.alerts import derive
 from app.modules.inventory.constants import (
     ALL_CYLINDERS,
     DEFAULT_MOVEMENT_LIMIT,
-    DEFAULT_REORDER_THRESHOLDS,
     MAX_MOVEMENT_LIMIT,
     MovementReference,
     StockMovementType,
@@ -39,7 +38,8 @@ from app.modules.inventory.schemas import (
     StockMovementResponse,
 )
 from app.modules.notifications.events import stock as stock_events
-from app.modules.pricing.constants import CylinderType
+from app.modules.business_catalogue.models import CylinderTypeDefinition
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.shared.business.actor import BusinessActor
 from app.shared.idempotency.service import IdempotencyService, validate_key
 from app.shared.notifications.outbox import NotificationOutboxWriter
@@ -79,8 +79,13 @@ class InventoryService:
         operationally useless: a cylinder they do not carry has not run out.
         """
         rows = {row.cylinder_type: row for row in await self._items()}
-        items = [_item_view(cylinder_type, rows.get(cylinder_type.value)) for cylinder_type in CylinderType]
-        alerts = derive([(row, label_of(row.cylinder_type)) for row in rows.values()])
+        definitions = await BusinessCatalogueService(self.session).list_cylinders()
+        labels = {
+            definition.code: definition.short_label or definition.label
+            for definition in definitions
+        }
+        items = [_item_view(definition, rows.get(definition.code)) for definition in definitions]
+        alerts = derive([(row, labels.get(row.cylinder_type, row.cylinder_type)) for row in rows.values()])
         return InventorySnapshotResponse(
             items=items,
             alerts=[
@@ -107,7 +112,8 @@ class InventoryService:
         )
         statement = self._apply_cylinder(statement, filters.cylinder_type)
         rows = list(await self.session.scalars(statement.limit(_limit(filters.limit))))
-        return [_movement_view(row) for row in rows]
+        labels = await self._cylinder_labels()
+        return [_movement_view(row, labels) for row in rows]
 
     # --- Writes -----------------------------------------------------------------------------
 
@@ -135,7 +141,7 @@ class InventoryService:
             if replay.result_reference:
                 stored = await self._movement(replay.result_reference)
                 if stored is not None:
-                    return _movement_view(stored)
+                    return _movement_view(stored, await self._cylinder_labels())
             # Completed without a readable movement: nothing is on the ledger under this key,
             # so the retry proceeds rather than being told a phantom movement exists.
             return await self.record(payload)
@@ -168,11 +174,11 @@ class InventoryService:
             recorded_by_user_id=self.actor.user_id,
             recorded_by_name=self.actor.display_name,
         )
-        self._notify(applied)
+        await self._notify(applied)
         await self.session.commit()
-        return _movement_view(applied.movement)
+        return _movement_view(applied.movement, await self._cylinder_labels())
 
-    def _notify(self, applied: Applied) -> None:
+    async def _notify(self, applied: Applied) -> None:
         """Tell staff when this movement took stock below the line (spec §18.8).
 
         On the **crossing**, not on the state. A warning every time a movement happens while
@@ -181,7 +187,7 @@ class InventoryService:
         without colliding with this month's row on the outbox's uniqueness constraint.
         """
         item = applied.item
-        label = label_of(item.cylinder_type)
+        label = (await self._cylinder_labels()).get(item.cylinder_type, item.cylinder_type)
         if applied.emptied:
             self.notifications.queue(
                 stock_events.out_of_stock(
@@ -218,6 +224,10 @@ class InventoryService:
             self._scope(select(StockMovement)).where(StockMovement.id == movement_id)
         )
 
+    async def _cylinder_labels(self) -> dict[str, str]:
+        rows = await self.session.scalars(select(CylinderTypeDefinition))
+        return {row.code: row.short_label or row.label for row in rows}
+
     @staticmethod
     def _apply_cylinder(statement: Select, value: str | None) -> Select:
         """`cylinderType = <code> | ALL` (spec §11.2).
@@ -236,21 +246,21 @@ def _limit(value: int | None) -> int:
     return min(value, MAX_MOVEMENT_LIMIT)
 
 
-def _item_view(cylinder_type: CylinderType, row: StockItem | None) -> StockItemResponse:
+def _item_view(definition: CylinderTypeDefinition, row: StockItem | None) -> StockItemResponse:
     """One card. A type never stocked reads as zeros against its default threshold."""
     if row is None:
         return StockItemResponse(
-            cylinder_type=cylinder_type,
-            cylinder_label=label_of(cylinder_type.value),
+            cylinder_type=definition.code,
+            cylinder_label=definition.short_label or definition.label,
             filled=0,
             empty=0,
             damaged=0,
-            reorder_threshold=DEFAULT_REORDER_THRESHOLDS.get(cylinder_type, 0),
+            reorder_threshold=definition.reorder_threshold,
             updated_at=None,
         )
     return StockItemResponse(
-        cylinder_type=cylinder_type,
-        cylinder_label=label_of(row.cylinder_type),
+        cylinder_type=definition.code,
+        cylinder_label=definition.short_label or definition.label,
         filled=row.filled,
         empty=row.empty,
         damaged=row.damaged,
@@ -259,12 +269,12 @@ def _item_view(cylinder_type: CylinderType, row: StockItem | None) -> StockItemR
     )
 
 
-def _movement_view(row: StockMovement) -> StockMovementResponse:
+def _movement_view(row: StockMovement, labels: dict[str, str]) -> StockMovementResponse:
     return StockMovementResponse(
         id=row.id,
         type=StockMovementType(row.movement_type),
-        cylinder_type=CylinderType(row.cylinder_type),
-        cylinder_label=label_of(row.cylinder_type),
+        cylinder_type=row.cylinder_type,
+        cylinder_label=labels.get(row.cylinder_type, row.cylinder_type),
         quantity=row.quantity,
         deltas=MovementDeltas(
             # Omitted where the bucket was untouched, matching the spec's payloads.

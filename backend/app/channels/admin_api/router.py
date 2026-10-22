@@ -5,6 +5,7 @@ from app.modules.authentication.admin_sessions_router import router as login_ses
 from app.modules.authentication.admin_otp_logs_router import router as otp_logs_router
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
+from app.modules.business_catalogue.router import build_catalogue_router
 from app.modules.constants.router import router as constants_router
 from app.modules.credit.router import router as credit_router
 from app.modules.customers.admin_kyc_router import router as customer_kyc_router
@@ -44,6 +45,7 @@ router.include_router(users_router)
 router.include_router(roles_router)
 router.include_router(permissions_router)
 router.include_router(platform_settings_router)
+router.include_router(build_catalogue_router(LoginChannel.ADMIN))
 router.include_router(credit_router)
 router.include_router(audit_logs_router)
 router.include_router(reports_router)

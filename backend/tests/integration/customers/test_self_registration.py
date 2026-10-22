@@ -101,9 +101,19 @@ async def test_invalid_document_numbers_are_refused(env, customer_type, document
     _, merchant, _ = await reviewer(env)
     _, token = await onboarding(env)
     body = await registration_body(env, CUSTOMER, token, customer_type=customer_type)
+    matching = False
     for document in body["documents"]:
         if document["type"] == document_type:
             document["number"] = bad_number
+            matching = True
+    if not matching:
+        body["documents"].append(
+            {
+                "type": document_type,
+                "number": bad_number,
+                "fileName": await upload_file_id(env, CUSTOMER, token, document_type),
+            }
+        )
 
     response = await env.post(f"{REG}/profile", token, json={"merchant_code": merchant.code, **body})
     assert response.status_code == 422, response.text
@@ -216,25 +226,26 @@ async def test_a_customer_cannot_register_a_number_they_did_not_verify(env):
 async def test_submitting_an_incomplete_registration_lists_what_is_missing(env):
     _, merchant, _ = await reviewer(env)
     _, token = await onboarding(env)
-    aadhaar = await upload_file_id(env, CUSTOMER, token, "AADHAAR")
     partial = {
         "merchant_code": merchant.code,
         "customerType": "RETAIL",
         "businessName": "Half Filled",
         "ownerName": "Ravi Kumar",
         "deliveryAddress": dict(ADDRESS),
-        "documents": [{"type": "AADHAAR", "number": "123412341234", "fileName": aadhaar}],
+        "documents": [],
     }
     created = await env.post(f"{REG}/profile", token, json=partial)
     assert created.status_code == 201, created.text
 
     response = await env.post(f"{REG}/submit", token)
     assert (response.status_code, code_of(response)) == (422, "REGISTRATION_INCOMPLETE")
-    assert "doc.PAN" in fields_of(response)
+    missing = next(field for field in fields_of(response) if field.startswith("doc.ANY_OF:"))
+    assert {"AADHAAR", "FSSAI", "GST", "PAN"} <= set(missing.removeprefix("doc.ANY_OF:").split("|"))
 
     status_response = await env.get(f"{REG}/status", token)
     progress = status_response.json()["progress"]
-    assert progress["missingDocumentTypes"] == ["PAN"]
+    assert len(progress["missingDocumentTypes"]) == 1
+    assert progress["missingDocumentTypes"][0].startswith("ANY_OF:")
     assert progress["profileComplete"] is False
 
 

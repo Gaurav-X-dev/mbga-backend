@@ -37,7 +37,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.inventory.constants import (
-    DEFAULT_REORDER_THRESHOLDS,
     MAX_BUCKET_COUNT,
     MovementReference,
     StockBucket,
@@ -45,8 +44,7 @@ from app.modules.inventory.constants import (
 )
 from app.modules.inventory.models import StockItem, StockMovement
 from app.modules.inventory.validation import CheckedMovement, invalid
-from app.modules.orders.constants import ORDER_LABELS
-from app.modules.pricing.constants import CylinderType
+from app.modules.business_catalogue.models import CylinderTypeDefinition
 from app.shared.exceptions.api_error import ApiError
 
 #: Bucket name -> the model attribute holding it. One mapping, so a new bucket is one line.
@@ -58,11 +56,13 @@ _COLUMNS: dict[StockBucket, str] = {
 
 
 def label_of(cylinder_type: str) -> str:
-    """"19 KG". Falls back to the raw code so an unmapped type never renders as blank."""
-    try:
-        return ORDER_LABELS[CylinderType(cylinder_type)]
-    except (KeyError, ValueError):
-        return cylinder_type
+    """Safe fallback used only where a catalogue label was not loaded."""
+    return cylinder_type
+
+
+def _code(value: object) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw).strip().upper()
 
 
 @dataclass(frozen=True)
@@ -99,13 +99,14 @@ class StockLedger:
     def __init__(self, session: AsyncSession, merchant_id: str) -> None:
         self.session = session
         self.merchant_id = merchant_id
+        self._labels: dict[str, str] = {}
 
     # --- What the app posts -----------------------------------------------------------------
 
     async def record(
         self,
         checked: CheckedMovement,
-        cylinder_type: CylinderType,
+        cylinder_type: str,
         *,
         recorded_by_user_id: str | None,
         recorded_by_name: str | None,
@@ -145,9 +146,9 @@ class StockLedger:
 
     async def check_available(
         self,
-        lines: dict[CylinderType, int],
+        lines: dict[str, int],
         *,
-        committed: dict[CylinderType, int] | None = None,
+        committed: dict[str, int] | None = None,
         now: datetime | None = None,
     ) -> None:
         """Refuse a load the godown cannot fill. Writes nothing.
@@ -171,11 +172,16 @@ class StockLedger:
         for cylinder_type, quantity in sorted(lines.items()):
             available = items[cylinder_type].filled - outstanding.get(cylinder_type, 0)
             if available < quantity:
-                raise _insufficient(cylinder_type, available=max(available, 0), needed=quantity)
+                raise _insufficient(
+                    cylinder_type,
+                    label=self._labels.get(_code(cylinder_type)),
+                    available=max(available, 0),
+                    needed=quantity,
+                )
 
     async def deliver(
         self,
-        lines: dict[CylinderType, int],
+        lines: dict[str, int],
         *,
         reference_id: str,
         note: str | None = None,
@@ -200,7 +206,12 @@ class StockLedger:
         for cylinder_type, quantity in sorted(lines.items()):
             available = items[cylinder_type].filled
             if available < quantity:
-                raise _insufficient(cylinder_type, available=available, needed=quantity)
+                raise _insufficient(
+                    cylinder_type,
+                    label=self._labels.get(_code(cylinder_type)),
+                    available=available,
+                    needed=quantity,
+                )
 
         return [
             self._apply(
@@ -223,7 +234,7 @@ class StockLedger:
 
     async def collect_empties(
         self,
-        lines: dict[CylinderType, int],
+        lines: dict[str, int],
         *,
         reference_id: str,
         note: str | None = None,
@@ -356,20 +367,22 @@ class StockLedger:
     # --- Rows -------------------------------------------------------------------------------
 
     async def _locked_items(
-        self, lines: dict[CylinderType, int], moment: datetime
-    ) -> dict[CylinderType, StockItem]:
+        self, lines: dict[str, int], moment: datetime
+    ) -> dict[str, StockItem]:
         """Lock every line's row up front, in a stable order, to rule out a deadlock."""
         return {
             cylinder_type: await self._locked_item(cylinder_type, moment)
             for cylinder_type in sorted(lines)
         }
 
-    async def _locked_item(self, cylinder_type: CylinderType, moment: datetime) -> StockItem:
+    async def _locked_item(self, cylinder_type: str, moment: datetime) -> StockItem:
         """This merchant's row for the type, locked for update, created if it is the first.
 
         Creating on demand is what lets a merchant start using the warehouse screen without a
         seeding step, and what lets the snapshot treat "no row" as "never stocked".
         """
+        cylinder_type = _code(cylinder_type)
+        definition = await self._definition(cylinder_type)
         row = await self._select_for_update(cylinder_type)
         if row is not None:
             return row
@@ -377,11 +390,11 @@ class StockLedger:
         row = StockItem(
             id=str(uuid4()),
             merchant_id=self.merchant_id,
-            cylinder_type=cylinder_type.value,
+            cylinder_type=cylinder_type,
             filled=0,
             empty=0,
             damaged=0,
-            reorder_threshold=DEFAULT_REORDER_THRESHOLDS.get(cylinder_type, 0),
+            reorder_threshold=definition.reorder_threshold,
             created_at=moment.replace(tzinfo=None),
             updated_at=moment.replace(tzinfo=None),
         )
@@ -400,15 +413,35 @@ class StockLedger:
             return existing
         return row
 
-    async def _select_for_update(self, cylinder_type: CylinderType) -> StockItem | None:
+    async def _select_for_update(self, cylinder_type: str) -> StockItem | None:
         return await self.session.scalar(
             select(StockItem)
             .where(
                 StockItem.merchant_id == self.merchant_id,
-                StockItem.cylinder_type == cylinder_type.value,
+                StockItem.cylinder_type == _code(cylinder_type),
             )
             .with_for_update()
         )
+
+    async def _definition(self, cylinder_type: str) -> CylinderTypeDefinition:
+        definition = await self.session.scalar(
+            select(CylinderTypeDefinition).where(
+                CylinderTypeDefinition.code == _code(cylinder_type),
+                CylinderTypeDefinition.is_active.is_(True),
+            )
+        )
+        if definition is None:
+            raise ApiError(
+                "VALIDATION_ERROR",
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                fields=[{
+                    "field": "cylinderType",
+                    "code": "invalid_choice",
+                    "message": "Select an active cylinder type",
+                }],
+            )
+        self._labels[definition.code] = definition.short_label or definition.label
+        return definition
 
 
 def _minus(bucket: StockBucket | None, quantity: int, *, damaged: int = 0) -> Deltas:
@@ -423,15 +456,18 @@ def _bucket_delta(bucket: StockBucket, change: int) -> Deltas:
     return Deltas(**{_COLUMNS[bucket]: change})
 
 
-def _insufficient(cylinder_type: CylinderType, *, available: int, needed: int) -> ApiError:
+def _insufficient(
+    cylinder_type: str, *, label: str | None = None, available: int, needed: int
+) -> ApiError:
     """Spec §10's wording, verbatim - it is shown to the person trying to dispatch."""
-    label = label_of(cylinder_type.value)
+    cylinder_type = _code(cylinder_type)
+    label = label or label_of(cylinder_type)
     return ApiError(
         "INSUFFICIENT_STOCK",
         status.HTTP_409_CONFLICT,
         f"Not enough filled {label} in stock ({available} available, {needed} needed). "
         "Record a refill first.",
-        fields=[{"field": cylinder_type.value, "code": "insufficient_stock", "message": f"{available} available"}],
+        fields=[{"field": cylinder_type, "code": "insufficient_stock", "message": f"{available} available"}],
     )
 
 

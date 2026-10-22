@@ -28,9 +28,9 @@ from fastapi import status as http_status
 from sqlalchemy import select
 
 from app.modules.customers.models import CustomerProfile
-from app.modules.orders.constants import ORDER_LABELS
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.orders.models import Order, OrderItem
-from app.modules.pricing.constants import CylinderType, PricingTier, cylinders_for
+from app.modules.pricing.constants import PricingTier
 from app.modules.pricing.service import resolve_customer_price, tier_prices_for_month
 from app.shared.exceptions.api_error import ApiError
 from app.shared.money.gst import order_total
@@ -110,7 +110,8 @@ class OrderAmender:
             )
 
         order.total_cylinders = sum(qty for _k, qty, _u, _o in priced)
-        order.items_summary = summary(priced)[:255]
+        labels = await self._labels([kind for kind, _qty, _unit, _override in priced])
+        order.items_summary = summary(priced, labels)[:255]
         order.total_amount = split.total_amount
         order.subtotal = split.subtotal
         order.gst_amount = split.gst_amount
@@ -158,21 +159,20 @@ class OrderAmender:
         """
         if not kinds:
             return {}
-        try:
-            wanted = [CylinderType(kind) for kind in kinds]
-        except ValueError as exc:  # an unknown cylinder type
-            raise _invalid(f"{exc.args[0]} is not a cylinder we sell.") from exc
-
         customer = await self.session.get(CustomerProfile, order.customer_id)
+        catalogue = BusinessCatalogueService(self.session)
+        configured_type = (customer.customer_type if customer else None) or order.customer_type
         customer_type = (
-            (customer.customer_type if customer else None) or order.customer_type or "RETAIL"
+            configured_type.upper()
+            if configured_type
+            else (await catalogue.default_customer_type()).code
         )
-        allowed = set(cylinders_for(customer_type))
-        for cylinder_type in wanted:
-            # A retail customer cannot be sold a hippo at the gate any more than online.
+        eligible = await catalogue.eligible_cylinders(customer_type)
+        allowed = {definition.code for _mapping, definition in eligible}
+        for cylinder_type in kinds:
             if cylinder_type not in allowed:
                 raise _invalid(
-                    f"{cylinder_type.value} is not sold to a {customer_type.lower()} customer.",
+                    f"{cylinder_type} is not sold to a {customer_type.lower()} customer.",
                 )
 
         if not order.pricing_month_id:
@@ -189,27 +189,37 @@ class OrderAmender:
             )
 
         priced: dict[str, tuple[int, bool]] = {}
-        for cylinder_type in wanted:
-            tier_price = tier_prices.get(cylinder_type.value)
+        for cylinder_type in kinds:
+            tier_price = tier_prices.get(cylinder_type)
             resolved = await resolve_customer_price(
-                self.session, order.customer_id, cylinder_type.value, tier_price
+                self.session, order.customer_id, cylinder_type, tier_price
             )
             if resolved is None or int(resolved) <= 0:
                 raise ApiError(
                     "CYLINDER_PRICE_NOT_CONFIGURED",
                     http_status.HTTP_409_CONFLICT,
-                    f"Price is not configured for {cylinder_type.value}.",
+                    f"Price is not configured for {cylinder_type}.",
                 )
-            priced[cylinder_type.value] = (
+            priced[cylinder_type] = (
                 int(resolved),
                 tier_price is None or resolved != tier_price,
             )
         return priced
 
+    async def _labels(self, kinds: list[str]) -> dict[str, str]:
+        if not kinds:
+            return {}
+        from app.modules.business_catalogue.models import CylinderTypeDefinition
 
-def summary(priced: list[tuple[str, int, int, bool]]) -> str:
+        rows = await self.session.scalars(
+            select(CylinderTypeDefinition).where(CylinderTypeDefinition.code.in_(kinds))
+        )
+        return {row.code: row.short_label or row.label for row in rows}
+
+
+def summary(priced: list[tuple[str, int, int, bool]], labels: dict[str, str]) -> str:
     """`'2 x 19 KG Cylinder, 1 x 5 KG Cylinder'`, as the order list and the slip print it."""
     return ", ".join(
-        f"{quantity} x {ORDER_LABELS.get(CylinderType(kind), kind)}"
+        f"{quantity} x {labels.get(kind, kind)}"
         for kind, quantity, _unit, _overridden in priced
     )

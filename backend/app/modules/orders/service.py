@@ -28,7 +28,8 @@ from app.modules.authentication.constants import LoginChannel
 from app.modules.credit.service import CreditLimitService
 from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import Address
-from app.modules.customers.constants import CustomerType, KycStatus
+from app.modules.customers.constants import KycStatus
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 from app.modules.deliveries.constants import (
     IN_TRANSIT_STATUSES,
@@ -46,8 +47,6 @@ from app.modules.orders.constants import (
     ACTIVE_FILTER,
     ACTIVE_STATUSES,
     ALL_STATUSES,
-    ORDER_LABELS,
-    QUANTITY_LIMITS,
     REGISTERED_ADDRESS_LABEL,
     STATUS_BY_CODE,
     STATUS_CATALOGUE,
@@ -94,7 +93,7 @@ from app.modules.orders.schemas import (
     UnavailableLine,
 )
 from app.modules.platform_settings import service as platform_settings
-from app.modules.pricing.constants import CylinderType, cylinders_for
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.vehicles.coverage import available_for_pincode
 from app.shared.business.actor import BusinessActor
 from app.shared.crypto.field_cipher import FieldCipher
@@ -164,14 +163,17 @@ class OrderService:
                 fields=[{"field": "customerId", "code": "required", "message": "Select a customer."}],
             )
         customer = await self._orderable_customer(wanted, require_approved=False)
+        eligible = await BusinessCatalogueService(self.session).eligible_cylinders(
+            customer.customer_type
+        )
         return [
             OrderCylinderTypeResponse(
-                code=kind,
-                label=ORDER_LABELS[kind],
-                minimum_quantity=QUANTITY_LIMITS[kind][0],
-                maximum_quantity=QUANTITY_LIMITS[kind][1],
+                code=definition.code,
+                label=definition.label,
+                minimum_quantity=mapping.min_quantity,
+                maximum_quantity=mapping.max_quantity or 2147483647,
             )
-            for kind in cylinders_for(customer.customer_type)
+            for mapping, definition in eligible
         ]
 
     async def _cutoff(self) -> Cutoff:
@@ -189,7 +191,10 @@ class OrderService:
     async def quote(self, payload: OrderQuoteRequest) -> OrderQuoteResponse:
         """Price a basket without placing anything (spec §6.3)."""
         customer = await self._orderable_customer(payload.customer_id, require_approved=False)
-        lines = validation.validate_basket(payload.items, customer_type=customer.customer_type)
+        lines = validation.validate_basket(
+            payload.items,
+            eligibility=await self._cylinder_eligibility(customer.customer_type),
+        )
         priced = await self._engine().price(customer.id, lines)
         return OrderQuoteResponse(
             items=[_line_view(line) for line in priced.lines],
@@ -259,7 +264,10 @@ class OrderService:
         half-built row behind.
         """
         customer = await self._orderable_customer(payload.customer_id, require_approved=True)
-        lines = validation.validate_basket(payload.items, customer_type=customer.customer_type)
+        lines = validation.validate_basket(
+            payload.items,
+            eligibility=await self._cylinder_eligibility(customer.customer_type),
+        )
         site = await self._delivery_site(customer, payload.delivery_site_id)
         source = self._resolve_source(payload.source)
 
@@ -276,7 +284,15 @@ class OrderService:
         now = datetime.now(UTC)
         number = await OrderNumberAllocator(self.session, self.merchant_id).allocate()
 
-        order = self._build(customer, site, priced, moment, source, payload.order_mode, number, now)
+        customer_type = customer.customer_type
+        if not customer_type:
+            customer_type = (
+                await BusinessCatalogueService(self.session).default_customer_type()
+            ).code
+        order = self._build(
+            customer, site, priced, moment, source, payload.order_mode, number, now,
+            customer_type=customer_type,
+        )
         self.session.add(order)
         await self.session.flush()
 
@@ -284,7 +300,7 @@ class OrderService:
             self.session.add(
                 OrderItem(
                     order_id=order.id,
-                    cylinder_type=line.cylinder_type.value,
+                    cylinder_type=line.cylinder_type,
                     quantity=line.quantity,
                     unit_price=line.unit_price,
                     line_total=line.line_total,
@@ -292,6 +308,7 @@ class OrderService:
                     position=position,
                 )
             )
+
         self.session.add(
             OrderStatusHistory(
                 order_id=order.id,
@@ -319,6 +336,15 @@ class OrderService:
         await self.session.commit()
         return await self._view(order)
 
+    async def _cylinder_eligibility(
+        self, customer_type: str
+    ) -> dict[str, tuple[int, int | None]]:
+        rows = await BusinessCatalogueService(self.session).eligible_cylinders(customer_type)
+        return {
+            definition.code: (mapping.min_quantity, mapping.max_quantity)
+            for mapping, definition in rows
+        }
+
     def _build(
         self,
         customer: CustomerProfile,
@@ -329,6 +355,8 @@ class OrderService:
         order_mode: OrderMode,
         number: str,
         now: datetime,
+        *,
+        customer_type: str,
     ) -> Order:
         address = _site_address(site) if site else _customer_address(customer)
         staff_placed = source is OrderSource.MERCHANT_APP
@@ -338,7 +366,7 @@ class OrderService:
             merchant_id=self.merchant_id,
             customer_id=customer.id,
             customer_name=customer.name or customer.owner_name or "Customer",
-            customer_type=customer.customer_type or CustomerType.RETAIL.value,
+            customer_type=customer_type,
             order_mode=order_mode.value,
             source=source.value,
             delivery_site_id=site.id if site else None,
@@ -434,7 +462,6 @@ class OrderService:
                     reason=dropped.reason,
                 )
                 for dropped in plan.dropped
-                if isinstance(dropped.cylinder_type, CylinderType)
             ],
             can_reorder=bool(priced) and plan.usable and blocked is None,
             blocked_reason=blocked,
@@ -517,7 +544,12 @@ class OrderService:
                 select(CustomerDeliverySite).where(CustomerDeliverySite.customer_id == customer.id)
             )
         )
-        outcome = eligibility_policy.evaluate(customer, sites)
+        definition = await BusinessCatalogueService(self.session).require_active_customer_type(
+            customer.customer_type
+        )
+        outcome = eligibility_policy.evaluate(
+            customer, sites, requires_delivery_sites=definition.requires_delivery_sites
+        )
         return None if outcome.eligible else outcome.reasons[0]
 
     # --- Repeat the last order -------------------------------------------------------------
@@ -999,7 +1031,12 @@ class OrderService:
                 select(CustomerDeliverySite).where(CustomerDeliverySite.customer_id == customer.id)
             )
         )
-        outcome = eligibility_policy.evaluate(customer, sites)
+        definition = await BusinessCatalogueService(self.session).require_active_customer_type(
+            customer.customer_type
+        )
+        outcome = eligibility_policy.evaluate(
+            customer, sites, requires_delivery_sites=definition.requires_delivery_sites
+        )
         if outcome.eligible:
             return
         code = (
@@ -1014,8 +1051,10 @@ class OrderService:
     async def _delivery_site(
         self, customer: CustomerProfile, site_id: str | None
     ) -> CustomerDeliverySite | None:
-        """Resolve the delivery site, enforcing the industrial rule (spec §6.4, §18.2)."""
-        industrial = (customer.customer_type or "").upper() == CustomerType.INDUSTRIAL.value
+        """Resolve the delivery site using the selected customer type's catalogue policy."""
+        definition = await BusinessCatalogueService(self.session).require_active_customer_type(
+            customer.customer_type
+        )
         if site_id:
             site = await self.session.scalar(
                 select(CustomerDeliverySite).where(
@@ -1032,7 +1071,7 @@ class OrderService:
                     "Choose one of this customer's delivery sites.",
                 )
             return site
-        if industrial:
+        if definition.requires_delivery_sites:
             raise validation.invalid("deliverySiteId", "site_required", "Delivery site is required")
         return None
 
@@ -1142,6 +1181,18 @@ class OrderService:
             if code is not None:
                 delivery_otps[order_id] = code
 
+        cylinder_codes = {item.cylinder_type for values in items.values() for item in values}
+        cylinder_labels: dict[str, str] = {}
+        if cylinder_codes:
+            from app.modules.business_catalogue.models import CylinderTypeDefinition
+
+            definitions = await self.session.scalars(
+                select(CylinderTypeDefinition).where(CylinderTypeDefinition.code.in_(cylinder_codes))
+            )
+            cylinder_labels = {
+                row.code: row.short_label or row.label for row in definitions
+            }
+
         return [
             _order_view(
                 order,
@@ -1149,6 +1200,7 @@ class OrderService:
                 history[order.id],
                 delivery_otp=delivery_otps.get(order.id),
                 by_staff=not self.actor.is_customer,
+                cylinder_labels=cylinder_labels,
             )
             for order in orders
         ]
@@ -1213,8 +1265,9 @@ def _order_view(
     *,
     delivery_otp: str | None = None,
     by_staff: bool = False,
+    cylinder_labels: dict[str, str] | None = None,
 ) -> OrderResponse:
-    from app.modules.orders.constants import ORDER_LABELS
+    cylinder_labels = cylinder_labels or {}
 
     return OrderResponse(
         id=order.id,
@@ -1225,7 +1278,7 @@ def _order_view(
         items=[
             OrderItemResponse(
                 cylinder_type=item.cylinder_type,
-                cylinder_label=ORDER_LABELS[CylinderType(item.cylinder_type)],
+                cylinder_label=cylinder_labels.get(item.cylinder_type, item.cylinder_type),
                 quantity=item.quantity,
                 unit_price=item.unit_price,
                 line_total=item.line_total,

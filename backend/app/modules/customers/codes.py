@@ -15,21 +15,17 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.customers.constants import CustomerType
+from app.modules.business_catalogue.models import CustomerTypeDefinition
 from app.modules.customers.models import CustomerCodeSequence
 
 CODE_PREFIX = "MBGA"
-TYPE_LETTERS: dict[CustomerType, str] = {
-    CustomerType.RETAIL: "R",
-    CustomerType.INDUSTRIAL: "I",
-}
 # Four digits keeps the printed code short. It widens past 9999 rather than wrapping, so the
 # format stays sortable and never collides.
 PAD_WIDTH = 4
 
 
-def format_code(customer_type: CustomerType, value: int) -> str:
-    return f"{CODE_PREFIX}-{TYPE_LETTERS[customer_type]}-{value:0{PAD_WIDTH}d}"
+def format_code(type_prefix: str, value: int) -> str:
+    return f"{CODE_PREFIX}-{type_prefix}-{value:0{PAD_WIDTH}d}"
 
 
 class CustomerCodeAllocator:
@@ -38,19 +34,21 @@ class CustomerCodeAllocator:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def allocate(self, customer_type: CustomerType) -> str:
+    async def allocate(self, customer_type: str) -> str:
         """Reserve the next code. Must be called inside the caller's transaction.
 
         The reservation commits or rolls back with the customer row, so a failed
         registration does not burn a number — and a successful one cannot reuse it.
         """
-        prefix = f"{CODE_PREFIX}-{TYPE_LETTERS[customer_type]}"
+        definition = await self.session.get(CustomerTypeDefinition, customer_type)
+        type_prefix = (definition.code_prefix if definition else customer_type[:1]).upper()
+        prefix = f"{CODE_PREFIX}-{type_prefix}"
         row = await self._locked_sequence(prefix)
         value = row.next_value
         row.next_value = value + 1
         row.updated_at = datetime.now(UTC)
         await self.session.flush()
-        return format_code(customer_type, value)
+        return format_code(type_prefix, value)
 
     async def _locked_sequence(self, prefix: str) -> CustomerCodeSequence:
         row = await self.session.scalar(

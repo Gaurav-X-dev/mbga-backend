@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.app import Settings
 from app.modules.customers.business_schemas import Address
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.business_catalogue.models import CylinderTypeDefinition
 from app.modules.deliveries import codes, validation
 from app.modules.deliveries.constants import (
     ALL_STATUSES,
@@ -61,10 +62,9 @@ from app.modules.notifications.events import deliveries as delivery_events
 from app.modules.notifications.events import orders as order_events
 from app.modules.notifications.events import payments as payment_events
 from app.modules.orders import transitions
-from app.modules.orders.constants import ORDER_LABELS, OrderStatus
+from app.modules.orders.constants import OrderStatus
 from app.modules.orders.models import Order, OrderItem, OrderStatusHistory
 from app.modules.payments.invoicing import InvoiceRaiser
-from app.modules.pricing.constants import CylinderType
 from app.modules.users.models import User
 from app.modules.vehicles.models import Vehicle, VehiclePincodeMapping
 from app.shared.business.actor import BusinessActor
@@ -1036,7 +1036,7 @@ class DeliveryService:
             )
         )
 
-    async def _committed(self, *, exclude_slip_id: str | None = None) -> dict[CylinderType, int]:
+    async def _committed(self, *, exclude_slip_id: str | None = None) -> dict[str, int]:
         """Cylinders on this merchant's vans: dispatched, not yet confirmed or failed.
 
         This is the difference between what the godown holds and what it can still load. Counts
@@ -1058,11 +1058,11 @@ class DeliveryService:
         if exclude_slip_id:
             statement = statement.where(DeliverySlip.id != exclude_slip_id)
         return {
-            CylinderType(cylinder_type): int(total or 0)
+            str(cylinder_type).strip().upper(): int(total or 0)
             for cylinder_type, total in await self.session.execute(statement)
         }
 
-    async def _lines(self, slip_id: str) -> dict[CylinderType, int]:
+    async def _lines(self, slip_id: str) -> dict[str, int]:
         """The slip's cylinders as allocated, which is what the van is answerable for."""
         rows = list(
             await self.session.scalars(
@@ -1071,9 +1071,9 @@ class DeliveryService:
                 .order_by(DeliverySlipItem.position)
             )
         )
-        return {CylinderType(row.cylinder_type): row.quantity for row in rows}
+        return {row.cylinder_type.strip().upper(): row.quantity for row in rows}
 
-    async def _delivered_lines(self, slip_id: str) -> dict[CylinderType, int]:
+    async def _delivered_lines(self, slip_id: str) -> dict[str, int]:
         """What actually changed hands, which is what comes off the books.
 
         Falls back to the allocation per line, because `delivered_quantity` is only set by the
@@ -1089,7 +1089,7 @@ class DeliveryService:
             )
         )
         lines = {
-            CylinderType(row.cylinder_type): (
+            row.cylinder_type.strip().upper(): (
                 row.quantity if row.delivered_quantity is None else row.delivered_quantity
             )
             for row in rows
@@ -1104,14 +1104,26 @@ class DeliveryService:
                 .order_by(DeliverySlipItem.position)
             )
         )
+        labels = await self._cylinder_labels(row.cylinder_type for row in rows)
         return [
             DeliveryItemResponse(
-                cylinder_type=CylinderType(row.cylinder_type),
-                cylinder_label=_label(row.cylinder_type),
+                cylinder_type=row.cylinder_type,
+                cylinder_label=labels.get(row.cylinder_type.upper(), row.cylinder_type),
                 quantity=row.quantity,
             )
             for row in rows
         ]
+
+    async def _cylinder_labels(self, codes) -> dict[str, str]:
+        normalized = {str(code).strip().upper() for code in codes if str(code).strip()}
+        if not normalized:
+            return {}
+        rows = await self.session.execute(
+            select(CylinderTypeDefinition.code, CylinderTypeDefinition.label).where(
+                CylinderTypeDefinition.code.in_(normalized)
+            )
+        )
+        return {code: label for code, label in rows}
 
     async def _customer_mobile(self, customer_id: str) -> str | None:
         return await self.session.scalar(
@@ -1245,13 +1257,6 @@ def _confirmation_method(stored: str | None) -> ConfirmationMethod:
         return ConfirmationMethod.NONE
 
 
-def _label(cylinder_type: str) -> str:
-    try:
-        return ORDER_LABELS[CylinderType(cylinder_type)]
-    except (KeyError, ValueError):
-        return cylinder_type
-
-
 def _scheduled(requested: date | None, order: Order) -> date:
     """The slip's date: what was asked for, or the day the cut-off already decided.
 
@@ -1270,7 +1275,7 @@ def _reassigned_note(slip: DeliverySlip, reason: str | None) -> str:
     return f"{where} - {extra}" if extra else where
 
 
-def _primary_type(lines: dict[CylinderType, int]) -> CylinderType:
+def _primary_type(lines: dict[str, int]) -> str:
     """Which cylinder the returned empties are booked against.
 
     Empties come back as bare cylinders and the driver is not asked to split them by type, so
@@ -1278,7 +1283,7 @@ def _primary_type(lines: dict[CylinderType, int]) -> CylinderType:
     Stated here rather than hidden in the caller because it is an approximation, and the person
     reconciling the empty bucket deserves to find it written down.
     """
-    return max(lines, key=lambda cylinder: (lines[cylinder], cylinder.value))
+    return max(lines, key=lambda cylinder: (lines[cylinder], cylinder))
 
 
 def _delivered_note(collected: int, allocated: int) -> str:

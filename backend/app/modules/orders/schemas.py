@@ -14,11 +14,10 @@ apps read, rather than FastAPI's list-shaped 422.
 from datetime import UTC, date, datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 from app.modules.customers.business_schemas import Address
 from app.modules.orders.constants import OrderMode, OrderSource, OrderStatus, StatusTone
-from app.modules.pricing.constants import CylinderType
 
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -63,7 +62,7 @@ class CutoffResponse(BaseModel):
 
 
 class OrderCylinderTypeResponse(BaseModel):
-    code: CylinderType
+    code: str
     label: str
     minimum_quantity: int = Field(alias="minimumQuantity")
     maximum_quantity: int = Field(alias="maximumQuantity")
@@ -77,16 +76,24 @@ class OrderCylinderTypeResponse(BaseModel):
 class OrderLineRequest(BaseModel):
     """One requested line. Quantity limits are per cylinder type (spec §18.3)."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType", min_length=1, max_length=40)
     quantity: int
 
     model_config = _CAMEL
+
+    @field_validator("cylinder_type")
+    @classmethod
+    def normalise_cylinder_type(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not all(character.isalnum() or character == "_" for character in value):
+            raise ValueError("Invalid cylinder type code.")
+        return value
 
 
 class OrderItemResponse(BaseModel):
     """Spec §3.9. `unitPrice` is GST-inclusive, per cylinder."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     quantity: int
     unit_price: int = Field(alias="unitPrice")
@@ -359,7 +366,7 @@ class UnavailableLine(BaseModel):
     do about it - drop the line, or call the merchant.
     """
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     quantity: int
     reason: str

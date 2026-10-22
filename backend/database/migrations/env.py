@@ -15,6 +15,7 @@ from app.config.app import get_settings
 from app.modules.audit_logs import models as audit_log_models  # noqa: F401
 from app.modules.authentication import models as authentication_models  # noqa: F401
 from app.modules.authentication import otp_models as otp_models
+from app.modules.business_catalogue import models as business_catalogue_models  # noqa: F401
 from app.modules.constants import models as constant_models  # noqa: F401
 from app.modules.credit import models as credit_models  # noqa: F401
 from app.modules.customers import models as customer_models  # noqa: F401

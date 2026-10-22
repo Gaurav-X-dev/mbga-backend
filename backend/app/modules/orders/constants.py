@@ -244,7 +244,9 @@ QUANTITY_LIMITS: dict[CylinderType, tuple[int, int]] = {
 
 #: How many distinct lines one order may carry. Five types exist, so anything above that is
 #: a malformed body rather than a large order.
-MAX_ORDER_LINES = len(CylinderType)
+# Catalogue types are data, not an enum-sized set. This is a request-abuse guard only;
+# eligibility and per-type quantity limits come from customer_type_cylinders.
+MAX_ORDER_LINES = 50
 
 #: Shown when an order has no delivery site (spec §3.10 `deliverySiteName`).
 REGISTERED_ADDRESS_LABEL = "Registered delivery address"

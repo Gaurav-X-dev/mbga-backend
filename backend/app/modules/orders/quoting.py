@@ -17,17 +17,23 @@ from decimal import ROUND_HALF_UP, Decimal
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.orders.constants import ORDER_LABELS, SUMMARY_LABELS
-from app.modules.pricing.constants import CylinderType
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.pricing.months import PricingMonthProvisioner
 from app.modules.pricing.service import resolve_customer_price, tier_prices_for_month
 from app.shared.exceptions.api_error import ApiError
 from app.shared.money.gst import order_total
 
 
+LEGACY_SUMMARY_LABELS = {
+    "LPG_47_5KG_L": "47.5 L",
+    "LPG_47_5KG_V": "47.5 V",
+    "LPG_422KG_HIPPO": "422 Hippo",
+}
+
+
 @dataclass(frozen=True)
 class QuotedLine:
-    cylinder_type: CylinderType
+    cylinder_type: str
     label: str
     quantity: int
     unit_price: int
@@ -50,7 +56,7 @@ class Quote:
     def items_summary(self) -> str:
         """`"6 × 47.5 L · 2 × 47.5 V"` (spec §3.10). Display only."""
         return " · ".join(
-            f"{line.quantity} × {SUMMARY_LABELS[line.cylinder_type]}" for line in self.lines
+            f"{line.quantity} × {line.label}" for line in self.lines
         )
 
 
@@ -62,7 +68,7 @@ class QuoteEngine:
         self.merchant_id = merchant_id
         self.merchant_code = merchant_code
 
-    async def price(self, customer_id: str, lines: list[tuple[CylinderType, int]]) -> Quote:
+    async def price(self, customer_id: str, lines: list[tuple[str, int]]) -> Quote:
         """Price each line, then total the order once.
 
         The basket is expected to be merged and range-checked already; this raises only for
@@ -77,9 +83,12 @@ class QuoteEngine:
 
         quoted: list[QuotedLine] = []
         for cylinder_type, quantity in lines:
-            tier_price = tier_prices.get(cylinder_type.value)
+            definition = await BusinessCatalogueService(self.session).require_active_cylinder(
+                cylinder_type
+            )
+            tier_price = tier_prices.get(cylinder_type)
             resolved = await resolve_customer_price(
-                self.session, customer_id, cylinder_type.value, tier_price
+                self.session, customer_id, cylinder_type, tier_price
             )
             if resolved is None:
                 raise _not_priced(cylinder_type)
@@ -89,7 +98,11 @@ class QuoteEngine:
             quoted.append(
                 QuotedLine(
                     cylinder_type=cylinder_type,
-                    label=ORDER_LABELS[cylinder_type],
+                    # Old installations may already have catalogue rows created before
+                    # `short_label` was introduced. Keep their mobile summary contract
+                    # stable while allowing every newly-created type to use its admin label.
+                    label=(definition.short_label or LEGACY_SUMMARY_LABELS.get(cylinder_type)
+                           or definition.label),
                     quantity=quantity,
                     unit_price=unit_price,
                     line_total=unit_price * quantity,
@@ -120,7 +133,7 @@ def _whole_rupees(amount: Decimal) -> int:
     return int(Decimal(amount).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
-def _not_priced(cylinder_type: CylinderType) -> ApiError:
+def _not_priced(cylinder_type: str) -> ApiError:
     """No usable price for this type in the active month.
 
     A 409 rather than a 422: the basket the customer sent is legal, it is the merchant's
@@ -129,5 +142,5 @@ def _not_priced(cylinder_type: CylinderType) -> ApiError:
     return ApiError(
         "CYLINDER_NOT_PRICED",
         status.HTTP_409_CONFLICT,
-        f"{ORDER_LABELS[cylinder_type]} has no price set for this month. Contact the merchant.",
+        f"{cylinder_type} has no price set for this month. Contact the merchant.",
     )

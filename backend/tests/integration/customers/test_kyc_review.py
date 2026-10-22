@@ -134,10 +134,10 @@ async def test_application_detail_returns_masked_documents_and_sites(env):
     assert body["status"] == "PENDING"
     assert body["deliveryAddress"]["pincode"] == "452001"
     assert len(body["sites"]) == 1
-    assert {document["numberMasked"] for document in body["documents"]} == {
-        "XXXXXXXXXX1234",
-        "23XXXXXXXXXX1Z5",
-    }
+    documents = {document["type"]: document for document in body["documents"]}
+    assert set(documents) == {"GST", "PAN"}
+    assert documents["GST"]["numberMasked"] == "23XXXXXXXXXX1Z5"
+    assert documents["PAN"]["numberMasked"].endswith("1234F")
     # No full identifier and no storage path anywhere in the payload.
     assert "12345678901234" not in response.text
     assert "kyc/" not in response.text

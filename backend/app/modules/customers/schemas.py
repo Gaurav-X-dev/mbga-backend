@@ -1,6 +1,4 @@
 from datetime import datetime
-from enum import StrEnum
-
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from app.modules.authentication.account_state import NextAction
@@ -10,11 +8,6 @@ from app.modules.customers.business_schemas import (
     RegistrationProgressResponse,
     SiteSubmission,
 )
-
-
-class CustomerType(StrEnum):
-    RETAIL = "RETAIL"
-    INDUSTRIAL = "INDUSTRIAL"
 
 
 def _upper(value):
@@ -72,7 +65,7 @@ class CustomerProfilePayload(BaseModel):
     merchant_code: str = Field(min_length=1, max_length=80)
     # Accepts both spellings: the shipped app posts `customer_type`, API_SPEC posts
     # `customerType`. One field, so the two can never hold different values.
-    customer_type: CustomerType | None = Field(
+    customer_type: str | None = Field(
         default=None, validation_alias=AliasChoices("customer_type", "customerType")
     )
     name: str | None = Field(default=None, min_length=2, max_length=160)
@@ -99,7 +92,7 @@ class CustomerProfilePayload(BaseModel):
 
 class CustomerProfileUpdate(BaseModel):
     merchant_code: str | None = Field(default=None, min_length=1, max_length=80)
-    customer_type: CustomerType | None = Field(
+    customer_type: str | None = Field(
         default=None, validation_alias=AliasChoices("customer_type", "customerType")
     )
     name: str | None = Field(default=None, min_length=2, max_length=160)

@@ -19,7 +19,6 @@ from app.modules.deliveries.constants import (
     ConfirmationMethod,
     DeliveryStatus,
 )
-from app.modules.pricing.constants import CylinderType
 
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -40,7 +39,7 @@ UtcTime = Annotated[
 class DeliveryItemResponse(BaseModel):
     """One cylinder type on the slip (spec §3.12 `items`)."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType", min_length=1, max_length=40)
     cylinder_label: str = Field(alias="cylinderLabel")
     quantity: int
 

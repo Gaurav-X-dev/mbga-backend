@@ -22,6 +22,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    field_validator,
     model_serializer,
     model_validator,
 )
@@ -32,10 +33,24 @@ from app.modules.inventory.constants import (
     StockMovementType,
 )
 from app.modules.notifications.constants import Severity
-from app.modules.pricing.constants import CylinderType
 from app.shared.exceptions.api_error import ApiError
 
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
+class CylinderCodeModel(BaseModel):
+    """Accept catalogue-defined cylinder codes without coupling the API to an enum."""
+
+    @field_validator("cylinder_type", check_fields=False, mode="before")
+    @classmethod
+    def _normalise_cylinder_code(cls, value: object) -> object:
+        if hasattr(value, "value"):
+            value = value.value
+        if isinstance(value, str):
+            value = value.strip().upper()
+            if not value or len(value) > 40:
+                raise ValueError("Invalid cylinder type code")
+        return value
 
 
 def _as_utc(value: datetime) -> str:
@@ -49,10 +64,10 @@ UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_use
 # --- Snapshot -------------------------------------------------------------------------------
 
 
-class StockItemResponse(BaseModel):
+class StockItemResponse(CylinderCodeModel):
     """Spec §3.13 `StockItem`. One card on the Warehouse Stock screen."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     filled: int
     empty: int
@@ -65,11 +80,11 @@ class StockItemResponse(BaseModel):
     model_config = _CAMEL
 
 
-class StockAlertResponse(BaseModel):
+class StockAlertResponse(CylinderCodeModel):
     """Spec §3.13 `StockAlert`. Derived from live counts, never stored."""
 
     id: str
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     severity: Severity
     # Rendered verbatim on the screen.
     message: str
@@ -115,12 +130,12 @@ class MovementDeltas(BaseModel):
         return {name: value for name, value in moved if value is not None}
 
 
-class StockMovementResponse(BaseModel):
+class StockMovementResponse(CylinderCodeModel):
     """Spec §3.13 `StockMovement`. One row of the history."""
 
     id: str
     type: StockMovementType
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     # Always positive; `deltas` carries the direction.
     quantity: int
@@ -134,7 +149,7 @@ class StockMovementResponse(BaseModel):
     model_config = _CAMEL
 
 
-class RecordStockMovementRequest(BaseModel):
+class RecordStockMovementRequest(CylinderCodeModel):
     """Spec §11.3 `RecordStockMovementRequest`.
 
     Everything is optional at this layer on purpose. Which fields a body must carry depends
@@ -143,7 +158,7 @@ class RecordStockMovementRequest(BaseModel):
     """
 
     type: StockMovementType
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     quantity: int | None = None
     from_bucket: StockBucket | None = Field(default=None, alias="fromBucket")
     bucket: StockBucket | None = None
