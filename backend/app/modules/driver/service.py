@@ -666,7 +666,7 @@ class DriverService:
         slip.payment_proof_content_type = detected.content_type
         slip.payment_proof_captured_at = captured_at.astimezone(UTC)
         slip.payment_proof_uploaded_at = now
-        slip.payment_proof_url = f"/api/v1/delivery/deliveries/{slip.id}/payment-proof"
+        slip.payment_proof_url = self._payment_proof_url(slip.id)
         slip.updated_at = now
         await self.session.commit()
         if previous_key and previous_key != stored.storage_key:
@@ -675,6 +675,9 @@ class DriverService:
             proof_url=slip.payment_proof_url,
             proof_captured_at=slip.payment_proof_captured_at,
         )
+
+    def _payment_proof_url(self, slip_id: str) -> str:
+        return f"/api/v1/delivery/deliveries/{slip_id}/payment-proof"
 
     async def _payment_proof_chunks(self, head: bytes, upload: UploadFile):
         total = len(head)

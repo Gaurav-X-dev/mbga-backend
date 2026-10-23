@@ -14,7 +14,7 @@ from app.config.app import get_settings
 # Import models so Alembic sees the approved metadata.
 from app.modules.audit_logs import models as audit_log_models  # noqa: F401
 from app.modules.authentication import models as authentication_models  # noqa: F401
-from app.modules.authentication import otp_models as otp_models
+from app.modules.authentication import otp_models  # noqa: F401
 from app.modules.business_catalogue import models as business_catalogue_models  # noqa: F401
 from app.modules.constants import models as constant_models  # noqa: F401
 from app.modules.credit import models as credit_models  # noqa: F401
@@ -22,6 +22,7 @@ from app.modules.customers import models as customer_models  # noqa: F401
 from app.modules.customers import v2_models as customer_v2_models  # noqa: F401
 from app.modules.deliveries import models as delivery_slip_models  # noqa: F401
 from app.modules.delivery_users import models as delivery_user_models  # noqa: F401
+from app.modules.driver import v2_models as driver_v2_models  # noqa: F401
 from app.modules.expenses import models as expense_models  # noqa: F401
 from app.modules.inventory import models as inventory_models  # noqa: F401
 from app.modules.locations import models as location_models  # noqa: F401

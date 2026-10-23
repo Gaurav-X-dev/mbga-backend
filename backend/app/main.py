@@ -19,7 +19,7 @@ CHANNEL_DOC_PREFIXES = {
     "admin": ["/api/v1/admin"],
     "merchant": ["/api/v1/merchant"],
     "customer": ["/api/v1/customer", "/health"],
-    "delivery": ["/api/v1/delivery", "/health"],
+    "delivery": ["/api/v1/delivery", "/api/v2/delivery", "/health"],
 }
 
 
@@ -107,6 +107,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Delivery Notifications"
     if path.startswith("/api/v1/delivery/"):
         return "Delivery APIs"
+    if path.startswith("/api/v2/delivery/"):
+        return "Delivery V2 Payments"
     return "Internal"
 
 

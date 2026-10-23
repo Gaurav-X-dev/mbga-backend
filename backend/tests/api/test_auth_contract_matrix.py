@@ -232,19 +232,26 @@ def test_removed_placeholder_routes_return_404(client: TestClient) -> None:
 
 def test_channel_swagger_openapi_filters_are_reachable(client: TestClient) -> None:
     expected_prefixes = {
-        "admin": "/api/v1/admin",
-        "merchant": "/api/v1/merchant",
-        "customer": "/api/v1/customer",
-        "delivery": "/api/v1/delivery",
+        "admin": ("/api/v1/admin",),
+        "merchant": ("/api/v1/merchant",),
+        "customer": ("/api/v1/customer",),
+        "delivery": ("/api/v1/delivery", "/api/v2/delivery"),
     }
-    for channel, prefix in expected_prefixes.items():
+    for channel, prefixes in expected_prefixes.items():
         docs_response = client.get(f"/docs/{channel}")
         assert docs_response.status_code == 200
         openapi_response = client.get(f"/openapi/{channel}.json")
         assert openapi_response.status_code == 200
         paths = openapi_response.json()["paths"]
         assert paths
-        assert all(path.startswith(prefix) or path == "/health" for path in paths)
+        assert all(
+            any(path.startswith(prefix) for prefix in prefixes) or path == "/health"
+            for path in paths
+        )
+
+    delivery_paths = client.get("/openapi/delivery.json").json()["paths"]
+    assert "/api/v2/delivery/deliveries/{deliveryId}/confirm" in delivery_paths
+    assert not any(path.startswith("/api/v2/delivery/auth/") for path in delivery_paths)
 
     internal_response = client.get("/openapi/internal.json")
     assert internal_response.status_code == 200
