@@ -189,6 +189,18 @@ class Settings(BaseSettings):
     # How many invoices one worker pass takes.
     einvoice_batch_size: int = Field(default=20, ge=1, le=200)
 
+    # --- e-Way Bill API ------------------------------------------------------------------
+    # A second provider API, for the consignment that is over the threshold but sold to a
+    # customer with no GST registration: there is no IRN for the bill to live inside, so it
+    # is raised on its own. The provider issues a separate `PEWAYS` client pair for it; each
+    # of these falls back to the e-invoice credential when it is left blank, so a deployment
+    # whose provider put both APIs behind one set of keys needs no extra configuration.
+    eway_base_url: str | None = None
+    eway_client_id: str | None = None
+    eway_client_secret: str | None = None
+    eway_bearer_token: str | None = None
+    eway_api_version: str = "v1.03"
+
     # --- KYC document storage --------------------------------------------------------------
     # "local" keeps files on a private disk path. No vendor is hard-coded; a production
     # provider binds to the same StorageProvider interface and changes no route.

@@ -15,8 +15,11 @@ import type { Tone } from "../../utils/labels";
  *
  * Two government rules decide what happens, and the backend applies both - this only reports
  * them. An IRN is obtained when the customer has a GSTIN, because a sale to an unregistered
- * buyer is B2C and the portal rejects it. An e-Way Bill is added on top when the consignment
- * is worth more than fifty thousand rupees.
+ * buyer is B2C and the portal rejects it. An e-Way Bill is required once the consignment is
+ * worth more than fifty thousand rupees, and that rule asks nothing about the customer - so
+ * an unregistered buyer's large order is filed as an e-Way Bill on its own, with no IRN.
+ * `withIrn` is what tells those apart, and the screen says which one is happening rather
+ * than calling anything without an IRN "B2C".
  *
  * **The portal's error is shown word for word.** NIC names the field it rejected - "Buyer
  * GSTIN is invalid", "Pincode does not belong to the state" - and that sentence is what turns
@@ -69,8 +72,8 @@ export function EInvoiceSection({ merchantId, invoiceId }: { merchantId: string;
     if (!state.eligible) {
       return (
         <p className="text-muted text-small">
-          Not filed with the portal. This customer has no GSTIN, so the sale is B2C and an IRN
-          does not apply.
+          Nothing to file. This customer has no GSTIN, so the sale is B2C and no IRN applies,
+          and the invoice is under ₹50,000 so no e-Way Bill is required either.
         </p>
       );
     }
@@ -96,6 +99,9 @@ export function EInvoiceSection({ merchantId, invoiceId }: { merchantId: string;
       <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <Badge tone={meta.tone}>{meta.label}</Badge>
         {state.withEwayBill ? <Badge tone="info">e-Way Bill required</Badge> : null}
+        {/* Said plainly, because an operator seeing "Filed" with no IRN beside it would
+            otherwise reasonably think something had gone missing. */}
+        {!state.withIrn ? <Badge tone="neutral">Buyer unregistered — no IRN</Badge> : null}
         {state.attempts > 0 ? (
           <span className="text-muted text-small">
             {state.attempts} attempt{state.attempts === 1 ? "" : "s"}

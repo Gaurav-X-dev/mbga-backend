@@ -129,7 +129,18 @@ def test_a_valid_address_is_normalised():
         errors,
     )
     assert not errors
-    assert result == {"line1": "12 MG Road", "line2": None, "city": "Indore", "state": "Madhya Pradesh", "pincode": "452001"}
+    # The three optional fields a delivery site may also carry - map coordinates and a note
+    # for the driver - come back as None when the caller did not give them.
+    assert result == {
+        "line1": "12 MG Road",
+        "line2": None,
+        "city": "Indore",
+        "state": "Madhya Pradesh",
+        "pincode": "452001",
+        "latitude": None,
+        "longitude": None,
+        "delivery_instructions": None,
+    }
 
 
 @pytest.mark.parametrize(

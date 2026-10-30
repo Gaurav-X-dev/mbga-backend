@@ -44,6 +44,22 @@ class EInvoiceJob(Base):
     #: here rather than recomputed, so a later price correction cannot silently change whether
     #: a consignment was supposed to carry an e-Way Bill.
     with_eway_bill: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    #: True when the buyer was registered for GST at the time the invoice was raised, so an
+    #: IRN applies. Frozen for the same reason as the line above, and kept as its own column
+    #: rather than re-read off the customer: a GSTIN added next week does not retrospectively
+    #: make last week's handover a B2B supply.
+    #:
+    #: Together the two decide the route. `with_irn` sends the e-invoice call, which carries
+    #: the e-Way Bill inside it when one is due. Without it, an over-threshold consignment
+    #: still has to be filed - on the provider's separate e-Way Bill API, with the buyer as
+    #: `URP`. `server_default="1"` is what makes this safe to add to a table that already has
+    #: rows: every job queued before this column existed was queued under the old rule, which
+    #: only ever queued invoices that had a buyer GSTIN.
+    with_irn: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    #: The e-Way Bill number, when one was obtained on its own rather than alongside an IRN.
+    #: The IRN route writes its number onto the invoice row beside the IRN; this route has no
+    #: IRN to hang it off, so the job carries it.
+    eway_bill_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     #: When the next attempt is due. Null means "now" for a pending row.

@@ -7,11 +7,27 @@ other:
   this platform that is simply "the customer has a GSTIN": a domestic LPG customer is a B2C
   sale and the portal would reject it.
 * **e-Way Bill** - required once the consignment is worth more than fifty thousand rupees.
-  It travels with the goods, so it is about the value being moved, not about who is buying.
+  It travels with the goods, so it is about the value being moved, **not about who is
+  buying**. An unregistered customer's consignment needs one exactly as a registered one
+  does; the buyer is named `URP` in place of a GSTIN.
 
-An invoice can therefore need an IRN and no e-Way Bill (a small B2B supply), and the
-threshold is read off the invoice total the platform actually billed - never recomputed from
-the lines, which would let the document and the government record disagree.
+The two are independent, which gives three outcomes rather than two:
+
+===========================  ==============  =====================================
+Buyer has a GSTIN?           Over 50,000?    What is filed
+===========================  ==============  =====================================
+yes                          no              IRN alone
+yes                          yes             IRN with the e-Way Bill inside it
+no                           yes             e-Way Bill alone, buyer as `URP`
+no                           no              nothing - an ordinary domestic sale
+===========================  ==============  =====================================
+
+The third row is the one that is easy to miss, and missing it is a compliance failure, not
+a cosmetic gap: goods move without the document the law requires them to carry. It needs the
+provider's *separate* e-Way Bill API, because there is no IRN for the bill to live inside.
+
+The threshold is read off the invoice total the platform actually billed - never recomputed
+from the lines, which would let the document and the government record disagree.
 """
 
 from enum import Enum
@@ -47,9 +63,28 @@ RETRY_BACKOFF_MINUTES = (2, 10, 30, 120, 360)
 #: would be `CRN` and `DBN` when the refund slice needs them.
 DOCUMENT_TYPE_INVOICE = "INV"
 
-#: Supply type. `B2B` is the only one reachable here, because a sale with no buyer GSTIN is
-#: never sent at all.
+#: Supply type on the e-invoice call. Only `B2B` is reachable there: an IRN is asked for
+#: only when the buyer has a GSTIN.
 SUPPLY_TYPE_B2B = "B2B"
+
+#: What the e-Way Bill portal calls a buyer who is not registered for GST. It goes in the
+#: GSTIN field, which is why that field is never left empty: the portal reads a blank as a
+#: missing value and rejects it, but `URP` as a deliberate statement that there is no
+#: registration to quote.
+UNREGISTERED_PARTY = "URP"
+
+#: e-Way Bill: an outward supply, which is the only direction a gas agency raises one in.
+#: (`I` would be a purchase return coming back in.)
+EWAY_SUPPLY_TYPE_OUTWARD = "O"
+#: Sub-supply type `1` is a supply against a sale - as opposed to a transfer, an export or
+#: job work, none of which this platform raises.
+EWAY_SUB_SUPPLY_SALE = "1"
+#: Transaction type `1` is a plain bill-to/ship-to-the-same-party sale. The provider's own
+#: sample uses `4` (bill-to and ship-to differ), which is not this platform's case: the
+#: customer being billed is the customer the cylinders are delivered to.
+EWAY_TRANSACTION_REGULAR = 1
+#: Kilograms. The only unit LPG is sold in here, and the portal wants a code, not a word.
+EWAY_QTY_UNIT = "KGS"
 
 #: Road. The only transport mode a gas agency's own fleet uses.
 TRANSPORT_MODE_ROAD = "1"
@@ -123,5 +158,19 @@ def state_code_from_gstin(gstin: str | None) -> str | None:
 
 
 def needs_eway_bill(total_amount: int) -> bool:
-    """True when this consignment value must travel with an e-Way Bill."""
+    """True when this consignment value must travel with an e-Way Bill.
+
+    Deliberately says nothing about the buyer. The e-Way Bill follows the goods, so an
+    unregistered customer's consignment needs one on exactly the same terms - and tying this
+    to the GSTIN is the bug this function exists to keep out of the rest of the slice.
+    """
     return int(total_amount) > EWAY_BILL_THRESHOLD
+
+
+def needs_irn(gstin: str | None) -> bool:
+    """True when an IRN applies: the buyer is registered for GST.
+
+    A sale to an unregistered customer is B2C. The portal rejects a B2C document outright, so
+    sending one would only manufacture errors for staff to read.
+    """
+    return bool((gstin or "").strip())

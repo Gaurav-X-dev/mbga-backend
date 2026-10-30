@@ -231,7 +231,15 @@ export type EInvoiceState = {
    */
   status: EInvoiceFilingStatus | null;
   /** True when the buyer has a GSTIN, so an IRN applies to this invoice at all. */
+  /** True when anything is required at all - an IRN, an e-Way Bill, or both. */
   eligible: boolean;
+  /**
+   * True when the buyer is registered for GST, so an IRN applies. False alongside
+   * `withEwayBill` is the unregistered consignment over ₹50,000: no IRN will ever exist for
+   * it, and the e-Way Bill number alone is what settles it.
+   */
+  withIrn: boolean;
+  /** Independent of `withIrn`: the bill follows the goods, not the registration. */
   withEwayBill: boolean;
   attempts: number;
   /** The portal's own sentence. Shown verbatim: it names the field an accountant must fix. */

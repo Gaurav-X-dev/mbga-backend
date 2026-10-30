@@ -1,8 +1,9 @@
 """Which modes money may be taken in, and why the enum is not the answer.
 
-The agency takes cash at the gate and UPI through the QR. A bank transfer is arranged with the
-office, never handed to a driver, so offering NEFT put a choice on the app that nobody could
-complete and in a dropdown the merchant panel had no use for.
+The agency takes cash at the gate and UPI through the QR, and a single collection may be part
+of each - a customer paying some of a large invoice in notes and the rest by scanning. A bank
+transfer is arranged with the office, never handed to a driver, so offering NEFT put a choice
+on the app that nobody could complete and in a dropdown the merchant panel had no use for.
 
 Withdrawing it is not the same as deleting it. `PaymentMode` still has `NEFT` so that a payment
 recorded in it months ago keeps reading back - a row is a record of what happened, and records
@@ -19,7 +20,20 @@ pytestmark = [pytest.mark.unit]
 
 
 def test_cash_and_upi_are_what_is_taken():
-    assert OFFERED_PAYMENT_MODES == {PaymentMode.CASH, PaymentMode.UPI}
+    assert OFFERED_PAYMENT_MODES == {PaymentMode.CASH, PaymentMode.UPI, PaymentMode.SPLIT}
+
+
+def test_every_offered_mode_has_a_label():
+    """The seeder reads each offered mode out of the label map.
+
+    A mode added to the offer without a label stops the whole constants seed with a KeyError
+    - which is exactly what happened when SPLIT was introduced - so the two are pinned
+    together here rather than discovered on a deployment.
+    """
+    from app.modules.constants.seeds import PAYMENT_MODES, seed_rows
+
+    seeded = {row.key for row in seed_rows() if row.group == PAYMENT_MODES}
+    assert seeded == {mode.value for mode in OFFERED_PAYMENT_MODES}
 
 
 def test_a_withdrawn_mode_is_still_a_mode():

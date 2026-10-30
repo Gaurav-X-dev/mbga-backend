@@ -18,9 +18,15 @@ class EInvoiceStatusResponse(BaseModel):
     #: `eligible` is what tells them apart: a B2C sale that will never be filed, or an invoice
     #: raised before this slice existed, which still can be.
     status: str | None = None
-    #: True when the buyer has a GSTIN, so an IRN applies to this invoice at all.
+    #: True when the government requires anything of this invoice at all - an IRN, an e-Way
+    #: Bill, or both. False is the ordinary domestic cylinder sale.
     eligible: bool = False
-    #: Whether an e-Way Bill was asked for, decided from the invoice value when it was queued.
+    #: True when the buyer is registered for GST, so an IRN applies. False with
+    #: `withEwayBill` true is the unregistered consignment over the threshold: no IRN will
+    #: ever exist for it, and the e-Way Bill number alone is what settles it.
+    with_irn: bool = Field(default=False, alias="withIrn")
+    #: Whether an e-Way Bill was asked for, decided from the invoice value when it was
+    #: queued. Independent of `withIrn`: the bill follows the goods, not the registration.
     with_eway_bill: bool = Field(default=False, alias="withEwayBill")
     attempts: int = 0
     last_error: str | None = Field(default=None, alias="lastError")

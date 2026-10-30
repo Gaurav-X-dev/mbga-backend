@@ -58,6 +58,10 @@ def seed_rows() -> list[SeedConstant]:
         PaymentMode.CASH: "Cash",
         PaymentMode.UPI: "UPI",
         PaymentMode.NEFT: "Bank Transfer (NEFT)",
+        # Part cash, part UPI against one invoice. Offered, so it needs a label here: the
+        # seeder reads every offered mode out of this map and a missing entry stops the
+        # whole constants seed with a KeyError rather than skipping one row.
+        PaymentMode.SPLIT: "Cash + UPI",
         **CANCELLATION_REASON_LABELS,
     }
     rows: list[SeedConstant] = []
