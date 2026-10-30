@@ -46,11 +46,8 @@ STATUS_RANK: dict[str, int] = {
     DeliveryStatus.DELIVERED.value: 4,
 }
 
-#: How close counts as "at the gate", in metres. Generous on purpose: a handset fix in a built-up
-#: area is routinely 50-100 m out, and this number only decides whether the app shows a nudge.
-#: **It never blocks a delivery** - a driver standing at a gate their phone cannot locate still
-#: has cylinders to hand over.
-AT_LOCATION_RADIUS_METRES = 200.0
+#: Default arrival radius. Runtime validation uses the platform/merchant App Settings value.
+AT_LOCATION_RADIUS_METRES = 300.0
 
 #: Longest note a driver may attach to a handover.
 MAX_NOTE_LENGTH = 500

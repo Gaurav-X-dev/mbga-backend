@@ -3,7 +3,11 @@
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
+from app.modules.customers.dependencies import StorageDep
+from app.modules.expenses.fuel import fuel_options
+from app.modules.expenses.receipts import save_receipt, read_receipt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
@@ -45,6 +49,22 @@ def _service(session: SessionDep, actor: AdminMerchantActorDep) -> ExpenseServic
 ServiceDep = Annotated[ExpenseService, Depends(_service)]
 CategoryIdPath = Annotated[str, Path(alias="categoryId", max_length=36)]
 ExpenseIdPath = Annotated[str, Path(alias="expenseId", max_length=36)]
+
+
+@router.get("/fuel-options", dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, CAN_VIEW])
+async def expense_fuel_options(service: ServiceDep):
+    return await fuel_options(service.session, service.merchant_id)
+
+
+@router.post("/{expenseId}/receipt", dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, CAN_MANAGE])
+async def upload_expense_receipt(expense_id: ExpenseIdPath, file: UploadFile, service: ServiceDep, storage: StorageDep):
+    return await save_receipt(service, storage, expense_id, file)
+
+
+@router.get("/{expenseId}/receipt", dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, CAN_VIEW])
+async def get_expense_receipt(expense_id: ExpenseIdPath, service: ServiceDep, storage: StorageDep):
+    stream, media_type = await read_receipt(service, storage, expense_id)
+    return StreamingResponse(stream, media_type=media_type, headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
 
 # --- Categories ---------------------------------------------------------------------------
@@ -161,12 +181,14 @@ async def expense_breakdown(
     period: Annotated[
         str | None, Query(description="`YYYY-MM`, or `ALL` for every period.")
     ] = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
 ) -> ExpenseBreakdownResponse:
     """Category-wise totals for one period, biggest first, with each one's share."""
     filters = parse_filters(
-        period=period, category_id=None, category=None, date_from=None, date_to=None, search=None
+        period=period, category_id=None, category=None, date_from=date_from, date_to=date_to, search=None
     )
-    return await service.breakdown(filters.period)
+    return await service.breakdown(filters.period, date_from, date_to)
 
 
 # --- Expenses -------------------------------------------------------------------------------

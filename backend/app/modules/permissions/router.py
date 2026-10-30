@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.permissions.models import Permission
 from app.modules.permissions.repository import PermissionRepository
+from app.modules.permissions.catalogue import dependencies_for
 from app.modules.permissions.schemas import (
     PermissionGroupedResponse,
     PermissionGroupResponse,
@@ -79,9 +80,15 @@ async def list_permissions_grouped(
         .scalars()
         .all()
     )
+    # Dependencies are resolved against the catalogue as it stands, so a permission that was
+    # deactivated stops being offered as a requirement instead of being named at a role that
+    # could never hold it.
+    known = {permission.code for permission in permissions}
     groups: dict[str, list[PermissionResponse]] = {}
     for permission in permissions:
-        groups.setdefault(permission.module, []).append(PermissionResponse.model_validate(permission, from_attributes=True))
+        item = PermissionResponse.model_validate(permission, from_attributes=True)
+        item.requires = list(dependencies_for(permission.code, known))
+        groups.setdefault(permission.module, []).append(item)
     return PermissionGroupedResponse(
         groups=[PermissionGroupResponse(module=module, permissions=items) for module, items in groups.items()],
         total=len(permissions),

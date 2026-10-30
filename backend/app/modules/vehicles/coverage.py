@@ -8,6 +8,7 @@ from fastapi import status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.deliveries.constants import LIVE_STATUSES
 from app.modules.deliveries.models import DeliverySlip
 from app.modules.locations.models import PostalLocation
 from app.modules.vehicles.models import Vehicle, VehiclePincodeMapping
@@ -114,13 +115,45 @@ async def available_for_delivery(
         raise ApiError(
             "DELIVERY_PINCODE_MISSING", status.HTTP_409_CONFLICT, "Delivery address has no pincode."
         )
-    return await available_for_pincode(session, merchant_id, slip.address_pincode)
+    return await available_for_pincode(
+        session, merchant_id, slip.address_pincode, on_date=slip.scheduled_date
+    )
+
+
+async def _busy_vans(session: AsyncSession, merchant_id: str, on_date) -> dict[str, tuple[str, str]]:
+    """`{plate: (driver name, driver id)}` for vans already out on `on_date`.
+
+    The same query the assignment refuses on, asked early so a screen can say it first. Only
+    slips with a driver named count: a hired van with nobody on it has no one to clash with.
+    """
+    if on_date is None:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                DeliverySlip.vehicle_number,
+                DeliverySlip.driver_name,
+                DeliverySlip.driver_user_id,
+            ).where(
+                DeliverySlip.merchant_id == merchant_id,
+                DeliverySlip.scheduled_date == on_date,
+                DeliverySlip.status.in_(tuple(LIVE_STATUSES)),
+                DeliverySlip.driver_user_id.is_not(None),
+            )
+        )
+    ).all()
+    return {plate: (name, user_id) for plate, name, user_id in rows}
 
 
 async def available_for_pincode(
-    session: AsyncSession, merchant_id: str, pincode: str
+    session: AsyncSession, merchant_id: str, pincode: str, *, on_date=None
 ) -> list[AvailableVehicleResponse]:
-    """Return active merchant vehicles explicitly mapped to a destination pincode."""
+    """Return active merchant vehicles explicitly mapped to a destination pincode.
+
+    With `on_date`, each row also carries whoever already has that van out that day. The van is
+    still returned: one van with the *same* driver is a round being filled, not a clash.
+    """
+    busy = await _busy_vans(session, merchant_id, on_date)
     rows = (
         await session.execute(
             select(Vehicle, VehiclePincodeMapping)
@@ -145,6 +178,8 @@ async def available_for_pincode(
             created_at=vehicle.created_at,
             priority=mapping.priority,
             matched_pincode=mapping.pincode,
+            busy_with_driver_name=busy.get(vehicle.number, (None, None))[0],
+            busy_with_driver_user_id=busy.get(vehicle.number, (None, None))[1],
         )
         for vehicle, mapping in rows
     ]

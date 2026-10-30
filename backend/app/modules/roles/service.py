@@ -1,3 +1,7 @@
+from sqlalchemy import select
+
+from app.modules.permissions.catalogue import expand
+from app.modules.permissions.models import Permission
 from app.modules.roles.exceptions import (
     LastSuperAdminError,
     ProtectedSystemRoleError,
@@ -38,8 +42,35 @@ class RoleService:
             raise LastSuperAdminError()
 
     async def replace_permissions(self, role_id: str, permission_ids: list[str], actor_user_id: str | None = None) -> None:
+        """Save a role's permissions, together with everything they cannot be used without.
+
+        Ticking "Create users" and getting no Users screen was the single most common
+        complaint about the Permission Matrix: the list behind the button needs `users.view`,
+        and the operator had no way to know that. So the ticked set is expanded here, once,
+        where every caller passes - the panel, the API and any script.
+
+        Expanding on save rather than at check time is deliberate. The stored rows then *are*
+        the answer: the matrix shows what the role really carries, an audit of the table reads
+        true, and nothing has to re-derive the same rule in a second place and drift from it.
+
+        Only reading rights are ever added; see `catalogue.dependencies_for`.
+        """
+        permissions = await self.repository.session.scalars(select(Permission))
+        by_id = {permission.id: permission.code for permission in permissions}
+        known = set(by_id.values())
+        by_code = {code: permission_id for permission_id, code in by_id.items()}
+
+        chosen = {by_id[pid] for pid in permission_ids if pid in by_id}
+        expanded = expand(chosen, known)
+
+        # The operator's own choices stay in the order they were made, and the dependencies
+        # that had to be added follow them, so the audit trail reads as what was decided plus
+        # what that decision required.
+        ordered = [pid for pid in dict.fromkeys(permission_ids) if pid in by_id]
+        ordered += [by_code[code] for code in sorted(expanded - chosen)]
+
         await self.repository.replace_role_permissions(
             role_id=role_id,
-            permission_ids=permission_ids,
+            permission_ids=ordered,
             actor_user_id=actor_user_id,
         )

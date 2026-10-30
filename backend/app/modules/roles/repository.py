@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.roles.models import Role, RoleLoginChannel, RolePermission, RoleType
@@ -62,10 +62,16 @@ class RoleRepository:
         role = await self.get_role(role_id)
         if role is None:
             return
-        role.permissions.clear()
+        # Replaced with statements rather than through `role.permissions`.
+        #
+        # That is a lazy relationship: clearing it makes SQLAlchemy fetch the current rows
+        # first, and async SQLAlchemy cannot run that fetch from here - every save came back
+        # as MissingGreenlet. It went unnoticed because the Permission Matrix screen was not
+        # in the sidebar, so nobody had pressed Save on it.
+        await self.session.execute(delete(RolePermission).where(RolePermission.role_id == role_id))
         now = datetime.now(UTC)
         for permission_id in dict.fromkeys(permission_ids):
-            role.permissions.append(
+            self.session.add(
                 RolePermission(role_id=role_id, permission_id=permission_id, granted_at=now, granted_by=actor_user_id)
             )
 
@@ -79,10 +85,11 @@ class RoleRepository:
         role = await self.get_role(role_id)
         if role is None:
             return
-        role.login_channels.clear()
+        # Same lazy-relationship trap as the permissions above.
+        await self.session.execute(delete(RoleLoginChannel).where(RoleLoginChannel.role_id == role_id))
         now = datetime.now(UTC)
         for channel, is_allowed in channels.items():
-            role.login_channels.append(
+            self.session.add(
                 RoleLoginChannel(
                     role_id=role_id,
                     login_channel=channel,

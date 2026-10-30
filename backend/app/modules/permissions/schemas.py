@@ -10,6 +10,9 @@ class PermissionResponse(BaseModel):
     description: str | None = None
     is_system: bool
     is_active: bool
+    #: What this permission cannot be used without, and which the backend grants alongside it.
+    #: Sent so the matrix can show the consequence before Save rather than after a reload.
+    requires: list[str] = []
 
 
 class PermissionListResponse(BaseModel):

@@ -18,12 +18,13 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.business_catalogue.models import CylinderTypeDefinition
+from app.shared.business.audit import BusinessAuditor
 from app.modules.inventory import validation
 from app.modules.inventory.alerts import derive
 from app.modules.inventory.constants import (
     ALL_CYLINDERS,
     DEFAULT_MOVEMENT_LIMIT,
-    DEFAULT_REORDER_THRESHOLDS,
     MAX_MOVEMENT_LIMIT,
     MovementReference,
     StockMovementType,
@@ -36,6 +37,7 @@ from app.modules.inventory.schemas import (
     RecordStockMovementRequest,
     StockAlertResponse,
     StockItemResponse,
+    UpdateReorderThresholdRequest,
     StockMovementResponse,
 )
 from app.modules.notifications.events import stock as stock_events
@@ -79,7 +81,9 @@ class InventoryService:
         operationally useless: a cylinder they do not carry has not run out.
         """
         rows = {row.cylinder_type: row for row in await self._items()}
-        items = [_item_view(cylinder_type, rows.get(cylinder_type.value)) for cylinder_type in CylinderType]
+        definitions = list(await self.session.scalars(select(CylinderTypeDefinition).where(
+            CylinderTypeDefinition.is_active.is_(True)).order_by(CylinderTypeDefinition.sort_order, CylinderTypeDefinition.code)))
+        items = [_item_view(definition, rows.get(definition.code)) for definition in definitions]
         alerts = derive([(row, label_of(row.cylinder_type)) for row in rows.values()])
         return InventorySnapshotResponse(
             items=items,
@@ -110,6 +114,22 @@ class InventoryService:
         return [_movement_view(row) for row in rows]
 
     # --- Writes -----------------------------------------------------------------------------
+
+    async def update_reorder_threshold(self, cylinder_type: str, payload: UpdateReorderThresholdRequest) -> StockItemResponse:
+        """Change only this merchant's reorder setting; no quantity or movement is edited."""
+        now = datetime.now(UTC)
+        ledger = StockLedger(self.session, self.merchant_id)
+        item = await ledger._locked_item(cylinder_type, now)
+        previous = item.reorder_threshold
+        if previous != payload.reorder_threshold:
+            item.reorder_threshold = payload.reorder_threshold
+            item.updated_at = now.replace(tzinfo=None)
+            await BusinessAuditor(self.session).record("inventory.reorder_threshold_updated",
+                actor=self.actor, entity_type="stock_item", entity_id=item.id,
+                message=f"Reorder level for {item.cylinder_type}: {previous} -> {item.reorder_threshold}")
+        await self.session.commit()
+        definition = await self.session.get(CylinderTypeDefinition, item.cylinder_type)
+        return _item_view(definition, item)
 
     async def record_with_idempotency(
         self, payload: RecordStockMovementRequest, idempotency_key: str | None
@@ -236,26 +256,16 @@ def _limit(value: int | None) -> int:
     return min(value, MAX_MOVEMENT_LIMIT)
 
 
-def _item_view(cylinder_type: CylinderType, row: StockItem | None) -> StockItemResponse:
-    """One card. A type never stocked reads as zeros against its default threshold."""
-    if row is None:
-        return StockItemResponse(
-            cylinder_type=cylinder_type,
-            cylinder_label=label_of(cylinder_type.value),
-            filled=0,
-            empty=0,
-            damaged=0,
-            reorder_threshold=DEFAULT_REORDER_THRESHOLDS.get(cylinder_type, 0),
-            updated_at=None,
-        )
+def _item_view(definition: CylinderTypeDefinition, row: StockItem | None) -> StockItemResponse:
+    """Merchant override when saved; otherwise the catalogue's database default."""
     return StockItemResponse(
-        cylinder_type=cylinder_type,
-        cylinder_label=label_of(row.cylinder_type),
-        filled=row.filled,
-        empty=row.empty,
-        damaged=row.damaged,
-        reorder_threshold=row.reorder_threshold,
-        updated_at=row.updated_at,
+        cylinder_type=definition.code,
+        cylinder_label=definition.short_label or definition.label,
+        filled=row.filled if row else 0,
+        empty=row.empty if row else 0,
+        damaged=row.damaged if row else 0,
+        reorder_threshold=row.reorder_threshold if row else definition.reorder_threshold,
+        updated_at=row.updated_at if row else None,
     )
 
 

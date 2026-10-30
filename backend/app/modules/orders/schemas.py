@@ -63,7 +63,7 @@ class CutoffResponse(BaseModel):
 
 
 class OrderCylinderTypeResponse(BaseModel):
-    code: CylinderType
+    code: str
     label: str
     minimum_quantity: int = Field(alias="minimumQuantity")
     maximum_quantity: int = Field(alias="maximumQuantity")
@@ -77,7 +77,7 @@ class OrderCylinderTypeResponse(BaseModel):
 class OrderLineRequest(BaseModel):
     """One requested line. Quantity limits are per cylinder type (spec §18.3)."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType", min_length=1, max_length=40)
     quantity: int
 
     model_config = _CAMEL
@@ -86,7 +86,7 @@ class OrderLineRequest(BaseModel):
 class OrderItemResponse(BaseModel):
     """Spec §3.9. `unitPrice` is GST-inclusive, per cylinder."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     quantity: int
     unit_price: int = Field(alias="unitPrice")
@@ -359,7 +359,7 @@ class UnavailableLine(BaseModel):
     do about it - drop the line, or call the merchant.
     """
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     quantity: int
     reason: str

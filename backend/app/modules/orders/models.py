@@ -21,6 +21,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -67,6 +68,9 @@ class Order(Base):
     address_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_state: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_pincode: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    delivery_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivery_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivery_instructions: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     total_cylinders: Mapped[int] = mapped_column(Integer)
     # "6 × 47.5 L · 2 × 47.5 V". Display only, built at placement so the list needs no lines.

@@ -30,6 +30,8 @@ _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 class PlatformSettingsResponse(BaseModel):
     """What the Settings screen renders, including the two forms of the cut-off it displays."""
 
+    delivery_radius_metres: int = Field(alias="deliveryRadiusMeters")
+    delivery_radius_km: float = Field(alias="deliveryRadiusKm")
     order_cutoff_hour: int = Field(alias="orderCutoffHour")
     #: `"16:00"`. The form of the time the apps parse.
     order_cutoff_time: str = Field(alias="orderCutoffTime")
@@ -46,12 +48,15 @@ class PlatformSettingsUpdate(BaseModel):
 
     #: 0-23, IST. Refused outside that rather than silently making every order same-day.
     order_cutoff_hour: int | None = Field(default=None, alias="orderCutoffHour", ge=0, le=23)
+    delivery_radius_metres: int | None = Field(default=None, alias="deliveryRadiusMeters", ge=1, le=100000)
 
     model_config = _CAMEL
 
 
 def _view(settings: PlatformSettings) -> PlatformSettingsResponse:
     return PlatformSettingsResponse(
+        delivery_radius_metres=settings.delivery_radius_metres,
+        delivery_radius_km=settings.delivery_radius_metres / 1000,
         order_cutoff_hour=settings.order_cutoff_hour,
         order_cutoff_time=clock_24h(settings.order_cutoff_hour),
         order_cutoff_label=clock_12h(settings.order_cutoff_hour),
@@ -89,6 +94,7 @@ async def update_settings(
     placement, so moving this does not rewrite what a customer was told last week.
     """
     settings = await service.update(
-        session, actor, order_cutoff_hour=payload.order_cutoff_hour
+        session, actor, order_cutoff_hour=payload.order_cutoff_hour,
+        delivery_radius_metres=payload.delivery_radius_metres
     )
     return _view(settings)

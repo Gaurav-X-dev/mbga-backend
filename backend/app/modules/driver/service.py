@@ -5,9 +5,10 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import UploadFile, status as http_status
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings
@@ -15,6 +16,7 @@ from app.modules.constants.models import Constant
 from app.modules.constants.seeds import CANCELLATION_REASONS
 from app.modules.credit.service import CreditLimitService
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
+from app.modules.business_catalogue.models import CylinderTypeDefinition
 from app.modules.deliveries import validation
 from app.modules.deliveries.constants import (
     ALL_STATUSES,
@@ -32,11 +34,10 @@ from app.modules.deliveries.schemas import (
 )
 from app.modules.deliveries.schemas import FailDeliveryRequest
 from app.modules.deliveries.service import DeliveryService
-from app.modules.delivery_users.models import DeliveryProfile
+from app.modules.delivery_users.models import DeliveryProfile, DriverLocationLog
 from app.modules.driver.constants import (
     ACTIONABLE_STATUSES,
     APP_STATUS,
-    AT_LOCATION_RADIUS_METRES,
     STATUS_RANK,
     DriverDeliveryStatus,
 )
@@ -59,6 +60,8 @@ from app.modules.driver.schemas import (
     DriverDeliveryResponse,
     DriverInventoryLine,
     DriverInventoryResponseData,
+    DriverLocationRequest,
+    DriverLocationResponse,
     DriverProfileResponseData,
     EmptyDueSummary,
     EmptyReturnItem,
@@ -81,10 +84,9 @@ from app.modules.driver.upi_qr import build_upi_link, png_base64
 from app.modules.merchants.models import Merchant
 from app.modules.orders import transitions
 from app.modules.orders.amendment import AmendedLine, OrderAmender, merge
-from app.modules.orders.constants import ORDER_LABELS, OrderStatus
+from app.modules.orders.constants import OrderStatus
 from app.modules.orders.models import Order, OrderItem
 from app.modules.payments.constants import (
-    OFFERED_PAYMENT_MODES,
     PaymentMode,
     ReconciliationStatus,
 )
@@ -92,12 +94,8 @@ from app.modules.payments.invoicing import delivered_total
 from app.modules.payments.models import Invoice, Payment
 from app.modules.payments.schemas import RecordPaymentRequest
 from app.modules.payments.service import PaymentService
-from app.modules.pricing.constants import (
-    ACTIVE_TIER,
-    CYLINDER_LABELS,
-    CylinderType,
-    cylinders_for,
-)
+from app.modules.business_catalogue.service import BusinessCatalogueService
+from app.modules.pricing.constants import ACTIVE_TIER
 from app.modules.pricing.service import resolve_customer_price, tier_prices_for_month
 from app.modules.users.models import User
 from app.shared.business.actor import BusinessActor
@@ -110,6 +108,7 @@ from app.shared.storage.provider import StorageProvider
 
 PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024
 PAYMENT_PROOF_ERROR = "Payment proof photo and QR generation are required for UPI payments."
+INDIA_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 def _not_found() -> ApiError:
@@ -196,6 +195,7 @@ class DriverService:
         self.settings = settings
         self.storage = storage
         self.driver_user_id = actor.user_id
+        self._cylinder_labels: dict[str, str] = {}
 
     # --- Reads ------------------------------------------------------------------------------
 
@@ -256,7 +256,13 @@ class DriverService:
                 "This order has no pricing month, so its doorstep prices cannot be resolved.",
             )
 
-        customer_type = (customer.customer_type or order.customer_type or "RETAIL").upper()
+        catalogue = BusinessCatalogueService(self.session)
+        configured_type = customer.customer_type or order.customer_type
+        customer_type = (
+            configured_type.upper()
+            if configured_type
+            else (await catalogue.default_customer_type()).code
+        )
         tier = customer.pricing_tier or ACTIVE_TIER.value
         tier_prices = await tier_prices_for_month(self.session, order.pricing_month_id, tier)
         if not tier_prices and tier != ACTIVE_TIER.value:
@@ -265,23 +271,24 @@ class DriverService:
             )
 
         items: list[AvailableCylinderTypeItem] = []
-        for cylinder_type in cylinders_for(customer_type):
+        eligible = await catalogue.eligible_cylinders(customer_type)
+        for mapping, definition in eligible:
             price = await resolve_customer_price(
                 self.session,
                 customer.id,
-                cylinder_type.value,
-                tier_prices.get(cylinder_type.value),
+                definition.code,
+                tier_prices.get(definition.code),
             )
             if price is None:
                 raise ApiError(
                     "CYLINDER_PRICE_NOT_CONFIGURED",
                     http_status.HTTP_409_CONFLICT,
-                    f"Price is not configured for {cylinder_type.value}.",
+                    f"Price is not configured for {definition.code}.",
                 )
             items.append(
                 AvailableCylinderTypeItem(
-                    cylinderType=cylinder_type.value,
-                    label=CYLINDER_LABELS[cylinder_type],
+                    cylinderType=definition.code,
+                    label=definition.label,
                     unitPrice=float(price),
                 )
             )
@@ -406,20 +413,41 @@ class DriverService:
     async def verify_location(
         self, slip_id: str, payload: VerifyLocationRequest
     ) -> VerifyLocationResponseData:
-        """The driver is at the gate: record where that is.
+        """Mark arrival only within the agency's configured radius of a saved destination.
 
-        `isLocationCaptured` was hard-coded to `True`, so the app was told the customer's
-        address had coordinates whether or not anybody had ever recorded them - which is
-        exactly the screen that was supposed to get them recorded.
+        All validation precedes state changes. Driver GPS never becomes the customer pin.
         """
         slip = await self._mine(slip_id)
         self._require_dispatched(slip)
 
+        from app.modules.platform_settings.delivery_settings import effective_radius
+        radius = await effective_radius(self.session, slip.merchant_id)
+        destination = (slip.destination_latitude, slip.destination_longitude)
+        if None in destination:
+            order = await self.session.get(Order, slip.order_id)
+            if order and order.delivery_site_id:
+                site = await self.session.get(CustomerDeliverySite, order.delivery_site_id)
+                destination = ((site.latitude, site.longitude) if site and site.customer_id == slip.customer_id else (None, None))
+            else:
+                customer = await self.session.get(CustomerProfile, slip.customer_id)
+                destination = ((customer.address_latitude, customer.address_longitude)
+                               if customer and customer.merchant_id == slip.merchant_id else (None, None))
+        metres = (haversine_metres(payload.latitude, payload.longitude, *destination)
+                  if None not in destination else None)
+        if metres is None:
+            raise ApiError("DELIVERY_LOCATION_REQUIRED", 409,
+                           "Delivery location is not saved. Ask your merchant to set the delivery address location.")
+        if metres > radius:
+            raise ApiError("OUTSIDE_DELIVERY_RADIUS", 422,
+                           f"You are {metres / 1000:.3f} km from the delivery location. Move within {radius / 1000:g} km to mark arrival.",
+                           fields=[{"field": "location", "distanceKm": round(metres / 1000, 4),
+                                    "distanceMeters": round(metres, 1), "allowedRadiusMeters": radius,
+                                    "allowedRadiusKm": radius / 1000}])
         now = datetime.now(UTC)
+        slip.destination_latitude, slip.destination_longitude = destination
         slip.driver_latitude = payload.latitude
         slip.driver_longitude = payload.longitude
-        metres = self._distance_to_site(slip, payload)
-        is_location_captured = await self._capture_destination(slip, payload, now)
+        is_location_captured = True
 
         service = DeliveryService(self.session, self._merchant_actor(slip), self.settings)
         arrived_at = await service.mark_on_location(slip.id, now=now)
@@ -428,7 +456,10 @@ class DriverService:
             delivery_status=DeliveryStatus.ON_LOCATION.value,
             order_status="ON_LOCATION",
             arrived_at=arrived_at,
-            is_at_location=metres is None or metres <= AT_LOCATION_RADIUS_METRES,
+            is_at_location=True,
+            distance_km=round(metres / 1000, 4),
+            allowed_radius_metres=radius,
+            allowed_radius_km=radius / 1000,
             distance_meters_from_destination=None if metres is None else round(metres, 1),
             is_location_captured=is_location_captured,
             message="Location verified successfully",
@@ -661,7 +692,7 @@ class DriverService:
         slip.payment_proof_content_type = detected.content_type
         slip.payment_proof_captured_at = captured_at.astimezone(UTC)
         slip.payment_proof_uploaded_at = now
-        slip.payment_proof_url = f"/api/v1/delivery/deliveries/{slip.id}/payment-proof"
+        slip.payment_proof_url = self._payment_proof_url(slip.id)
         slip.updated_at = now
         await self.session.commit()
         if previous_key and previous_key != stored.storage_key:
@@ -670,6 +701,9 @@ class DriverService:
             proof_url=slip.payment_proof_url,
             proof_captured_at=slip.payment_proof_captured_at,
         )
+
+    def _payment_proof_url(self, slip_id: str) -> str:
+        return f"/api/v1/delivery/deliveries/{slip_id}/payment-proof"
 
     async def _payment_proof_chunks(self, head: bytes, upload: UploadFile):
         total = len(head)
@@ -694,7 +728,7 @@ class DriverService:
     async def _record_empties(self, slip: DeliverySlip, collected: list[Any]) -> None:
         """Write the per-size empties beside the per-size handover.
 
-        The slip keeps the total, which is what the stock ledger books; this keeps the split,
+        The slip keeps the total; this split determines which stock buckets receive empties,
         which is what the receipt prints and what the godown counts back in. Summing on arrival
         and discarding the breakdown left the receipt listing the delivered lines in the empties
         column - a total of 2 printed above rows adding to 3.
@@ -764,7 +798,7 @@ class DriverService:
         # Checked against what is **offered**, not merely against the enum: that is wider, so
         # that payments taken in a mode since withdrawn keep reading back. A driver may only
         # collect in a mode money is actually taken in today.
-        if mode not in OFFERED_PAYMENT_MODES:
+        if mode not in {PaymentMode.CASH, PaymentMode.UPI}:
             raise ApiError(
                 "PAYMENT_MODE_INVALID",
                 http_status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -813,7 +847,14 @@ class DriverService:
             if order
             else 0
         )
-        return int(delivery + await self._previous_due(slip))
+        return max(int(delivery + await self._previous_due(slip)) - await self._pending_payment_total(slip), 0)
+
+    async def _pending_payment_total(self, slip: DeliverySlip) -> int:
+        invoice_ids = list(await self.session.scalars(select(Invoice.id).where(
+            Invoice.customer_id == slip.customer_id, Invoice.merchant_id == slip.merchant_id,
+        )))
+        reserved = await PaymentService(self.session, self._merchant_actor(slip)).pending_reservations(invoice_ids)
+        return sum(reserved.values())
 
     async def _delivered_counts(self, slip: DeliverySlip) -> dict[str, int]:
         """The per-type handover counts as they now stand on the slip.
@@ -1007,7 +1048,7 @@ class DriverService:
             pending_amount=pending,
             customer_previous_due=previous,
             total_due=pending + previous,
-            max_qr_amount=pending + previous,
+            max_qr_amount=max(pending + previous - await self._pending_payment_total(slip), 0),
             upi_available=upi_ready,
             upi_id=merchant.upi_id if upi_ready else None,
             payee_name=merchant.upi_payee_name if upi_ready else None,
@@ -1017,7 +1058,7 @@ class DriverService:
                 if slip.qr_generated_at
                 else None
             ),
-            modes=[mode.value for mode in sorted(OFFERED_PAYMENT_MODES)],
+            modes=[PaymentMode.CASH.value, PaymentMode.UPI.value],
         )
 
     async def _bank_payment(self, slip: DeliverySlip) -> None:
@@ -1062,6 +1103,7 @@ class DriverService:
                 ),
                 # The gate, not the office. See `PaymentService.record`.
                 reference_required=False,
+                delivery_id=slip.id,
                 proof_url=slip.payment_proof_url,
                 proof_captured_at=slip.payment_proof_captured_at,
             )
@@ -1101,11 +1143,13 @@ class DriverService:
         for target in (invoice, *others):
             if remaining <= 0:
                 break
-            share = min(remaining, int(target.balance))
+            share = min(remaining, await PaymentService(self.session, self._merchant_actor(slip)).collectable_balance(target))
             if share <= 0:
                 continue
             plan.append((target, share))
             remaining -= share
+        if remaining:
+            raise ApiError("PAYMENT_EXCEEDS_PAYABLE", 409, "Outstanding balance changed; review the collection.")
         return plan
 
     async def get_completed_detail(self, slip_id: str) -> CompletedDeliveryDetailResponseData:
@@ -1276,6 +1320,71 @@ class DriverService:
         await self.session.commit()
         return await self.profile()
 
+    async def log_location(self, payload: DriverLocationRequest) -> DriverLocationResponse:
+        """Store an on-duty breadcrumb and advance the driver's live-map position."""
+
+        user, delivery_profile = await self._account()
+        profile = self._require_profile(delivery_profile)
+
+        if (
+            user.status != "ACTIVE"
+            or profile.status != "ACTIVE"
+            or profile.approval_status != "APPROVED"
+            or profile.delivery_user_type != "DRIVER"
+        ):
+            raise ApiError(
+                "DRIVER_NOT_ACTIVE",
+                http_status.HTTP_403_FORBIDDEN,
+                "This driver account is not active and approved.",
+            )
+
+        if not profile.on_duty:
+            return DriverLocationResponse(
+                message="Driver is off-duty; location was not logged.",
+                recorded_at=payload.recorded_at,
+            )
+
+        # MySQL DATETIME carries no timezone. Location tables deliberately store Indian wall
+        # time so operational tracking queries display IST directly, as required by the app.
+        recorded_at_ist = payload.recorded_at.astimezone(INDIA_TIMEZONE)
+        recorded_at_db = recorded_at_ist.replace(tzinfo=None)
+        now = datetime.now(INDIA_TIMEZONE).replace(tzinfo=None)
+        self.session.add(
+            DriverLocationLog(
+                id=str(uuid4()),
+                driver_id=profile.id,
+                merchant_id=profile.merchant_id,
+                latitude=payload.latitude,
+                longitude=payload.longitude,
+                accuracy=payload.accuracy,
+                recorded_at=recorded_at_db,
+                created_at=now,
+            )
+        )
+        await self.session.execute(
+            update(DeliveryProfile)
+            .where(
+                DeliveryProfile.id == profile.id,
+                or_(
+                    DeliveryProfile.last_ping_at.is_(None),
+                    DeliveryProfile.last_ping_at <= recorded_at_db,
+                ),
+            )
+            .values(
+                current_latitude=payload.latitude,
+                current_longitude=payload.longitude,
+                location_accuracy=payload.accuracy,
+                last_ping_at=recorded_at_db,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self.session.commit()
+        return DriverLocationResponse(
+            message="Location logged successfully",
+            recorded_at=recorded_at_ist,
+        )
+
     # --- Van stock --------------------------------------------------------------------------
 
     async def day_summary(self) -> DaySummaryResponseData:
@@ -1332,18 +1441,20 @@ class DriverService:
             )
         )
 
-        by_type = [
-            DaySummaryLine(
-                cylinder_type=cylinder_type,
-                label=_label(cylinder_type),
-                delivered=int(delivered or 0),
-                empties_collected=int(returned or 0),
-            )
+        by_type: list[DaySummaryLine] = []
+        for cylinder_type, delivered, returned in rows:
             # A size that neither went out nor came back is left out rather than shown as two
             # zeroes: the screen is a tally of the day's work, not a price list.
-            for cylinder_type, delivered, returned in rows
-            if delivered or returned
-        ]
+            if not (delivered or returned):
+                continue
+            by_type.append(
+                DaySummaryLine(
+                    cylinder_type=cylinder_type,
+                    label=await self._cylinder_label(cylinder_type),
+                    delivered=int(delivered or 0),
+                    empties_collected=int(returned or 0),
+                )
+            )
         return DaySummaryResponseData(
             date=today.isoformat(),
             deliveries_completed=int(completed or 0),
@@ -1385,15 +1496,16 @@ class DriverService:
             )
         )
 
-        stock_by_type = [
-            DriverInventoryLine(
-                cylinder_type=cylinder_type,
-                label=_label(cylinder_type),
-                full_count=int(total or 0),
-                empty_count=int(returned or 0),
+        stock_by_type: list[DriverInventoryLine] = []
+        for cylinder_type, total, returned in lines:
+            stock_by_type.append(
+                DriverInventoryLine(
+                    cylinder_type=cylinder_type,
+                    label=await self._cylinder_label(cylinder_type),
+                    full_count=int(total or 0),
+                    empty_count=int(returned or 0),
+                )
             )
-            for cylinder_type, total, returned in lines
-        ]
 
         return DriverInventoryResponseData(
             total_full_cylinders=sum(int(total or 0) for _, total, _r in lines),
@@ -1464,16 +1576,6 @@ class DriverService:
             select(DeliveryProfile).where(DeliveryProfile.user_id == self.driver_user_id)
         )
         return user, profile
-
-    def _distance_to_site(self, slip: DeliverySlip, payload: VerifyLocationRequest) -> float | None:
-        if slip.destination_latitude is None or slip.destination_longitude is None:
-            return None
-        return haversine_metres(
-            payload.latitude,
-            payload.longitude,
-            slip.destination_latitude,
-            slip.destination_longitude,
-        )
 
     async def _settled_money(
         self, slip_ids: list[str]
@@ -1568,17 +1670,20 @@ class DriverService:
             .where(DeliverySlipItem.slip_id == slip.id)
             .order_by(DeliverySlipItem.position)
         )
-        return [
-            DeliveryItemResponse(
-                cylinder_type=row.cylinder_type,
-                label=_label(row.cylinder_type),
-                quantity=row.empties_collected,
-                unit_price=None,
-                total_price=None,
+        returns: list[DeliveryItemResponse] = []
+        for row in rows:
+            if not row.empties_collected:
+                continue
+            returns.append(
+                DeliveryItemResponse(
+                    cylinder_type=row.cylinder_type,
+                    label=await self._cylinder_label(row.cylinder_type),
+                    quantity=row.empties_collected,
+                    unit_price=None,
+                    total_price=None,
+                )
             )
-            for row in rows
-            if row.empties_collected
-        ]
+        return returns
 
     async def _items(self, slip_id: str, order_id: str | None = None) -> list[DeliveryItemResponse]:
         """The slip's lines, priced from the order they were cut from.
@@ -1612,7 +1717,7 @@ class DriverService:
             items.append(
                 DeliveryItemResponse(
                     cylinder_type=row.cylinder_type,
-                    label=_label(row.cylinder_type),
+                    label=await self._cylinder_label(row.cylinder_type),
                     quantity=row.quantity,
                     unit_price=unit,
                     # Priced on what this slip carries, not what the order asked for: a part load
@@ -1651,51 +1756,19 @@ class DriverService:
             for i in items
         ]
         today = {i.cylinder_type for i in items}
-        returns.extend(
-            EmptyReturnItem(
-                cylinder_type=kind,
-                label=_label(kind),
-                current_order_quantity=0,
-                customer_previous_due=due,
-                expected_quantity=due,
+        for kind, due in sorted(previous.items()):
+            if kind in today:
+                continue
+            returns.append(
+                EmptyReturnItem(
+                    cylinder_type=kind,
+                    label=await self._cylinder_label(kind),
+                    current_order_quantity=0,
+                    customer_previous_due=due,
+                    expected_quantity=due,
+                )
             )
-            for kind, due in sorted(previous.items())
-            if kind not in today
-        )
         return returns
-
-    async def _capture_destination(
-        self, slip: DeliverySlip, payload: VerifyLocationRequest, now: datetime
-    ) -> bool:
-        """Pin the customer's address the first time a driver stands on it.
-
-        Most orders go to an address nobody ever typed coordinates for, so the slip has none
-        and the app cannot draw a route. The driver reporting "I am here" is the one moment the
-        platform learns where "here" is, and it costs nothing to keep.
-
-        **Only when it is not already known.** A recorded location is the office's or the
-        customer's, and a driver parked at the end of the lane must not quietly move it. The
-        fix is saved onto the customer's delivery site as well, so the next order knows it too.
-
-        Returns whether the destination has coordinates once this is done.
-        """
-        if slip.destination_latitude is not None and slip.destination_longitude is not None:
-            return True
-        if payload.latitude is None or payload.longitude is None:
-            return False
-
-        slip.destination_latitude = payload.latitude
-        slip.destination_longitude = payload.longitude
-        slip.updated_at = now
-
-        order = await self.session.get(Order, slip.order_id)
-        site_id = order.delivery_site_id if order else None
-        if site_id:
-            site = await self.session.get(CustomerDeliverySite, site_id)
-            if site is not None and site.latitude is None and site.longitude is None:
-                site.latitude = payload.latitude
-                site.longitude = payload.longitude
-        return True
 
     async def _recut(self, slip: DeliverySlip, order: Order) -> None:
         """Rebuild the slip's lines from the order's, keeping what the driver already recorded.
@@ -1772,6 +1845,7 @@ class DriverService:
                 address=_one_line(slip),
                 latitude=slip.destination_latitude,
                 longitude=slip.destination_longitude,
+                delivery_instructions=order.delivery_instructions if order else None,
                 is_location_captured=slip.destination_latitude is not None,
             ),
             distance_km=None,
@@ -1790,6 +1864,13 @@ class DriverService:
                 previous=await self._previous_due(slip),
             ),
         )
+
+    async def _cylinder_label(self, cylinder_type: str) -> str:
+        code = cylinder_type.strip().upper()
+        if code not in self._cylinder_labels:
+            row = await self.session.get(CylinderTypeDefinition, code)
+            self._cylinder_labels[code] = row.label if row is not None else cylinder_type
+        return self._cylinder_labels[code]
 
 
 def _billing(grand_total: float, *, tax: float, previous: float) -> BillingSummary:
@@ -1811,13 +1892,6 @@ def _billing(grand_total: float, *, tax: float, previous: float) -> BillingSumma
         customer_previous_balance=previous,
         total_payable_amount=round(grand_total + previous, 2),
     )
-
-
-def _label(cylinder_type: str) -> str:
-    try:
-        return ORDER_LABELS[CylinderType(cylinder_type)]
-    except (KeyError, ValueError):
-        return cylinder_type
 
 
 def _one_line(slip: DeliverySlip) -> str:

@@ -106,6 +106,19 @@ class ExpenseResponse(BaseModel):
     created_at: UtcTime = Field(alias="createdAt")
     updated_at: UtcTime = Field(alias="updatedAt")
 
+    vehicle_id: str | None = Field(default=None, alias="vehicleId")
+    driver_id: str | None = Field(default=None, alias="driverId")
+    fuel_type: str | None = Field(default=None, alias="fuelType")
+    km_reading: Money | None = Field(default=None, alias="kmReading")
+    distance: Money | None = None
+    liters: Money | None = None
+    vehicle_number: str | None = Field(default=None, alias="vehicleNumber")
+    driver_name: str | None = Field(default=None, alias="driverName")
+    mileage: float | None = None
+    has_receipt: bool = Field(default=False, alias="hasReceipt")
+
+    destination: str | None = Field(default=None, max_length=160)
+
     model_config = _CAMEL
 
 
@@ -153,6 +166,15 @@ class CreateExpenseRequest(BaseModel):
     # Defaults to today (server business date) when omitted. Sent by the app as `date`.
     spent_on: date | None = Field(default=None, alias="date")
 
+    vehicle_id: str | None = Field(default=None, alias="vehicleId")
+    driver_id: str | None = Field(default=None, alias="driverId")
+    fuel_type: str | None = Field(default=None, alias="fuelType")
+    km_reading: Decimal | None = Field(default=None, alias="kmReading")
+    distance: Decimal | None = None
+    liters: Decimal | None = None
+
+    destination: str | None = Field(default=None, max_length=160)
+
     model_config = _CAMEL
 
 
@@ -164,6 +186,15 @@ class UpdateExpenseRequest(BaseModel):
     amount: Decimal | None = None
     note: str | None = None
     spent_on: date | None = Field(default=None, alias="date")
+
+    vehicle_id: str | None = Field(default=None, alias="vehicleId")
+    driver_id: str | None = Field(default=None, alias="driverId")
+    fuel_type: str | None = Field(default=None, alias="fuelType")
+    km_reading: Decimal | None = Field(default=None, alias="kmReading")
+    distance: Decimal | None = None
+    liters: Decimal | None = None
+
+    destination: str | None = Field(default=None, max_length=160)
 
     model_config = _CAMEL
 

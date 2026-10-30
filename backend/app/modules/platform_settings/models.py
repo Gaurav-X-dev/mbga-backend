@@ -40,6 +40,7 @@ class PlatformSettings(Base):
     # The hour, IST, after which an order is delivered the next day instead of today. A whole
     # hour on a wall clock, because that is how the cut-off is told to a customer and worked to
     # in the godown; half past anything would have to be explained on every screen.
+    delivery_radius_metres: Mapped[int] = mapped_column(Integer, default=300, server_default="300")
     order_cutoff_hour: Mapped[int] = mapped_column(Integer, default=DEFAULT_ORDER_CUTOFF_HOUR)
     credit_limit_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     credit_reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")

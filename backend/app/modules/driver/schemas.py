@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from typing import Annotated, Any, Generic, TypeVar
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -45,6 +46,40 @@ UtcTime = Annotated[
     datetime, PlainSerializer(_as_utc, return_type=str, when_used="json-unless-none")
 ]
 
+INDIA_TIMEZONE = ZoneInfo("Asia/Kolkata")
+
+
+def _as_ist(value: datetime) -> str:
+    moment = value if value.tzinfo else value.replace(tzinfo=INDIA_TIMEZONE)
+    return moment.astimezone(INDIA_TIMEZONE).isoformat(timespec="milliseconds")
+
+
+IstTime = Annotated[
+    datetime, PlainSerializer(_as_ist, return_type=str, when_used="json-unless-none")
+]
+
+
+class DriverLocationRequest(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    accuracy: float | None = Field(default=None, ge=0, le=100_000)
+    recorded_at: datetime = Field(alias="recordedAt")
+    model_config = _CAMEL
+
+    @field_validator("recorded_at")
+    @classmethod
+    def recorded_at_must_include_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("recordedAt must include a timezone offset")
+        return value.astimezone(UTC)
+
+
+class DriverLocationResponse(BaseModel):
+    success: bool = True
+    message: str
+    recorded_at: IstTime = Field(alias="recordedAt")
+    model_config = _CAMEL
+
 
 # --- Deliveries ------------------------------------------------------------------------------
 
@@ -56,6 +91,7 @@ class CustomerLocation(BaseModel):
     address: str
     latitude: float | None = None
     longitude: float | None = None
+    delivery_instructions: str | None = Field(default=None, alias="deliveryInstructions")
     is_location_captured: bool = Field(alias="isLocationCaptured", default=False)
     model_config = _CAMEL
 
@@ -198,8 +234,8 @@ class CancelDeliveryResponseData(BaseModel):
 
 
 class VerifyLocationRequest(BaseModel):
-    latitude: float
-    longitude: float
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
     model_config = _CAMEL
 
 
@@ -209,6 +245,9 @@ class VerifyLocationResponseData(BaseModel):
     order_status: str = Field(alias="orderStatus")
     arrived_at: UtcTime = Field(alias="arrivedAt")
     is_at_location: bool = Field(alias="isAtLocation")
+    distance_km: float = Field(alias="distanceKm")
+    allowed_radius_metres: int = Field(alias="allowedRadiusMeters")
+    allowed_radius_km: float = Field(alias="allowedRadiusKm")
     distance_meters_from_destination: float | None = Field(
         alias="distanceMetersFromDestination", default=None
     )

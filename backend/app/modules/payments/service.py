@@ -35,7 +35,7 @@ from app.modules.payments.constants import (
     PaymentMode,
     ReconciliationStatus,
 )
-from app.modules.payments.models import Invoice, Payment
+from app.modules.payments.models import Invoice, Payment, PaymentCollection
 from app.modules.payments.numbering import NumberAllocator
 from app.modules.payments.schemas import (
     CustomerPaymentSummary,
@@ -75,6 +75,8 @@ class PaymentFilters:
     reconciliation_status: str | None = None
     #: Payment number, invoice number, customer name or bank reference.
     search: str | None = None
+    source: str | None = None
+    grouped: bool = False
 
 
 class PaymentService:
@@ -122,12 +124,99 @@ class PaymentService:
         statement = self._scope_payments(select(Payment)).order_by(Payment.paid_at.desc())
         if filters.customer_id:
             statement = statement.where(Payment.customer_id == filters.customer_id)
+        source = (filters.source or "").strip().upper()
+        if source == "BY_CUSTOMER":
+            statement = statement.where(Payment.collection_id.is_not(None))
+        elif source == "ON_DELIVERY":
+            statement = statement.where(Payment.delivery_id.is_not(None), Payment.collection_id.is_(None))
+        elif source == "STAFF_COLLECTION":
+            statement = statement.where(Payment.delivery_id.is_(None), Payment.collection_id.is_(None))
+        elif source:
+            raise validation.invalid("source", "unknown_source", "Use BY_CUSTOMER, ON_DELIVERY or STAFF_COLLECTION.")
+        # Group before filtering: a pending-online filter must retain the cash portion.
+        if source == "ON_DELIVERY" or filters.grouped:
+            rows = list(await self.session.scalars(statement))
+            groups: dict[str, list[Payment]] = {}
+            for row in rows:
+                key = f"delivery:{row.delivery_id}" if row.delivery_id else (
+                    f"collection:{row.collection_id}" if row.collection_id else f"payment:{row.id}")
+                groups.setdefault(key, []).append(row)
+            views = [await self._transaction_view(group) for group in groups.values()]
+            wanted = (filters.reconciliation_status or "ALL").upper()
+            if wanted not in {"ALL", *[status.value for status in ReconciliationStatus]}:
+                raise validation.invalid("reconciliationStatus", "unknown_status", "Unknown status.")
+            views = [view for view in views if wanted == "ALL" or view.reconciliation_status.value == wanted]
+            term = (filters.search or "").strip().lower()
+            views = [view for view in views if not term or any(
+                term in str(value or "").lower()
+                for part in [view, *view.components]
+                for value in (part.payment_number, part.invoice_number, part.customer_name, part.reference)
+            )]
+            return await self._current_balances(views)
         statement = self._apply_reconciliation(statement, filters.reconciliation_status)
         statement = self._apply_search(statement, filters.search)
-        return [self._payment_view(row) for row in await self.session.scalars(statement)]
+        return await self._current_balances([self._payment_view(row) for row in await self.session.scalars(statement)])
 
-    async def get_payment(self, payment_id: str) -> PaymentResponse:
-        return self._payment_view(await self._owned_payment(payment_id))
+    async def get_payment(
+        self, payment_id: str, source: str | None = None, *, grouped: bool = False,
+    ) -> PaymentResponse:
+        payment = await self._owned_payment(payment_id)
+        if (source == "ON_DELIVERY" or grouped) and (payment.delivery_id or payment.collection_id):
+            condition = (Payment.delivery_id == payment.delivery_id if payment.delivery_id else
+                         Payment.collection_id == payment.collection_id)
+            rows = list(await self.session.scalars(self._scope_payments(select(Payment)).where(condition)))
+            view = await self._transaction_view(rows)
+        else:
+            view = self._payment_view(payment)
+        return (await self._current_balances([view]))[0]
+
+    async def _current_balances(self, views: list[PaymentResponse]) -> list[PaymentResponse]:
+        if not views:
+            return views
+        rows = await self.session.execute(self._scope_invoices(
+            select(Invoice.customer_id, func.sum(Invoice.balance))
+        ).where(Invoice.customer_id.in_({view.customer_id for view in views})).group_by(Invoice.customer_id))
+        balances = {customer_id: int(balance or 0) for customer_id, balance in rows}
+        for view in views:
+            view.running_balance = balances.get(view.customer_id, 0)
+            view.customer_running_balance = view.running_balance
+            for component in view.components:
+                component.running_balance = view.running_balance
+                component.customer_running_balance = view.running_balance
+        return views
+
+    async def _transaction_view(self, rows: list[Payment]) -> PaymentResponse:
+        view = self._group_view(rows) if len(rows) > 1 else self._payment_view(rows[0])
+        if rows[0].collection_id:
+            parent = await self.session.get(PaymentCollection, rows[0].collection_id)
+            if parent and parent.merchant_id == rows[0].merchant_id and parent.customer_id == rows[0].customer_id:
+                view.payment_number = parent.payment_number or view.payment_number
+        return view
+
+    def _group_view(self, rows: list[Payment]) -> PaymentResponse:
+        rows = sorted(rows, key=lambda row: (row.created_at, row.payment_number, row.id))
+        parts = [self._payment_view(row) for row in rows]
+        first = parts[0]
+        statuses = {part.reconciliation_status for part in parts}
+        status = (ReconciliationStatus.PENDING if ReconciliationStatus.PENDING in statuses else
+                  ReconciliationStatus.INVALID if ReconciliationStatus.INVALID in statuses else
+                  ReconciliationStatus.RECONCILED)
+        cash = sum(part.cash_amount for part in parts)
+        upi = sum(part.upi_amount for part in parts)
+        return first.model_copy(update={
+            "amount_collected": sum(part.amount_collected for part in parts),
+            "invoice_amount": sum({part.invoice_id: part.invoice_amount for part in parts}.values()),
+            "cash_amount": cash, "upi_amount": upi,
+            "effective_amount": sum(part.effective_amount for part in parts),
+            "pending_amount": sum(part.pending_amount for part in parts),
+            "mode": PaymentMode.SPLIT if cash and upi else first.mode,
+            "reconciliation_status": status,
+            "components": parts,
+            "reference": next((part.reference for part in parts if part.reference), None),
+            "proof_url": next((part.proof_url for part in parts if part.proof_url), None),
+            "customer_running_balance": parts[-1].customer_running_balance,
+            "balance_at_collection": parts[-1].balance_at_collection,
+        })
 
     async def payment_proof_file(self, payment_id: str):
         """Stream UPI evidence only after applying the current app's payment scope."""
@@ -209,12 +298,11 @@ class PaymentService:
                 Invoice.due_at < now,
             )
         )
-        # INVALID payments are excluded: money that never arrived is not a last payment, and
-        # showing it as one is how a customer is told they have paid when they have not.
+        # Only money actually booked on an invoice counts as a last payment.
         last_paid = await self.session.scalar(
             self._scope_payments(select(func.max(Payment.paid_at))).where(
                 Payment.customer_id == customer_id,
-                Payment.reconciliation_status != ReconciliationStatus.INVALID.value,
+                Payment.applied_amount > 0,
             )
         )
         return CustomerPaymentSummary(
@@ -234,6 +322,8 @@ class PaymentService:
         reference_required: bool = True,
         proof_url: str | None = None,
         proof_captured_at: datetime | None = None,
+        delivery_id: str | None = None,
+        commit: bool = True,
     ) -> PaymentResponse:
         """Collect money against an open invoice (spec §12.5).
 
@@ -253,10 +343,11 @@ class PaymentService:
         invoice = validation.check_open(await self._locked_invoice(payload.invoice_id))
         now = datetime.now(UTC)
         amount = validation.check_amount(payload.amount, invoice)
+        if amount > await self.collectable_balance(invoice):
+            raise validation.invalid("amount", "exceeds_balance", "Amount exceeds the balance available after pending payments.")
         mode = validation.check_mode(payload.mode)
-        reference = validation.check_reference(
-            mode, payload.reference, required=reference_required
-        )
+        cash, upi = validation.check_breakdown(payload)
+        reference = validation.check_reference(mode, payload.reference, required=reference_required)
         paid_at = validation.check_paid_at(payload.paid_at, now=now)
 
         # Cash is settled the moment it is recorded - the person typing it in is holding the
@@ -268,7 +359,9 @@ class PaymentService:
         )
 
         invoice_total = invoice.total_amount
-        self._apply_to_invoice(invoice, delta=amount, now=now)
+        applied = cash if mode == PaymentMode.SPLIT else amount if reconciliation == ReconciliationStatus.RECONCILED else 0
+        if applied:
+            self._apply_to_invoice(invoice, delta=applied, now=now)
         # Read after the invoice is updated, so the receipt shows the balance as it stands once
         # this payment has landed - which is what the customer is looking at.
         running_balance = await self._running_balance(invoice.customer_id)
@@ -284,7 +377,11 @@ class PaymentService:
             customer_name=invoice.customer_name,
             invoice_amount=invoice_total,
             amount_collected=amount,
+            applied_amount=applied,
             mode=mode.value,
+            cash_amount=cash,
+            upi_amount=upi,
+            delivery_id=delivery_id,
             paid_at=paid_at,
             reference=reference,
             proof_url=proof_url,
@@ -307,13 +404,17 @@ class PaymentService:
                 balance=running_balance,
             )
         )
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return self._payment_view(payment)
 
     # --- Reconciliation ---------------------------------------------------------------------
 
     async def reconcile(
-        self, payment_id: str, payload: ReconcilePaymentRequest
+        self, payment_id: str, payload: ReconcilePaymentRequest, *,
+        source: str | None = None, commit: bool = True, grouped: bool = False,
     ) -> PaymentResponse:
         """Settle a pending payment against the bank statement.
 
@@ -321,11 +422,49 @@ class PaymentService:
         and the list filters on all three, so `PENDING` would be a state nothing could leave -
         and leaving it is the accountant's whole job on this screen.
 
-        Marking a payment invalid puts its money back on the invoice. That is the consequential
-        half: a customer who believes they have paid is told they still owe, so the reason is
-        required and the row is kept rather than deleted.
+        Approval applies the pending online portion exactly once. Rejection leaves invoice
+        balances unchanged and releases the reservation so another payment can be collected.
+        Settled cash in a mixed payment is preserved.
         """
-        payment = await self._owned_payment_row(payment_id)
+        if grouped and source is None:
+            anchor = await self._owned_payment_row(payment_id)
+            if anchor.delivery_id:
+                source = "ON_DELIVERY"
+        if source == "ON_DELIVERY":
+            anchor = await self._owned_payment_row(payment_id)
+            if not anchor.delivery_id:
+                raise _payment_not_found()
+            invoice_ids = list(await self.session.scalars(
+                self._scope_payments(select(Payment.invoice_id)).where(Payment.delivery_id == anchor.delivery_id)
+            ))
+            await self.session.scalars(self._scope_invoices(select(Invoice)).where(
+                Invoice.id.in_(invoice_ids)).order_by(Invoice.id).with_for_update())
+            rows = list(await self.session.scalars(
+                self._scope_payments(select(Payment))
+                .where(Payment.delivery_id == anchor.delivery_id)
+                .order_by(Payment.id).with_for_update().execution_options(populate_existing=True)
+            ))
+            pending = [row for row in rows if row.reconciliation_status == ReconciliationStatus.PENDING.value]
+            if not pending:
+                raise ApiError("PAYMENT_ALREADY_RECONCILED", 409, "No pending online payment remains.")
+            for row in pending:
+                await self.reconcile(row.id, payload, commit=False)
+            await self.session.commit()
+            return (await self._current_balances([self._group_view(rows)]))[0]
+        anchor = await self._owned_payment_row(payment_id)
+        invoice = await self._locked_invoice(anchor.invoice_id)
+        payment = await self.session.scalar(
+            self._scope_payments(select(Payment)).where(Payment.id == payment_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+        if payment is None:
+            raise _payment_not_found()
+        if payment.collection_id:
+            raise ApiError(
+                "USE_COLLECTION_RECONCILIATION",
+                http_status.HTTP_409_CONFLICT,
+                "Reconcile this FIFO payment from the V2 payment collection.",
+            )
         if payment.reconciliation_status != ReconciliationStatus.PENDING.value:
             raise ApiError(
                 "PAYMENT_ALREADY_RECONCILED",
@@ -337,28 +476,55 @@ class PaymentService:
         now = datetime.now(UTC)
 
         if payload.reconciled:
+            delta = int(payment.amount_collected) - int(payment.applied_amount)
+            if delta > invoice.balance:
+                raise ApiError("PAYMENT_EXCEEDS_BALANCE", 409, "Invoice balance changed; review this payment.")
+            if delta:
+                self._apply_to_invoice(invoice, delta=delta, now=now)
+            payment.applied_amount = payment.amount_collected
             payment.reconciliation_status = ReconciliationStatus.RECONCILED.value
             payment.invalid_reason = None
         else:
             payment.reconciliation_status = ReconciliationStatus.INVALID.value
             payment.invalid_reason = reason
-            # The money never arrived, so the invoice is owed again.
-            invoice = await self._locked_invoice(payment.invoice_id)
-            self._apply_to_invoice(invoice, delta=-payment.amount_collected, now=now)
+            # Pending online money was never applied. Settled cash remains paid.
             # To staff, not the customer: an unreconciled payment may mean cylinders were
             # released against money that never arrived, and that is the office's problem to
             # chase before it is the customer's.
             self.notifications.queue(
                 payment_events.payment_invalid(
-                    payment.merchant_id, payment.id, payment.amount_collected, reason or ""
+                    payment.merchant_id, payment.id,
+                    payment.upi_amount if payment.mode == PaymentMode.SPLIT.value else payment.amount_collected,
+                    reason or ""
                 )
             )
 
         payment.reconciled_at = now
         payment.reconciled_by_name = self.actor.display_name
         payment.updated_at = now
-        await self.session.commit()
-        return self._payment_view(payment)
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
+        return (await self._current_balances([self._payment_view(payment)]))[0]
+
+    async def pending_reservations(self, invoice_ids: list[str]) -> dict[str, int]:
+        if not invoice_ids:
+            return {}
+        rows = await self.session.execute(
+            self._scope_payments(select(Payment.invoice_id, Payment.amount_collected, Payment.applied_amount))
+            .where(Payment.invoice_id.in_(invoice_ids),
+                   Payment.reconciliation_status == ReconciliationStatus.PENDING.value)
+            .with_for_update()
+        )
+        totals: dict[str, int] = {}
+        for invoice_id, amount, applied in rows:
+            totals[invoice_id] = totals.get(invoice_id, 0) + max(int(amount) - int(applied), 0)
+        return totals
+
+    async def collectable_balance(self, invoice: Invoice) -> int:
+        reserved = await self.pending_reservations([invoice.id])
+        return max(int(invoice.balance) - reserved.get(invoice.id, 0), 0)
 
     # --- The only place invoice money is written --------------------------------------------
 
@@ -438,7 +604,7 @@ class PaymentService:
         allowed through a check that should have refused the second.
         """
         invoice = await self.session.scalar(
-            self._scope_invoices(select(Invoice)).where(Invoice.id == invoice_id).with_for_update()
+            self._scope_invoices(select(Invoice)).where(Invoice.id == invoice_id).with_for_update().execution_options(populate_existing=True)
         )
         if invoice is None:
             raise _invoice_not_found()
@@ -521,14 +687,28 @@ def _payment_view(payment: Payment, *, proof_url: str | None = None) -> PaymentR
         customer_name=payment.customer_name,
         invoice_amount=payment.invoice_amount,
         amount_collected=payment.amount_collected,
+        effective_amount=payment.effective_amount,
         mode=PaymentMode(payment.mode),
+        cash_amount=(payment.cash_amount if payment.cash_amount is not None else
+                     payment.amount_collected if payment.mode == PaymentMode.CASH.value else 0),
+        upi_amount=(payment.upi_amount if payment.upi_amount is not None else
+                    payment.amount_collected if payment.mode == PaymentMode.UPI.value else 0),
+        payment_source=("BY_CUSTOMER" if payment.collection_id else
+                        "ON_DELIVERY" if payment.delivery_id else "STAFF_COLLECTION"),
+        delivery_id=payment.delivery_id,
+        collection_id=payment.collection_id,
+        running_balance=payment.customer_running_balance,
+        pending_amount=(max(int(payment.amount_collected) - int(payment.applied_amount), 0)
+                        if payment.reconciliation_status == ReconciliationStatus.PENDING.value else 0),
         paid_at=payment.paid_at,
         reference=payment.reference,
         proof_url=proof_url,
         proof_captured_at=payment.proof_captured_at,
         reconciliation_status=ReconciliationStatus(payment.reconciliation_status),
+        reconciled_at=payment.reconciled_at,
         invalid_reason=payment.invalid_reason,
         collected_by=payment.collected_by_name,
         customer_running_balance=payment.customer_running_balance,
+        balance_at_collection=payment.customer_running_balance,
         note=payment.note,
     )

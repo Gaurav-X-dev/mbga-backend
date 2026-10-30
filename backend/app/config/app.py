@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # on load, so the list cannot miss a match on formatting alone.
     otp_test_numbers: list[str] = Field(default_factory=list)
     otp_test_code: str | None = None
+    # Dedicated Play review accounts. Disabled by default and restricted to their own
+    # app login purpose; never a global production OTP override.
+    play_review_otp_enabled: bool = False
+    play_review_otp_code: str | None = Field(default=None, repr=False)
+    play_review_customer_mobile: str | None = None
+    play_review_merchant_mobile: str | None = None
+    play_review_delivery_mobile: str | None = None
     # Stores each OTP in the clear alongside its hash, and lets the admin OTP log screen print
     # it. Asked for so the office can read a code off a screen when no SMS can be sent.
     #
@@ -156,6 +163,32 @@ class Settings(BaseSettings):
     fcm_auto_dispatch: bool = True
     # How many outbox rows one dispatcher pass takes.
     fcm_batch_size: int = Field(default=100, ge=1, le=1000)
+    # --- e-Invoice (GST / IRN / e-Way Bill) -------------------------------------------------
+    # Off by default, and deliberately: with this false an invoice is still raised, still
+    # printed and still paid - it simply carries no government reference. Turning it on later
+    # works through the queued backlog rather than leaving those invoices behind.
+    einvoice_enabled: bool = False
+    # The provider's staging host answers with IRNs that are not legally valid. Production is
+    # a different host, so the environment that is pointed at staging must never be the one
+    # issuing real documents.
+    einvoice_base_url: str = "https://staging.perione.in"
+    einvoice_email: str | None = None
+    einvoice_username: str | None = None
+    einvoice_password: str | None = None
+    einvoice_client_id: str | None = None
+    einvoice_client_secret: str | None = None
+    einvoice_bearer_token: str | None = None
+    # The GSTIN the provider account is registered against. A merchant whose own GSTIN differs
+    # from this is skipped rather than filed under somebody else's registration.
+    einvoice_gstin: str | None = None
+    # The provider matches calls against a registered IP. A mismatch is rejected before the
+    # document is even read, so this has to be the server's public address.
+    einvoice_ip_address: str | None = None
+    # NIC schema version for the GENERATE endpoint.
+    einvoice_schema_version: str = "V1_03"
+    # How many invoices one worker pass takes.
+    einvoice_batch_size: int = Field(default=20, ge=1, le=200)
+
     # --- KYC document storage --------------------------------------------------------------
     # "local" keeps files on a private disk path. No vendor is hard-coded; a production
     # provider binds to the same StorageProvider interface and changes no route.
@@ -304,6 +337,28 @@ class Settings(BaseSettings):
         if info.data.get("dev_fixed_otp_enabled") and (value is None or not value.isdigit() or len(value) != length):
             raise ValueError("DEV_FIXED_OTP_CODE must be a numeric code of OTP_LENGTH digits")
         return value
+
+    @field_validator("play_review_customer_mobile", "play_review_merchant_mobile", "play_review_delivery_mobile")
+    @classmethod
+    def normalize_review_mobile(cls, value):
+        if value is None:
+            return None
+        from app.modules.authentication.mobile_number import normalize_mobile_number
+        return normalize_mobile_number(value)
+
+    @model_validator(mode="after")
+    def validate_play_review_accounts(self):
+        if not self.play_review_otp_enabled:
+            return self
+        numbers = [self.play_review_customer_mobile, self.play_review_merchant_mobile, self.play_review_delivery_mobile]
+        if any(not number for number in numbers) or len(set(numbers)) != 3:
+            raise ValueError("Play review requires three distinct dedicated mobile numbers")
+        if set(numbers).intersection(self.otp_test_numbers):
+            raise ValueError("Play review numbers must not overlap the generic OTP test list")
+        code = self.play_review_otp_code
+        if code is None or not code.isascii() or not code.isdigit() or len(code) != self.otp_length:
+            raise ValueError("Play review code must match OTP_LENGTH and contain only digits")
+        return self
 
     @field_validator("otp_test_numbers", mode="after")
     @classmethod

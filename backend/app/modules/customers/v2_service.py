@@ -219,8 +219,8 @@ class CustomerRegistrationV2Service:
                     upload.merchant_id = profile.merchant_id
                     upload.status = DocumentStatus.UPLOADED.value
                     upload.updated_at = now
-                # Only the primary is linked through the v1 customer_id column. This keeps
-                # the second image invisible to every frozen v1 list/response.
+                # Keep one primary document row per type. Both sides are exposed through
+                # the current file mappings without duplicating the KYC document itself.
                 if upload.file_id != primary.file_id:
                     upload.customer_id = None
                     upload.number_encrypted = primary.number_encrypted

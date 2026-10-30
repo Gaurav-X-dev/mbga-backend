@@ -213,6 +213,13 @@ async def list_merchants(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     search: str | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
+    exclude_status: Annotated[
+        str | None,
+        Query(
+            alias="excludeStatus",
+            description="Comma-separated statuses to leave out, e.g. BLOCKED,INACTIVE.",
+        ),
+    ] = None,
     merchant_code: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -225,6 +232,18 @@ async def list_merchants(
         filters.append(or_(func.lower(Merchant.name).like(like), func.lower(Merchant.code).like(like), Merchant.mobile_number.like(like)))
     if status_filter:
         filters.append(Merchant.status == status_filter.upper())
+    if exclude_status:
+        # Applied to the count as well as the page, because they are the same `filters` list.
+        # A list the caller filtered itself would show eighty rows under a total of two hundred
+        # and fifty, and page two would skip whatever page one dropped.
+        #
+        # Opt-in rather than a default: the admin panel asks for it so the merchant picker only
+        # offers agencies that can actually take an order, while the merchants screen itself
+        # keeps showing blocked ones - otherwise the unblock button sits on a row nobody can
+        # reach.
+        hidden = [value.strip().upper() for value in exclude_status.split(",") if value.strip()]
+        if hidden:
+            filters.append(Merchant.status.notin_(hidden))
     if merchant_code:
         filters.append(Merchant.code == merchant_code.upper())
     if city:

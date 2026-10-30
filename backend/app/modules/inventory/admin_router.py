@@ -2,13 +2,15 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.inventory.constants import DEFAULT_MOVEMENT_LIMIT, MAX_MOVEMENT_LIMIT
 from app.modules.inventory.schemas import (
     InventorySnapshotResponse,
+    StockItemResponse,
+    UpdateReorderThresholdRequest,
     RecordStockMovementRequest,
     StockMovementResponse,
 )
@@ -109,3 +111,18 @@ async def record_movement(
     from this response, because one movement can change the alerts on other cards too.
     """
     return await service.record_with_idempotency(payload, idempotency_key)
+
+
+@router.patch(
+    "/{cylinderType}/reorder-threshold",
+    response_model=StockItemResponse,
+    dependencies=_write_guards,
+    responses=error_responses(401,403,422),
+    summary="Update this merchant's cylinder reorder level",
+)
+async def update_reorder_threshold(
+    cylinder_type: Annotated[str,Path(alias="cylinderType",min_length=1,max_length=40)],
+    payload: UpdateReorderThresholdRequest,
+    service: ServiceDep,
+) -> StockItemResponse:
+    return await service.update_reorder_threshold(cylinder_type,payload)

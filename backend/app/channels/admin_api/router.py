@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.modules.business_catalogue.router import build_catalogue_router
 from app.modules.audit_logs.router import router as audit_logs_router
 from app.modules.authentication.admin_sessions_router import router as login_sessions_router
 from app.modules.authentication.admin_otp_logs_router import router as otp_logs_router
@@ -15,6 +16,7 @@ from app.modules.dashboard.analytics_router import router as dashboard_analytics
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.deliveries.admin_router import router as deliveries_router
 from app.modules.delivery_users.admin_router import router as delivery_users_router
+from app.modules.delivery_users.tracking import router as live_location_router
 from app.modules.expenses.admin_router import router as expenses_router
 from app.modules.inventory.admin_router import router as inventory_router
 from app.modules.locations.admin_router import router as postal_locations_router
@@ -33,8 +35,15 @@ from app.modules.tasks.admin_router import team_router
 from app.modules.users.router import router as users_router
 from app.modules.vehicles.admin_router import router as vehicles_router
 
+from app.modules.legal_pages.router import admin_router as legal_pages_router
+
+from app.modules.platform_settings.delivery_settings import admin_router as app_settings_router
+
 router = APIRouter()
+router.include_router(app_settings_router)
 router.include_router(build_channel_auth_router(LoginChannel.ADMIN, "ADMIN_LOGIN"))
+# Cylinder types, customer types and KYC document types, maintained from the panel.
+router.include_router(build_catalogue_router(LoginChannel.ADMIN))
 router.include_router(dashboard_router)
 # The chart series behind the dashboard. Its own router so the summary tiles stay a cheap
 # call that a slow aggregate can never hold up.
@@ -59,6 +68,7 @@ router.include_router(
 router.include_router(pricing_router)
 router.include_router(customer_pricing_router)
 router.include_router(delivery_users_router)
+router.include_router(live_location_router)
 router.include_router(vehicles_router)
 router.include_router(build_payment_router(LoginChannel.ADMIN))
 router.include_router(build_notification_router(LoginChannel.ADMIN))
@@ -76,3 +86,5 @@ router.include_router(otp_logs_router)
 # Customer KYC across the whole network, read-only: the approve/reject decision stays with
 # the merchant that holds the customer relationship.
 router.include_router(customer_kyc_router)
+
+router.include_router(legal_pages_router)

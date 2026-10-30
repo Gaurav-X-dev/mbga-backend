@@ -39,7 +39,12 @@ KYC_REASONS = {
 }
 
 
-def evaluate(profile: CustomerProfile, sites: list[CustomerDeliverySite]) -> Eligibility:
+def evaluate(
+    profile: CustomerProfile,
+    sites: list[CustomerDeliverySite],
+    *,
+    requires_delivery_sites: bool | None = None,
+) -> Eligibility:
     """Collect **every** blocking reason, not just the first.
 
     The app shows the list, so a customer who is both unapproved and unverified should see
@@ -52,6 +57,14 @@ def evaluate(profile: CustomerProfile, sites: list[CustomerDeliverySite]) -> Eli
         reasons.append(KYC_REASONS.get(profile.kyc_status, "KYC is not verified."))
     # Spec 18.2: an industrial order carries a delivery site, so a customer with none
     # cannot have an order placed for them even once approved.
-    if profile.customer_type == CustomerType.INDUSTRIAL.value and not any(site.is_active for site in sites):
+    # Who needs a delivery site is the catalogue's answer now, not a hardcoded type.
+    # A caller that does not say falls back to the old rule, so nothing that has not been
+    # updated quietly stops enforcing it.
+    needs_site = (
+        requires_delivery_sites
+        if requires_delivery_sites is not None
+        else profile.customer_type == CustomerType.INDUSTRIAL.value
+    )
+    if needs_site and not any(site.is_active for site in sites):
         reasons.append("Add a delivery site before placing an order.")
     return Eligibility(eligible=not reasons, reasons=reasons)

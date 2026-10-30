@@ -87,3 +87,24 @@ class Expense(Base):
     recorded_by_name: Mapped[str] = mapped_column(String(160))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    vehicle_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    driver_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    driver_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    fuel_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    km_reading: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    distance: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    liters: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    receipt_storage_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    receipt_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    destination: Mapped[str | None] = mapped_column(String(160), nullable=True)
+
+
+class ExpenseFuelType(Base):
+    """Database-owned fuel picker values; existing expense codes remain historical data."""
+    __tablename__ = "expense_fuel_types"
+    code: Mapped[str] = mapped_column(String(20), primary_key=True)
+    label: Mapped[str] = mapped_column(String(60))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

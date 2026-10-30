@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.permissions.models import Permission
 from app.modules.roles.models import Role, RoleLoginChannel, RolePermission, RoleType
+from app.modules.permissions.catalogue import DESCRIPTIONS
 from app.modules.roles.seeds import (
     DELIVERY_ROLE_CODES,
     MERCHANT_ROLE_CODES,
@@ -67,6 +68,13 @@ class RBACSeedRunner:
         for seed in SEED_PERMISSIONS:
             existing = await self._get_permission(seed.code)
             if existing:
+                # The catalogue's wording is the source of truth, so an existing row has its
+                # description brought up to date rather than left on whatever it was seeded
+                # with. Everything else about the row is left alone.
+                described = DESCRIPTIONS.get(seed.code)
+                if described and existing.description != described:
+                    existing.description = described
+                    existing.updated_at = now
                 continue
             self.session.add(
                 Permission(
@@ -75,7 +83,7 @@ class RBACSeedRunner:
                     code=seed.code,
                     module=seed.module,
                     action=seed.action,
-                    description=f"System permission: {seed.name}",
+                    description=DESCRIPTIONS.get(seed.code) or f"System permission: {seed.name}",
                     is_system=True,
                     is_active=True,
                     created_at=now,

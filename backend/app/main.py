@@ -19,7 +19,7 @@ CHANNEL_DOC_PREFIXES = {
     "admin": ["/api/v1/admin"],
     "merchant": ["/api/v1/merchant"],
     "customer": ["/api/v1/customer", "/health"],
-    "delivery": ["/api/v1/delivery", "/health"],
+    "delivery": ["/api/v1/delivery", "/api/v2/delivery", "/health"],
 }
 
 
@@ -107,6 +107,8 @@ def _primary_doc_tag(path: str, method: str) -> str:
         return "Delivery Notifications"
     if path.startswith("/api/v1/delivery/"):
         return "Delivery APIs"
+    if path.startswith("/api/v2/delivery/"):
+        return "Delivery V2 Payments"
     return "Internal"
 
 
@@ -197,6 +199,8 @@ def create_app() -> FastAPI:
     app.add_middleware(UtcTimestampMiddleware)
     # Outermost, so request IDs and security headers are also set on CORS and error responses.
     app.add_middleware(RequestContextMiddleware, hsts=not settings.is_local_environment)
+    from app.modules.legal_pages.router import html_router as legal_html_router
+    app.include_router(legal_html_router)
     app.include_router(api_router, prefix=settings.api_prefix)
     app.include_router(api_v2_router, prefix='/api/v2')
     if docs_enabled:

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.merchants.models import Merchant
+from app.modules.reports.fuel import FuelFilters, fuel_filter_params, fuel_all_time_range
 from app.modules.reports.constants import FINANCIAL_REPORTS, ExportFormat, ReportType
 from app.modules.reports.export import export_response
 from app.modules.reports.schemas import ReportResponse
@@ -55,6 +56,8 @@ async def _build(
     session: AsyncSession,
     context: AuthContext,
     permissions: EffectivePermissionService,
+    fuel_filters: FuelFilters | None = None,
+    all_time: bool = False,
 ) -> ReportResponse:
     if godown_id:
         raise ApiError(
@@ -65,8 +68,13 @@ async def _build(
     if merchant_id and await session.get(Merchant, merchant_id) is None:
         raise ApiError("MERCHANT_NOT_FOUND", 404, "The selected merchant does not exist.")
     await _authorize_detail(report_type, context, permissions)
-    start, end = report_range(date_from, date_to)
-    return await ReportService(session, ReportScope.admin(merchant_id)).build(
+    if report_type is ReportType.FUEL and all_time:
+        if date_from is not None or date_to is not None:
+            raise ApiError("INVALID_DATE_RANGE",422,"Choose all time or an explicit date range.")
+        start, end = await fuel_all_time_range(session, merchant_id)
+    else:
+        start, end = report_range(date_from, date_to)
+    return await ReportService(session, ReportScope.admin(merchant_id), fuel_filters).build(
         report_type,
         start,
         end,
@@ -85,7 +93,9 @@ async def get_admin_report(
     session: SessionDep,
     context: ContextDep,
     permissions: PermissionDep,
+    fuel_filters: Annotated[FuelFilters, Depends(fuel_filter_params)],
     report_type: Annotated[ReportType, Query(alias="type")],
+    all_time: Annotated[bool, Query(alias="allTime")] = False,
     date_from: Annotated[datetime | None, Query(alias="from")] = None,
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     customer_id: Annotated[str | None, Query(alias="customerId", max_length=36)] = None,
@@ -102,6 +112,8 @@ async def get_admin_report(
         session,
         context,
         permissions,
+        fuel_filters=fuel_filters,
+        all_time=all_time,
     )
 
 
@@ -115,8 +127,10 @@ async def export_admin_report(
     session: SessionDep,
     context: ContextDep,
     permissions: PermissionDep,
+    fuel_filters: Annotated[FuelFilters, Depends(fuel_filter_params)],
     report_type: Annotated[ReportType, Query(alias="type")],
     export_format: Annotated[ExportFormat, Query(alias="format")],
+    all_time: Annotated[bool, Query(alias="allTime")] = False,
     date_from: Annotated[datetime | None, Query(alias="from")] = None,
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     customer_id: Annotated[str | None, Query(alias="customerId", max_length=36)] = None,
@@ -133,5 +147,7 @@ async def export_admin_report(
         session,
         context,
         permissions,
+        fuel_filters=fuel_filters,
+        all_time=all_time,
     )
     return export_response(report, export_format)

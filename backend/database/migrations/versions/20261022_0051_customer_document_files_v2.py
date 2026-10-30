@@ -1,7 +1,7 @@
 """Add isolated v2 multi-image KYC mappings.
 
-Revision ID: 20261021_0045
-Revises: 20261013_0044
+Revision ID: 20261022_0051
+Revises: 20261015_0050
 
 No v1 table is altered and no foreign key is added to a v1 table.
 """
@@ -9,8 +9,8 @@ No v1 table is altered and no foreign key is added to a v1 table.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20261021_0045"
-down_revision = "20261013_0044"
+revision = "20261022_0051"
+down_revision = "20261015_0050"
 branch_labels = None
 depends_on = None
 

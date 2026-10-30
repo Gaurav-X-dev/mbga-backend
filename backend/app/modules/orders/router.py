@@ -304,7 +304,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
                     status.HTTP_409_CONFLICT,
                     "Order delivery address has no pincode.",
                 )
-            return await available_for_pincode(session, merchant_id, order.address_pincode)
+            return await available_for_pincode(session, merchant_id, order.address_pincode, on_date=order.scheduled_delivery_date)
 
     @router.get(
         "/{orderId}/reorder",

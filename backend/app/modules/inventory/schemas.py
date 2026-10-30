@@ -27,6 +27,7 @@ from pydantic import (
 )
 
 from app.modules.inventory.constants import (
+    MAX_BUCKET_COUNT,
     MovementReference,
     StockBucket,
     StockMovementType,
@@ -49,10 +50,15 @@ UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_use
 # --- Snapshot -------------------------------------------------------------------------------
 
 
+class UpdateReorderThresholdRequest(BaseModel):
+    reorder_threshold: int = Field(alias="reorderThreshold", ge=0, le=MAX_BUCKET_COUNT, strict=True)
+    model_config = _CAMEL
+
+
 class StockItemResponse(BaseModel):
     """Spec §3.13 `StockItem`. One card on the Warehouse Stock screen."""
 
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     filled: int
     empty: int
@@ -69,7 +75,7 @@ class StockAlertResponse(BaseModel):
     """Spec §3.13 `StockAlert`. Derived from live counts, never stored."""
 
     id: str
-    cylinder_type: CylinderType = Field(alias="cylinderType")
+    cylinder_type: str = Field(alias="cylinderType")
     severity: Severity
     # Rendered verbatim on the screen.
     message: str
