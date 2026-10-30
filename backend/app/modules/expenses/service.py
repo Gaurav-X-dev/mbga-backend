@@ -19,6 +19,8 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.expenses import validation
+from app.modules.expenses.fuel import apply_fuel
+from app.shared.business.audit import BusinessAuditor
 from app.modules.expenses.categories import ExpenseCategoryProvisioner
 from app.modules.expenses.models import Expense, ExpenseCategory
 from app.modules.expenses.schemas import (
@@ -253,6 +255,7 @@ class ExpenseService:
             category_id=category.id,
             amount=amount,
             note=note,
+            destination=(payload.destination or "").strip() or None,
             spent_on=spent_on,
             period=month_key(spent_on),
             recorded_by_user_id=self.actor.user_id,
@@ -260,7 +263,11 @@ class ExpenseService:
             created_at=now,
             updated_at=now,
         )
+        await apply_fuel(self.session, self.merchant_id, expense, category, payload)
         self.session.add(expense)
+        await BusinessAuditor(self.session).record("expense.created", actor=self.actor,
+            entity_type="expense", entity_id=expense.id,
+            message=f"Expense created: {expense.amount} INR; {expense.spent_on}; category {category.code}")
         await self.session.commit()
         return _expense_view(expense, category)
 
@@ -272,8 +279,11 @@ class ExpenseService:
         """
         expense, category = await self._owned_expense(expense_id)
         today = business_today()
+        before = f"{expense.amount} INR; {expense.spent_on}; category {category.code}"
 
-        if payload.category_id is not None or payload.category is not None:
+        if (payload.category_id is not None and payload.category_id != expense.category_id) or (
+            payload.category_id is None and payload.category is not None and payload.category != category.code
+        ):
             category = await self._resolve_category(payload.category_id, payload.category)
             expense.category_id = category.id
         if payload.amount is not None:
@@ -286,12 +296,22 @@ class ExpenseService:
             # keys off `is not None` rather than truthiness.
             expense.note = validation.note(payload.note)
 
+        if "destination" in payload.model_fields_set:
+            expense.destination = (payload.destination or "").strip() or None
+        await apply_fuel(self.session, self.merchant_id, expense, category, payload)
         expense.updated_at = datetime.now(UTC)
+        changed = ", ".join(sorted(payload.model_fields_set))
+        await BusinessAuditor(self.session).record("expense.updated", actor=self.actor,
+            entity_type="expense", entity_id=expense.id,
+            message=f"Expense updated ({changed}): {before} -> {expense.amount} INR; {expense.spent_on}; category {category.code}")
         await self.session.commit()
         return _expense_view(expense, category)
 
     async def delete_expense(self, expense_id: str) -> None:
         expense, _category = await self._owned_expense(expense_id)
+        await BusinessAuditor(self.session).record("expense.deleted", actor=self.actor,
+            entity_type="expense", entity_id=expense.id,
+            message=f"Expense deleted: {expense.amount} INR; {expense.spent_on}")
         await self.session.delete(expense)
         await self.session.commit()
 
@@ -359,7 +379,8 @@ class ExpenseService:
         if filters.search:
             term = f"%{filters.search.strip()}%"
             statement = statement.where(
-                or_(Expense.note.ilike(term), ExpenseCategory.label.ilike(term))
+                or_(Expense.note.ilike(term), ExpenseCategory.label.ilike(term),
+                    Expense.vehicle_number.ilike(term), Expense.driver_name.ilike(term))
             )
         return statement
 
@@ -409,12 +430,16 @@ class ExpenseService:
             )
         return periods
 
-    async def breakdown(self, period: str | None) -> ExpenseBreakdownResponse:
+    async def breakdown(self, period: str | None, date_from: date | None = None, date_to: date | None = None) -> ExpenseBreakdownResponse:
         """Category-wise totals for a period - what a spend report reads."""
         conditions = [Expense.merchant_id == self.merchant_id]
         if period and period != ALL_PERIODS:
             conditions.append(Expense.period == period)
 
+        if date_from:
+            conditions.append(Expense.spent_on >= date_from)
+        if date_to:
+            conditions.append(Expense.spent_on <= date_to)
         rows = (
             await self.session.execute(
                 select(
@@ -510,6 +535,13 @@ def _category_view(row: ExpenseCategory, expense_count: int) -> ExpenseCategoryR
 def _expense_view(expense: Expense, category: ExpenseCategory) -> ExpenseResponse:
     return ExpenseResponse(
         id=expense.id,
+        destination=expense.destination,
+        vehicle_id=expense.vehicle_id, vehicle_number=expense.vehicle_number,
+        driver_id=expense.driver_id, driver_name=expense.driver_name,
+        fuel_type=expense.fuel_type, km_reading=expense.km_reading,
+        distance=expense.distance, liters=expense.liters,
+        mileage=round(float(expense.distance / expense.liters), 2) if expense.distance is not None and expense.liters else None,
+        has_receipt=bool(expense.receipt_storage_key),
         category=ExpenseCategoryBrief(
             id=category.id, code=category.code, label=category.label, icon=category.icon
         ),

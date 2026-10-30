@@ -231,7 +231,32 @@ def read_snapshot(invoice: Invoice) -> dict[str, Any] | None:
     return loaded if isinstance(loaded, dict) else None
 
 
-def document_payload(invoice: Invoice, snapshot: dict[str, Any]) -> dict[str, Any]:
+async def load_signed_qr_code(session: AsyncSession, invoice: Invoice) -> str | None:
+    """Read the original portal QR from the invoice's persisted, tenant-scoped response.
+
+    Matching the IRN prevents an unrelated or stale response being printed as official.
+    The original response remains the source; no QR is reconstructed from invoice fields.
+    """
+    if not invoice.irn:
+        return None
+    from app.modules.einvoice.models import EInvoiceJob
+
+    raw = await session.scalar(select(EInvoiceJob.last_response).where(
+        EInvoiceJob.invoice_id == invoice.id,
+        EInvoiceJob.merchant_id == invoice.merchant_id,
+    ))
+    try:
+        body = json.loads(raw) if raw else {}
+    except (ValueError, TypeError):
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    if not isinstance(data, dict) or data.get("Irn") != invoice.irn:
+        return None
+    value = data.get("SignedQRCode")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def document_payload(invoice: Invoice, snapshot: dict[str, Any], *, signed_qr_code: str | None = None) -> dict[str, Any]:
     """Add live payment/compliance state to the immutable issue-time snapshot."""
     return {
         "invoiceId": invoice.id,
@@ -252,6 +277,7 @@ def document_payload(invoice: Invoice, snapshot: dict[str, Any]) -> dict[str, An
         "payment": {"paidAmount": int(invoice.paid_amount), "balance": int(invoice.balance), "status": invoice.status},
         "compliance": {
             "irn": invoice.irn,
+            "signedQrCode": signed_qr_code,
             "acknowledgementNumber": invoice.acknowledgement_number,
             "acknowledgementDate": _date(invoice.acknowledgement_date),
             "ewayBillNumber": invoice.eway_bill_number,

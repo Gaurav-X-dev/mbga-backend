@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     # on load, so the list cannot miss a match on formatting alone.
     otp_test_numbers: list[str] = Field(default_factory=list)
     otp_test_code: str | None = None
+    # Dedicated Play review accounts. Disabled by default and restricted to their own
+    # app login purpose; never a global production OTP override.
+    play_review_otp_enabled: bool = False
+    play_review_otp_code: str | None = Field(default=None, repr=False)
+    play_review_customer_mobile: str | None = None
+    play_review_merchant_mobile: str | None = None
+    play_review_delivery_mobile: str | None = None
     # Stores each OTP in the clear alongside its hash, and lets the admin OTP log screen print
     # it. Asked for so the office can read a code off a screen when no SMS can be sent.
     #
@@ -330,6 +337,28 @@ class Settings(BaseSettings):
         if info.data.get("dev_fixed_otp_enabled") and (value is None or not value.isdigit() or len(value) != length):
             raise ValueError("DEV_FIXED_OTP_CODE must be a numeric code of OTP_LENGTH digits")
         return value
+
+    @field_validator("play_review_customer_mobile", "play_review_merchant_mobile", "play_review_delivery_mobile")
+    @classmethod
+    def normalize_review_mobile(cls, value):
+        if value is None:
+            return None
+        from app.modules.authentication.mobile_number import normalize_mobile_number
+        return normalize_mobile_number(value)
+
+    @model_validator(mode="after")
+    def validate_play_review_accounts(self):
+        if not self.play_review_otp_enabled:
+            return self
+        numbers = [self.play_review_customer_mobile, self.play_review_merchant_mobile, self.play_review_delivery_mobile]
+        if any(not number for number in numbers) or len(set(numbers)) != 3:
+            raise ValueError("Play review requires three distinct dedicated mobile numbers")
+        if set(numbers).intersection(self.otp_test_numbers):
+            raise ValueError("Play review numbers must not overlap the generic OTP test list")
+        code = self.play_review_otp_code
+        if code is None or not code.isascii() or not code.isdigit() or len(code) != self.otp_length:
+            raise ValueError("Play review code must match OTP_LENGTH and contain only digits")
+        return self
 
     @field_validator("otp_test_numbers", mode="after")
     @classmethod

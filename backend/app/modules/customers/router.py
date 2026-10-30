@@ -211,6 +211,9 @@ def _registration_request(
         city=profile.address_city or "",
         state=profile.address_state or "",
         pincode=profile.address_pincode or "",
+        latitude=profile.address_latitude,
+        longitude=profile.address_longitude,
+        delivery_instructions=profile.delivery_instructions,
     )
     return CustomerRegistrationRequest(
         customer_type=customer_type or default_customer_type,

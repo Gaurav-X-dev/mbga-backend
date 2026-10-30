@@ -1,8 +1,6 @@
 """Distance between two points on the earth.
 
-Used for one thing: telling a driver how far they still are from the delivery gate. That is a
-display number and a soft check, never an authorisation - a driver whose GPS is drifting must
-still be able to complete a delivery they are standing in front of.
+Used for delivery distance display and server-side arrival radius validation.
 
 The great-circle distance is accurate to well under a metre at delivery range, which is orders
 of magnitude better than the handset's own fix. Nothing here needs a projection or a geo

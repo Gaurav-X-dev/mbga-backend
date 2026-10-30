@@ -44,6 +44,11 @@ class Address(BaseModel):
     city: str = Field(default="", max_length=120)
     state: str = Field(default="", max_length=120)
     pincode: str = Field(default="", max_length=12)
+    latitude: float | None = None
+    longitude: float | None = None
+    delivery_instructions: str | None = Field(default=None, alias="deliveryInstructions", max_length=255)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class DocumentSubmission(BaseModel):
@@ -135,6 +140,17 @@ class CustomerRegistrationRequest(BaseModel):
 
 
 
+class KycDocumentFileResponse(BaseModel):
+    file_id: str = Field(alias="fileId")
+    file_name: str = Field(alias="fileName")
+    file_size: int = Field(alias="fileSize")
+    content_type: str = Field(alias="contentType")
+    side: str
+    source: str
+    sort_order: int = Field(alias="sortOrder")
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
+
 class KycDocumentResponse(BaseModel):
     """Spec §3.4. `numberMasked` is the only form of the identifier that ever leaves here."""
 
@@ -147,6 +163,8 @@ class KycDocumentResponse(BaseModel):
     file_id: str | None = Field(default=None, alias="fileId")
     uploaded_at: UtcTime = Field(alias="uploadedAt")
     status: DocumentStatus
+
+    files: list[KycDocumentFileResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -179,6 +197,8 @@ class CustomerResponse(BaseModel):
     sites: list[DeliverySiteResponse] = Field(default_factory=list)
     documents: list[KycDocumentResponse] = Field(default_factory=list)
     gstin: str | None = None
+    employee_id: str | None = Field(default=None, alias="employeeId")
+    employee_name: str | None = Field(default=None, alias="employeeName")
     registered_at: UtcTime | None = Field(default=None, alias="registeredAt")
     approved_at: UtcTime | None = Field(default=None, alias="approvedAt")
     rejection_reason: str | None = Field(default=None, alias="rejectionReason")

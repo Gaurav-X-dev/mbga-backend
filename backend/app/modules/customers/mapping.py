@@ -15,7 +15,9 @@ from app.modules.customers.business_schemas import (
     DeliverySiteResponse,
     KycApplicationResponse,
     KycDocumentResponse,
+    KycDocumentFileResponse,
 )
+from app.modules.customers.document_files import load_document_files
 from app.modules.customers.constants import to_mobile_account_status, to_mobile_document_status
 from app.modules.customers.models import (
     CustomerDeliverySite,
@@ -36,6 +38,9 @@ def address_of(profile: CustomerProfile) -> Address:
         city=profile.address_city or "",
         state=profile.address_state or "",
         pincode=profile.address_pincode or "",
+        latitude=profile.address_latitude,
+        longitude=profile.address_longitude,
+        delivery_instructions=profile.delivery_instructions,
     )
 
 
@@ -49,6 +54,9 @@ def site_response(site: CustomerDeliverySite) -> DeliverySiteResponse:
             city=site.address_city,
             state=site.address_state,
             pincode=site.address_pincode,
+            latitude=site.latitude,
+            longitude=site.longitude,
+            delivery_instructions=site.delivery_instructions,
         ),
         contact_name=site.contact_name,
         contact_mobile=_national(site.contact_mobile),
@@ -56,7 +64,7 @@ def site_response(site: CustomerDeliverySite) -> DeliverySiteResponse:
     )
 
 
-def document_response(document: CustomerDocument) -> KycDocumentResponse:
+def document_response(document: CustomerDocument, files=None) -> KycDocumentResponse:
     """Spec §3.4. The masked value is read from its own column and never derived here.
 
     If masking happened at render time it would need the plaintext, which would mean
@@ -70,6 +78,10 @@ def document_response(document: CustomerDocument) -> KycDocumentResponse:
         # The display name, not the storage key. `fileId` is the handle for §17.2.
         file_name=document.original_filename,
         file_id=document.file_id,
+        files=files if files is not None else ([KycDocumentFileResponse(
+            fileId=document.file_id,fileName=document.original_filename,fileSize=document.file_size,
+            contentType=document.mime_type,side="FRONT",source="FILE_PICKER",sortOrder=1
+        )] if document.file_id else []),
         uploaded_at=document.submitted_at,
         status=to_mobile_document_status(document.status),
     )
@@ -80,6 +92,7 @@ def customer_response(
     *,
     sites: list[CustomerDeliverySite],
     documents: list[CustomerDocument],
+    document_files: dict | None = None,
     application: KycApplication | None = None,
     running_balance: int = 0,
     last_order_at=None,
@@ -99,7 +112,7 @@ def customer_response(
         pricing_tier=profile.pricing_tier,
         delivery_address=address_of(profile),
         sites=[site_response(site) for site in _primary_first(sites)],
-        documents=[document_response(document) for document in documents],
+        documents=[document_response(document, (document_files or {}).get(document.id)) for document in documents],
         gstin=profile.gst_number,
         registered_at=profile.registered_at or profile.created_at,
         approved_at=profile.approved_at,
@@ -122,6 +135,7 @@ def application_response(
     *,
     sites: list[CustomerDeliverySite],
     documents: list[CustomerDocument],
+    document_files: dict | None = None,
 ) -> KycApplicationResponse:
     return KycApplicationResponse(
         id=application.id,
@@ -131,7 +145,7 @@ def application_response(
         owner_name=profile.owner_name,
         mobile=_national(profile.mobile_number) or "",
         email=profile.email,
-        documents=[document_response(document) for document in documents],
+        documents=[document_response(document, (document_files or {}).get(document.id)) for document in documents],
         delivery_address=address_of(profile),
         sites=[site_response(site) for site in _primary_first(sites)],
         status=application.status,
@@ -158,11 +172,12 @@ class CustomerViewLoader:
     """Loads the related rows a customer response needs, for one customer or for a page.
 
     The batch method exists because a list of 50 customers rendered one at a time would run
-    101 queries. It runs three.
+    many queries. Related rows are loaded in batches.
     """
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.document_files = {}
 
     async def sites_for(self, customer_ids: list[str]) -> dict[str, list[CustomerDeliverySite]]:
         if not customer_ids:
@@ -191,6 +206,8 @@ class CustomerViewLoader:
             )
             .order_by(CustomerDocument.submitted_at)
         )
+        rows = list(rows)
+        self.document_files.update(await load_document_files(self.session, rows))
         grouped: dict[str, list[CustomerDocument]] = {}
         for document in rows:
             grouped.setdefault(document.customer_id, []).append(document)
@@ -258,6 +275,7 @@ class CustomerViewLoader:
             profile,
             sites=sites.get(profile.id, []),
             documents=documents.get(profile.id, []),
+            document_files=self.document_files,
             application=applications.get(profile.id),
             running_balance=balances.get(profile.id, 0),
             last_order_at=last_orders.get(profile.id),
@@ -278,6 +296,7 @@ class CustomerViewLoader:
                 profile,
                 sites=sites.get(profile.id, []),
                 documents=documents.get(profile.id, []),
+                document_files=self.document_files,
                 application=applications.get(profile.id),
                 running_balance=balances.get(profile.id, 0),
                 last_order_at=last_orders.get(profile.id),
@@ -299,6 +318,7 @@ class CustomerViewLoader:
                 profiles[application.customer_id],
                 sites=sites.get(application.customer_id, []),
                 documents=documents.get(application.customer_id, []),
+                document_files=self.document_files,
             )
             for application in applications
             if application.customer_id in profiles

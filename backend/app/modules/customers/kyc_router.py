@@ -110,6 +110,7 @@ async def application_detail(application_id: str, actor: ActorDep, session: Sess
         profile,
         sites=sites.get(profile.id, []),
         documents=documents.get(profile.id, []),
+        document_files=loader.document_files,
     )
 
 

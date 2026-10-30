@@ -1,6 +1,7 @@
 """Merchant API channel."""
 from fastapi import APIRouter
 
+from app.modules.business_catalogue.router import build_catalogue_router
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
 from app.modules.business_catalogue.router import build_catalogue_router
@@ -24,8 +25,13 @@ from app.modules.tasks.router import router as tasks_router
 from app.modules.tasks.router import team_router
 from app.modules.vehicles.router import router as vehicles_router
 
+from app.modules.platform_settings.delivery_settings import merchant_router as app_settings_router
+
 router = APIRouter()
+router.include_router(app_settings_router)
 router.include_router(build_channel_auth_router(LoginChannel.MERCHANT, "MERCHANT_LOGIN"))
+# Cylinder types, customer types and KYC document types, maintained from the panel.
+router.include_router(build_catalogue_router(LoginChannel.MERCHANT))
 router.include_router(delivery_users_router)
 # Create / list / detail / eligibility, then the approve and reject routes that keep their
 # existing paths. Both mount under /customers; the paths do not overlap.

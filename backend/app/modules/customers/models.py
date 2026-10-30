@@ -48,6 +48,9 @@ class CustomerProfile(Base):
     address_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_state: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_pincode: Mapped[str | None] = mapped_column(String(6), nullable=True)
+    address_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    address_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivery_instructions: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # The account workflow status. `kyc_status` tracks document verification separately
     # because the spec exposes them as two independent fields the apps route on.
     status: Mapped[str] = mapped_column(String(40), index=True)
@@ -149,6 +152,7 @@ class CustomerDeliverySite(Base):
     # these being present - a missing coordinate means "cannot measure", not "wrong place".
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivery_instructions: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

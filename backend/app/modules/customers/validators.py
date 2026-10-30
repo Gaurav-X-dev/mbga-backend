@@ -6,6 +6,7 @@ envelope with the mobile app's field names (spec §5.1 `fieldErrors`), because t
 highlights the offending input by that name.
 """
 
+import math
 import re
 
 from fastapi import status
@@ -93,7 +94,7 @@ def validate_mobile(value: str | None, errors: FieldErrors, *, field: str = "mob
         return None
 
 
-def validate_address(address, errors: FieldErrors, *, prefix: str = "deliveryAddress") -> dict[str, str | None]:
+def validate_address(address, errors: FieldErrors, *, prefix: str = "deliveryAddress") -> dict:
     """Validate one `Address` (spec §3.1) and return it as storable columns."""
     line1 = clean_text(getattr(address, "line1", None))
     line2 = clean_text(getattr(address, "line2", None)) or None
@@ -111,7 +112,17 @@ def validate_address(address, errors: FieldErrors, *, prefix: str = "deliveryAdd
         errors.add(f"{prefix}.state", "required", "Enter the state.")
     if not PINCODE_PATTERN.match(pincode):
         errors.add(f"{prefix}.pincode", "invalid", "Enter a valid 6-digit pincode.")
-    return {"line1": line1, "line2": line2, "city": city, "state": state, "pincode": pincode}
+    latitude = getattr(address, "latitude", None)
+    longitude = getattr(address, "longitude", None)
+    if (latitude is None) != (longitude is None):
+        errors.add(f"{prefix}.coordinates", "pair_required", "Provide both latitude and longitude, or leave both empty.")
+    elif latitude is not None and longitude is not None:
+        if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+            errors.add(f"{prefix}.latitude", "invalid", "Latitude must be between -90 and 90.")
+        if not math.isfinite(longitude) or not -180 <= longitude <= 180:
+            errors.add(f"{prefix}.longitude", "invalid", "Longitude must be between -180 and 180.")
+    instructions = clean_text(getattr(address, "delivery_instructions", None)) or None
+    return {"line1": line1, "line2": line2, "city": city, "state": state, "pincode": pincode, "latitude": latitude, "longitude": longitude, "delivery_instructions": instructions}
 
 
 def normalize_document_number(document_type: str | KycDocumentType, raw: str | None) -> str:

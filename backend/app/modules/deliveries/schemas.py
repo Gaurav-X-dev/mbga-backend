@@ -124,12 +124,19 @@ class CreateDeliverySlipRequest(BaseModel):
     model_config = _CAMEL
 
 
+class CollectedEmptyItem(BaseModel):
+    cylinder_type: str = Field(alias="cylinderType", min_length=1, max_length=40)
+    quantity: int = Field(ge=0)
+    model_config = _CAMEL
+
+
 class ConfirmDeliveryRequest(BaseModel):
     """Spec §10.4 `ConfirmDeliveryRequest`."""
 
     #: Required when `confirmationMethod = OTP`. Four digits the customer reads out.
     otp: str | None = Field(default=None, max_length=10)
     empties_collected: int = Field(alias="emptiesCollected")
+    collected_empties: list[CollectedEmptyItem] | None = Field(default=None, alias="collectedEmpties")
     note: str | None = Field(default=None, max_length=MAX_NOTE_LENGTH)
 
     model_config = _CAMEL

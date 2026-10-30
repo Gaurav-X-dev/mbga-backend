@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.customers.constants import DocumentStatus, KycDocumentType, ScanStatus, UploadType
-from app.modules.customers.models import CustomerDocument
+from app.modules.customers.models import CustomerDocument, CustomerProfile
 from app.shared.business.actor import BusinessActor
 from app.shared.exceptions.api_error import ApiError
 from app.shared.storage.file_types import (
@@ -233,14 +233,26 @@ class DocumentAccessService:
         if actor.is_customer:
             owns_upload = document.owner_user_id == actor.user_id
             owns_customer = document.customer_id is not None and document.customer_id == actor.customer_id
-            if not (owns_upload or owns_customer):
+            # Merchant-created V2 back images are linked through the current file mapping,
+            # rather than customer_documents.customer_id (which only links the primary).
+            owns_mapping = False
+            if not (owns_upload or owns_customer) and actor.customer_id:
+                from app.modules.customers.v2_models import CustomerDocumentFileV2
+                owns_mapping = await self.session.scalar(select(CustomerDocumentFileV2.id)
+                    .join(CustomerProfile,CustomerProfile.id == CustomerDocumentFileV2.customer_id)
+                    .where(CustomerDocumentFileV2.file_id == file_id,
+                        CustomerDocumentFileV2.customer_id == actor.customer_id,
+                        CustomerDocumentFileV2.document_type == document.document_type,
+                        CustomerDocumentFileV2.superseded_at.is_(None),
+                        CustomerProfile.merchant_id == document.merchant_id)) is not None
+            if not (owns_upload or owns_customer or owns_mapping):
                 raise not_found()
             return document
         if actor.merchant_id is None or document.merchant_id != actor.merchant_id:
             raise not_found()
         return document
 
-    async def attachable(self, actor: BusinessActor, file_id: str, document_type: str | KycDocumentType) -> CustomerDocument:
+    async def attachable(self, actor: BusinessActor, file_id: str, document_type: KycDocumentType) -> CustomerDocument:
         """Load an upload the actor may attach to a registration they are performing.
 
         Stricter than `readable`: an already-finalized file cannot be attached again, and the
@@ -248,6 +260,8 @@ class DocumentAccessService:
         could be submitted in the Aadhaar slot.
         """
         document = await self.session.scalar(select(CustomerDocument).where(CustomerDocument.file_id == file_id))
+        # The catalogue made document types rows, so this arrives as a plain string
+        # from the dynamic path and as an enum from the older callers. Read it either way.
         code = getattr(document_type, "value", document_type)
         field = f"doc.{code}.file"
         if document is None:

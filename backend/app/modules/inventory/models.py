@@ -69,7 +69,7 @@ class StockItem(Base):
     damaged: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # When `filled` drops below this, the snapshot raises an alert and the bell gets a
-    # notification. Seeded from `DEFAULT_REORDER_THRESHOLDS`; no endpoint changes it (§11).
+    # notification. Initialized from the database catalogue and editable per merchant.
     reorder_threshold: Mapped[int] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

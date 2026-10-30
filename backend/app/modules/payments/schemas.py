@@ -11,7 +11,7 @@ applied to an invoice, and letting a client set them would make the two disagree
 from datetime import UTC, datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, PlainSerializer
 
 from app.modules.payments.constants import (
     MAX_NOTE_LENGTH,
@@ -118,17 +118,28 @@ class PaymentResponse(BaseModel):
     invoice_amount: int = Field(alias="invoiceAmount")
     amount_collected: int = Field(alias="amountCollected")
     mode: PaymentMode
+    effective_amount: int = Field(default=0, alias="effectiveAmount")
+    cash_amount: int = Field(default=0, alias="cashAmount")
+    upi_amount: int = Field(default=0, alias="upiAmount")
+    payment_source: str = Field(default="STAFF_COLLECTION", alias="paymentSource")
+    delivery_id: str | None = Field(default=None, alias="deliveryId")
+    collection_id: str | None = Field(default=None, alias="collectionId")
+    # Current invoice outstanding; historical receipt balances use balanceAtCollection.
+    running_balance: int = Field(default=0, alias="runningBalance")
+    pending_amount: int = Field(default=0, alias="pendingAmount")
+    components: list["PaymentResponse"] = Field(default_factory=list)
     paid_at: UtcTime = Field(alias="paidAt")
     reference: str | None = None
     proof_url: str | None = Field(default=None, alias="proofUrl")
     proof_captured_at: UtcTime | None = Field(default=None, alias="proofCapturedAt")
 
     reconciliation_status: ReconciliationStatus = Field(alias="reconciliationStatus")
+    reconciled_at: UtcTime | None = Field(default=None, alias="reconciledAt")
     invalid_reason: str | None = Field(default=None, alias="invalidReason")
     collected_by: str | None = Field(default=None, alias="collectedBy")
-    #: What the customer still owed immediately after this payment. Frozen at that moment, so a
-    #: receipt printed today keeps showing today's balance after next week's invoice is raised.
+    # Legacy name for the current outstanding balance, kept in sync with runningBalance.
     customer_running_balance: int = Field(alias="customerRunningBalance")
+    balance_at_collection: int = Field(default=0, alias="balanceAtCollection")
     note: str | None = None
 
     model_config = _CAMEL
@@ -161,6 +172,14 @@ class RecordPaymentRequest(BaseModel):
     #: balance would be money with nowhere to live.
     amount: int = Field(gt=0, le=MAX_PAYMENT_AMOUNT)
     mode: PaymentMode
+    cash_amount: int | None = Field(
+        default=None, ge=0, alias="cashAmount",
+        validation_alias=AliasChoices("cashAmount", "cash_amount"),
+    )
+    upi_amount: int | None = Field(
+        default=None, ge=0, alias="upiAmount",
+        validation_alias=AliasChoices("upiAmount", "upi_amount"),
+    )
     #: UTR, UPI transaction id, cheque number. Required for anything but cash.
     reference: str | None = Field(default=None, max_length=MAX_REFERENCE_LENGTH)
     #: When the money actually changed hands, which is not when it was typed in. Defaults to now.

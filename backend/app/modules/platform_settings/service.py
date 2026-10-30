@@ -8,7 +8,6 @@ worse, until only some of the API workers notice.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.platform_settings.models import (
@@ -43,7 +42,8 @@ async def order_cutoff_hour(session: AsyncSession) -> int:
 
 
 async def update(
-    session: AsyncSession, actor: BusinessActor, *, order_cutoff_hour: int | None = None
+    session: AsyncSession, actor: BusinessActor, *, order_cutoff_hour: int | None = None,
+    delivery_radius_metres: int | None = None
 ) -> PlatformSettings:
     """Apply the changes an admin made, naming who made them.
 
@@ -53,6 +53,16 @@ async def update(
     settings = await load(session)
     if order_cutoff_hour is not None:
         settings.order_cutoff_hour = order_cutoff_hour
+    if delivery_radius_metres is not None:
+        settings.delivery_radius_metres = delivery_radius_metres
+    from app.modules.audit_logs.schemas import AuditLogCreate
+    from app.modules.audit_logs.service import AuditLogService
+    await AuditLogService(session).write_event(AuditLogCreate(
+        event_type="APP_SETTINGS_CHANGED", actor_user_id=actor.user_id,
+        entity_type="platform_settings", entity_id=settings.id,
+        message=f"Order cutoff hour: {settings.order_cutoff_hour}; delivery radius: {settings.delivery_radius_metres} m",
+        login_channel=actor.login_channel.value, result="SUCCESS",
+    ))
     settings.updated_by_user_id = actor.user_id
     settings.updated_by_name = actor.display_name
     settings.updated_at = datetime.now(UTC)

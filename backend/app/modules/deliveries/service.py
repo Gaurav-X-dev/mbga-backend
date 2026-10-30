@@ -390,6 +390,50 @@ class DeliveryService:
 
     # --- Confirmation -----------------------------------------------------------------------
 
+    async def _confirmed_empty_counts(self, slip, payload, delivered, previous_due):
+        """Use the driver's per-size statement; never guess a size from a mixed total."""
+        rows = list(await self.session.scalars(select(DeliverySlipItem).where(
+            DeliverySlipItem.slip_id == slip.id)))
+        counts = {}
+        if payload.collected_empties is not None:
+            for item in payload.collected_empties:
+                counts[item.cylinder_type] = counts.get(item.cylinder_type, 0) + item.quantity
+        elif any(row.empties_collected is not None for row in rows):
+            counts = {row.cylinder_type: row.empties_collected or 0 for row in rows}
+        elif payload.empties_collected:
+            capacities = {kind: delivered.get(kind, 0) + previous_due.get(kind, 0)
+                for kind in delivered.keys() | previous_due.keys()
+                if delivered.get(kind, 0) + previous_due.get(kind, 0) > 0}
+            if len(capacities) == 1:
+                counts = {next(iter(capacities)): payload.empties_collected}
+            elif payload.empties_collected == sum(capacities.values()):
+                counts = capacities
+            else:
+                raise ApiError("VALIDATION_ERROR", 422,
+                    "Specify the collected empty cylinders by type for this mixed-size delivery.",
+                    fields=[{"field":"collectedEmpties","code":"required","message":"Provide cylinderType and quantity for each returned size."}])
+        if sum(counts.values()) != payload.empties_collected:
+            raise ApiError("VALIDATION_ERROR",422,"Per-type empty counts must match emptiesCollected.")
+        for kind, quantity in counts.items():
+            if quantity < 0 or quantity > delivered.get(kind, 0) + previous_due.get(kind, 0):
+                raise ApiError("VALIDATION_ERROR",422,"Empty returns exceed the customer's balance for this cylinder type.",
+                    fields=[{"field":"collectedEmpties","code":"invalid_quantity","message":f"Check the returned quantity for {kind}."}])
+        return {kind: quantity for kind, quantity in counts.items() if quantity}
+
+    async def _save_empty_counts(self, slip_id, counts):
+        rows = list(await self.session.scalars(select(DeliverySlipItem).where(
+            DeliverySlipItem.slip_id == slip_id)))
+        # Persist inferred and explicit splits as well, so customer balances and stock agree.
+        by_type = {row.cylinder_type: row for row in rows}
+        for kind, quantity in counts.items():
+            if kind not in by_type and quantity:
+                row = DeliverySlipItem(slip_id=slip_id,cylinder_type=kind,quantity=0,
+                    delivered_quantity=0,position=len(by_type)+1)
+                self.session.add(row)
+                by_type[kind] = row
+        for kind, row in by_type.items():
+            row.empties_collected = counts.get(kind, 0)
+
     async def confirm(self, slip_id: str, payload: ConfirmDeliveryRequest) -> DeliverySlipResponse:
         """Confirm a handover (spec §10.4).
 
@@ -397,7 +441,7 @@ class DeliveryService:
         committed on its own - so the count survives a client that retries in a loop, and the
         slip is not confirmed by the eleventh guess.
         """
-        slip = await self._owned(slip_id)
+        slip = await self._owned(slip_id, lock=True)
         self._require_status(
             slip,
             DeliveryStatus.DELIVERED,
@@ -412,7 +456,10 @@ class DeliveryService:
         collected = validation.check_empties(
             payload.empties_collected, slip.cylinders_allocated, previous_due=sum(owed.values())
         )
+        lines = await self._delivered_lines(slip.id)
+        empty_counts = await self._confirmed_empty_counts(slip, payload, lines, owed)
         await self._check_code(slip, payload.otp)
+        await self._save_empty_counts(slip.id, empty_counts)
 
         order = await self._order_of(slip, lock=True)
         now = datetime.now(UTC)
@@ -430,7 +477,6 @@ class DeliveryService:
         # The cylinders have now actually changed hands, so this is where they come off the
         # books. Before this moment they were on a van and still the merchant's - and anything
         # the driver brings back is still on it, so only what he handed over is booked.
-        lines = await self._delivered_lines(slip.id)
         ledger = StockLedger(self.session, self.merchant_id)
         # What the godown screen prints beside the movement. `reference_id` is free text and is
         # meant to be read - a challan number on a refill, a vehicle number on a transfer - and
@@ -449,7 +495,7 @@ class DeliveryService:
             )
         if collected:
             await ledger.collect_empties(
-                {_primary_type(lines or await self._lines(slip.id)): collected},
+                empty_counts,
                 reference_id=slip.slip_number,
                 note=trace,
                 recorded_by_user_id=self.actor.user_id,
@@ -740,7 +786,7 @@ class DeliveryService:
         """
         statement = self._scope(select(DeliverySlip)).where(DeliverySlip.id == slip_id)
         if lock:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         slip = await self.session.scalar(statement)
         if slip is None:
             raise _not_found()
@@ -776,10 +822,11 @@ class DeliveryService:
     async def _site_coordinates(self, order: Order) -> tuple[float | None, float | None]:
         """Where the van is being sent, when anybody has recorded it.
 
-        Only a named delivery site can carry coordinates; an order to the customer's registered
-        address has none, which is the common case. Returning `(None, None)` rather than raising
-        is deliberate - a delivery must never depend on a latitude the office never typed in.
+        New orders carry a coordinate snapshot. The site lookup remains as a compatibility
+        fallback for orders created before that snapshot existed.
         """
+        if order.delivery_latitude is not None and order.delivery_longitude is not None:
+            return order.delivery_latitude, order.delivery_longitude
         if not order.delivery_site_id:
             return None, None
         site = await self.session.get(CustomerDeliverySite, order.delivery_site_id)
@@ -1280,17 +1327,6 @@ def _reassigned_note(slip: DeliverySlip, reason: str | None) -> str:
     where += f" for {slip.scheduled_date:%d %b %Y}"
     extra = (reason or "").strip()
     return f"{where} - {extra}" if extra else where
-
-
-def _primary_type(lines: dict[str, int]) -> str:
-    """Which cylinder the returned empties are booked against.
-
-    Empties come back as bare cylinders and the driver is not asked to split them by type, so
-    they are booked against the largest line on the slip - the one they almost certainly are.
-    Stated here rather than hidden in the caller because it is an approximation, and the person
-    reconciling the empty bucket deserves to find it written down.
-    """
-    return max(lines, key=lambda cylinder: (lines[cylinder], cylinder))
 
 
 def _delivered_note(collected: int, allocated: int) -> str:

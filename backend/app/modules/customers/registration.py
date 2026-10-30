@@ -300,6 +300,9 @@ class CustomerRegistrationService:
         profile.address_city = data.address["city"]
         profile.address_state = data.address["state"]
         profile.address_pincode = data.address["pincode"]
+        profile.address_latitude = data.address["latitude"]
+        profile.address_longitude = data.address["longitude"]
+        profile.delivery_instructions = data.address["delivery_instructions"]
         profile.updated_at = now
         await self._name_the_login(profile, data.owner_name, now)
 
@@ -447,6 +450,9 @@ class CustomerRegistrationService:
                     address_city=site["address"]["city"],
                     address_state=site["address"]["state"],
                     address_pincode=site["address"]["pincode"],
+                    latitude=site["address"]["latitude"],
+                    longitude=site["address"]["longitude"],
+                    delivery_instructions=site["address"]["delivery_instructions"],
                     contact_name=site["contact_name"],
                     contact_mobile=site["contact_mobile"],
                     is_primary=site["is_primary"],

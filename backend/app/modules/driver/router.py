@@ -22,6 +22,8 @@ from app.modules.driver.schemas import (
     DriverDeliveryResponse,
     DaySummaryResponseData,
     DriverInventoryResponseData,
+    DriverLocationRequest,
+    DriverLocationResponse,
     DriverProfileResponseData,
     GenerateQrRequest,
     GenerateQrResponseData,
@@ -337,6 +339,18 @@ async def van_inventory(service: ServiceDep) -> DriverInventoryResponseData:
 )
 async def set_duty(payload: UpdateDutyRequest, service: ServiceDep) -> DriverProfileResponseData:
     return await service.set_duty(payload.on_duty)
+
+
+@driver_router.post(
+    "/location",
+    response_model=DriverLocationResponse,
+    dependencies=_write_guards,
+    responses=error_responses(401, 403, 404),
+)
+async def log_location(
+    payload: DriverLocationRequest, service: ServiceDep
+) -> DriverLocationResponse:
+    return await service.log_location(payload)
 
 
 @driver_router.get(

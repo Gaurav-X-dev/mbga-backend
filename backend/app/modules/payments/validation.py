@@ -87,6 +87,19 @@ def check_reference(
     return cleaned
 
 
+def check_breakdown(payload) -> tuple[int, int]:
+    if payload.mode == PaymentMode.SPLIT:
+        cash, upi = payload.cash_amount, payload.upi_amount
+        if cash is None or upi is None or cash <= 0 or upi <= 0 or cash + upi != payload.amount:
+            raise invalid("cashAmount", "invalid_split", "Cash + UPI must equal the total amount.")
+        return cash, upi
+    cash = payload.amount if payload.mode == PaymentMode.CASH else 0
+    upi = payload.amount if payload.mode == PaymentMode.UPI else 0
+    if payload.cash_amount not in (None, cash) or payload.upi_amount not in (None, upi):
+        raise invalid("mode", "invalid_split", "Payment portions do not match the selected mode.")
+    return cash, upi
+
+
 def check_paid_at(paid_at: datetime | None, *, now: datetime) -> datetime:
     """When the money changed hands. Defaults to now; may be backdated, never postdated.
 

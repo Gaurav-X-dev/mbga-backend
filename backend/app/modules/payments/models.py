@@ -99,7 +99,9 @@ class Invoice(Base):
     # fields are optional so a normal retail cash memo never pretends to have government IDs.
     irn: Mapped[str | None] = mapped_column(String(120), nullable=True)
     acknowledgement_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    acknowledgement_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledgement_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     eway_bill_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
     eway_bill_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     transport_document_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -108,6 +110,49 @@ class Invoice(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaymentCollection(Base):
+    """One customer UPI transaction which may settle several invoices FIFO."""
+
+    __tablename__ = "payment_collections"
+    __table_args__ = (
+        UniqueConstraint(
+            "customer_id", "idempotency_key", name="uq_payment_collections_customer_key"
+        ),
+        UniqueConstraint(
+            "merchant_id", "reference", name="uq_payment_collections_merchant_reference"
+        ),
+        Index("ix_payment_collections_customer_created", "customer_id", "created_at"),
+        Index("ix_payment_collections_merchant_status", "merchant_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("merchants.id"), index=True)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customer_profiles.id"), index=True)
+    payment_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    amount: Mapped[int] = mapped_column(BigInteger)
+    total_due_at_creation: Mapped[int] = mapped_column(BigInteger)
+    remaining_balance: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    credit_used: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    available_credit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mode: Mapped[str] = mapped_column(String(10), default="UPI", server_default="UPI")
+    payment_channel: Mapped[str] = mapped_column(String(20), default="QR", server_default="QR")
+    upi_id_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payee_name_snapshot: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(120))
+    upi_uri: Mapped[str] = mapped_column(Text)
+    reference: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    allocation_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    receipt_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    receipt_content_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    receipt_uploaded_at: Mapped[datetime | None] = mapped_column(_MICROS, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    paid_at: Mapped[datetime | None] = mapped_column(_MICROS, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(_MICROS, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_MICROS)
+    updated_at: Mapped[datetime] = mapped_column(_MICROS)
 
 
 class Payment(Base):
@@ -129,6 +174,12 @@ class Payment(Base):
     payment_number: Mapped[str] = mapped_column(String(30), index=True)
     merchant_id: Mapped[str] = mapped_column(ForeignKey("merchants.id"), index=True)
 
+    # Null for every existing/manual/delivery payment. Customer V2 FIFO collections link all
+    # per-invoice payment rows created from the same UPI transaction through this parent.
+    collection_id: Mapped[str | None] = mapped_column(
+        ForeignKey("payment_collections.id"), nullable=True, index=True
+    )
+
     invoice_id: Mapped[str] = mapped_column(ForeignKey("invoices.id"), index=True)
     #: Copied so the list renders without joining invoices.
     invoice_number: Mapped[str] = mapped_column(String(40))
@@ -139,7 +190,13 @@ class Payment(Base):
     #: what the bill was, and the invoice's own figures are about the invoice's whole life.
     invoice_amount: Mapped[int] = mapped_column(BigInteger)
     amount_collected: Mapped[int] = mapped_column(BigInteger)
+    applied_amount: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     mode: Mapped[str] = mapped_column(String(10))
+    cash_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    upi_amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    delivery_id: Mapped[str | None] = mapped_column(
+        ForeignKey("delivery_slips.id"), nullable=True, index=True
+    )
 
     #: When the money actually changed hands - which is not when it was typed in. A driver
     #: collects cash at 11:00 and the office records it at 18:00; the report follows this one.
@@ -168,6 +225,10 @@ class Payment(Base):
     #: payment. Stored rather than recomputed, because a receipt printed today has to keep
     #: showing the balance it showed today, even after next week's invoice is raised.
     customer_running_balance: Mapped[int] = mapped_column(BigInteger)
+
+    @property
+    def effective_amount(self) -> int:
+        return int(self.applied_amount or 0)
 
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

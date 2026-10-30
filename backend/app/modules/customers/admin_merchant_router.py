@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.authentication.constants import LoginChannel
 from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers import eligibility as eligibility_policy
+from app.modules.customers.acquisition import AcquisitionFilters, attribute_employees, employees
+from app.modules.customers.gst_filters import GstFilters
 from app.modules.customers.business_schemas import (
     CustomerListResponse,
     CustomerRegistrationRequest,
@@ -87,6 +89,14 @@ async def create_customer(
 
 
 @router.get(
+    "/employees",
+    dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, Depends(require_permission("customers.view"))],
+)
+async def customer_employees(actor: AdminMerchantActorDep, session: SessionDep):
+    return await employees(session, actor.require_merchant_id())
+
+
+@router.get(
     "",
     response_model=CustomerListResponse,
     dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, Depends(require_permission("customers.view"))],
@@ -97,6 +107,8 @@ async def list_customers(
     actor: AdminMerchantActorDep,
     session: SessionDep,
     page: Annotated[Page, Depends(page_params)],
+    acquisition: Annotated[AcquisitionFilters, Depends()],
+    gst: Annotated[GstFilters, Depends()],
     search: Annotated[
         str | None, Query(max_length=120, description="Business name, owner name, mobile or code.")
     ] = None,
@@ -113,12 +125,14 @@ async def list_customers(
     statement = _apply_filters(
         statement, search=search, customer_type=customer_type, account_status=account_status
     )
+    statement = gst.apply(acquisition.apply(statement))
     # Spec §7.2: business name A→Z. Rows without a name yet sort last rather than first.
     statement = statement.order_by(
-        func.coalesce(CustomerProfile.name, "~"), CustomerProfile.created_at
+        func.coalesce(CustomerProfile.name, "~"), CustomerProfile.created_at, CustomerProfile.id
     )
     profiles, total = await paginate(session, statement, page)
     items = await CustomerViewLoader(session).customer_views(list(profiles))
+    await attribute_employees(session, profiles, items)
     return CustomerListResponse(items=items, total=total, limit=page.limit, offset=page.offset)
 
 

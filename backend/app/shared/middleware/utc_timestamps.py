@@ -48,6 +48,19 @@ class UtcTimestampMiddleware(BaseHTTPMiddleware):
             return response
 
         body = b"".join([chunk async for chunk in response.body_iterator])
+
+        # A response with nothing in it stays that way. 204 No Content - sign-out, and
+        # saving a role's permissions or channels - must send zero bytes; `json.loads` on an
+        # empty body gives None and `json.dumps(None)` writes "null", four bytes against a
+        # Content-Length of nothing, which the server refuses to put on the wire.
+        if not body:
+            return Response(
+                content=b"",
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
         try:
             payload = json.loads(body) if body else None
         except (json.JSONDecodeError, UnicodeDecodeError):

@@ -117,8 +117,9 @@ def _badge(value: str) -> StatusBadge:
 
 
 class ReportService:
-    def __init__(self, session: AsyncSession, scope: ReportScope) -> None:
+    def __init__(self, session: AsyncSession, scope: ReportScope, fuel_filters=None) -> None:
         self.session = session
+        self.fuel_filters = fuel_filters
         self.scope = scope
         self.merchant_id = scope.merchant_id
         self._merchant_names: dict[str, str] = {}
@@ -143,6 +144,7 @@ class ReportService:
             ReportType.PAYMENT_COLLECTION: self._payments,
             ReportType.PENDING_PICKUP: self._pending_pickups,
             ReportType.EXPENSE: self._expenses,
+            ReportType.FUEL: self._fuel,
             ReportType.STOCK_MOVEMENT: self._stock,
             ReportType.PROFIT_LOSS: self._profit_loss,
             ReportType.TAX_GST: self._tax_gst,
@@ -304,9 +306,9 @@ class ReportService:
                 "paidAt": _stamp(payment.paid_at),
                 "_details": detail.model_dump(by_alias=True, mode="json"),
             })
-        valid = [p for p in payments if p.reconciliation_status != "INVALID"]
+        valid = [p for p in payments if p.effective_amount > 0]
         return (
-            [("Payments", len(payments)), ("Collected", sum(p.amount_collected for p in valid)), ("Pending", sum(p.reconciliation_status == "PENDING" for p in payments)), ("Reconciled", sum(p.reconciliation_status == "RECONCILED" for p in payments))],
+            [("Payments", len(payments)), ("Collected", sum(p.effective_amount for p in valid)), ("Pending", sum(p.reconciliation_status == "PENDING" for p in payments)), ("Reconciled", sum(p.reconciliation_status == "RECONCILED" for p in payments))],
             self._columns(("payment", "Payment"), ("invoice", "Invoice"), ("customer", "Customer"), ("amount", "Amount", "right"), ("mode", "Mode"), ("status", "Status")),
             rows,
             {"truncated": truncated},
@@ -356,6 +358,11 @@ class ReportService:
             rows,
             {"truncated": truncated, "basis": "Delivered cylinders minus empties collected per slip"},
         )
+
+    async def _fuel(self, start, end, customer_id):
+        from app.modules.reports.fuel import build_fuel_report
+        self._reject_customer_filter(customer_id, ReportType.FUEL)
+        return await build_fuel_report(self, start, end)
 
     async def _expenses(self, start, end, customer_id):
         self._reject_customer_filter(customer_id, ReportType.EXPENSE)

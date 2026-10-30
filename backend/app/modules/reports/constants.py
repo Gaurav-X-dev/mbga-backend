@@ -6,6 +6,7 @@ class ReportType(StrEnum):
     PAYMENT_COLLECTION = "PAYMENT_COLLECTION"
     PENDING_PICKUP = "PENDING_PICKUP"
     EXPENSE = "EXPENSE"
+    FUEL = "FUEL"
     STOCK_MOVEMENT = "STOCK_MOVEMENT"
     PROFIT_LOSS = "PROFIT_LOSS"
     TAX_GST = "TAX_GST"
@@ -25,11 +26,12 @@ REPORT_TITLES = {
     ReportType.PAYMENT_COLLECTION: "Payment Collection Report",
     ReportType.PENDING_PICKUP: "Pending Empty Pickup Report",
     ReportType.EXPENSE: "Expense Report",
+    ReportType.FUEL: "Fuel Sheet Report",
     ReportType.STOCK_MOVEMENT: "Stock Movement Report",
     ReportType.PROFIT_LOSS: "Profit & Loss Statement",
     ReportType.TAX_GST: "GST Tax Report",
 }
 
 FINANCIAL_REPORTS = frozenset(
-    {ReportType.EXPENSE, ReportType.PROFIT_LOSS}
+    {ReportType.EXPENSE, ReportType.FUEL, ReportType.PROFIT_LOSS}
 )

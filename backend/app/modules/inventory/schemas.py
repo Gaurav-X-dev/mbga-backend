@@ -28,6 +28,7 @@ from pydantic import (
 )
 
 from app.modules.inventory.constants import (
+    MAX_BUCKET_COUNT,
     MovementReference,
     StockBucket,
     StockMovementType,
@@ -62,6 +63,11 @@ UtcTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=str, when_use
 
 
 # --- Snapshot -------------------------------------------------------------------------------
+
+
+class UpdateReorderThresholdRequest(BaseModel):
+    reorder_threshold: int = Field(alias="reorderThreshold", ge=0, le=MAX_BUCKET_COUNT, strict=True)
+    model_config = _CAMEL
 
 
 class StockItemResponse(CylinderCodeModel):

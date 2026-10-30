@@ -26,6 +26,7 @@ from app.modules.authentication.models import LoginSession
 from app.modules.authentication.otp_models import OtpChallenge
 from app.modules.authentication.otp_service import OTPService
 from app.modules.authentication.password_hasher import verify_secret
+from app.modules.authentication.play_review import review_code_for, review_numbers
 from app.modules.authentication.repository import AuthenticationRepository
 from app.modules.authentication.schemas import (
     CurrentUserResponse,
@@ -107,15 +108,20 @@ class AuthenticationService:
         login_channel = channel or payload.login_channel
         otp_purpose = purpose or f"{login_channel.value}_LOGIN"
         device_id = payload.device.device_id if payload.device else None
+        is_review = review_code_for(self.settings, mobile, otp_purpose, login_channel) is not None
         async with self._audited_rejection(AuthEventType.OTP_REQUEST_REJECTED, login_channel, mobile, device_id):
-            await self.throttle.hit("otp_request:ip", self.client.ip_address, self.settings.otp_request_limit_per_ip, code="OTP_RATE_LIMITED")
-            await self.throttle.hit("otp_request:device", device_id, self.settings.otp_request_limit_per_device, code="OTP_RATE_LIMITED")
-            await self._enforce_failed_attempt_lockout(mobile, otp_purpose, login_channel)
-            await self._enforce_request_rate_limit(mobile, otp_purpose, login_channel)
+            if not is_review:
+                await self.throttle.hit("otp_request:ip", self.client.ip_address, self.settings.otp_request_limit_per_ip, code="OTP_RATE_LIMITED")
+                await self.throttle.hit("otp_request:device", device_id, self.settings.otp_request_limit_per_device, code="OTP_RATE_LIMITED")
+                await self._enforce_failed_attempt_lockout(mobile, otp_purpose, login_channel)
+                await self._enforce_request_rate_limit(mobile, otp_purpose, login_channel)
         user, denial = await self._code_eligibility(mobile, login_channel, otp_purpose)
         if denial is not None:
             await self._reject_code_request(AuthEventType.OTP_REQUEST_REJECTED, login_channel, user, mobile, device_id, denial)
-        await self._invalidate_active_challenges(mobile, otp_purpose, login_channel)
+        # Reviewers may use the same demo identity on several devices concurrently.
+        # Each request still expires and may be verified once, independently of other requests.
+        if not is_review:
+            await self._invalidate_active_challenges(mobile, otp_purpose, login_channel)
         challenge, otp = await self._create_challenge(payload, mobile, otp_purpose, login_channel)
         await self.audit.record(
             AuthEventType.OTP_REQUESTED,
@@ -134,16 +140,19 @@ class AuthenticationService:
         now = utc_now_naive()
         device_id = payload.device.device_id if payload.device else None
         async with self._audited_rejection(AuthEventType.OTP_REQUEST_REJECTED, channel, None, device_id):
-            await self.throttle.hit("otp_request:ip", self.client.ip_address, self.settings.otp_request_limit_per_ip, code="OTP_RATE_LIMITED")
+            is_review = await self._is_review_challenge(payload.request_id, purpose, channel)
+            if not is_review:
+                await self.throttle.hit("otp_request:ip", self.client.ip_address, self.settings.otp_request_limit_per_ip, code="OTP_RATE_LIMITED")
             previous = await self._lock_challenge(payload.request_id, purpose, channel)
             if previous.consumed_at is not None:
                 raise ApiError("OTP_ALREADY_USED", status.HTTP_400_BAD_REQUEST)
-            if previous.resend_available_at and utc_naive(previous.resend_available_at) > now:
-                wait = max(1, ceil((utc_naive(previous.resend_available_at) - now).total_seconds()))
-                raise ApiError("OTP_RESEND_TOO_SOON", status.HTTP_429_TOO_MANY_REQUESTS, headers={"Retry-After": str(wait)})
-            await self.throttle.hit("otp_request:device", device_id, self.settings.otp_request_limit_per_device, code="OTP_RATE_LIMITED")
-            await self._enforce_failed_attempt_lockout(previous.mobile_number, purpose, channel)
-            await self._enforce_request_rate_limit(previous.mobile_number, purpose, channel)
+            if not is_review:
+                if previous.resend_available_at and utc_naive(previous.resend_available_at) > now:
+                    wait = max(1, ceil((utc_naive(previous.resend_available_at) - now).total_seconds()))
+                    raise ApiError("OTP_RESEND_TOO_SOON", status.HTTP_429_TOO_MANY_REQUESTS, headers={"Retry-After": str(wait)})
+                await self.throttle.hit("otp_request:device", device_id, self.settings.otp_request_limit_per_device, code="OTP_RATE_LIMITED")
+                await self._enforce_failed_attempt_lockout(previous.mobile_number, purpose, channel)
+                await self._enforce_request_rate_limit(previous.mobile_number, purpose, channel)
         previous.consumed_at = now
         # Eligibility is checked again: the account may have changed since the first request.
         user, denial = await self._code_eligibility(previous.mobile_number, channel, purpose)
@@ -170,15 +179,18 @@ class AuthenticationService:
             message = f"Enter the {self.settings.otp_length}-digit code."
             raise ApiError("VALIDATION_ERROR", status.HTTP_422_UNPROCESSABLE_CONTENT, fields=[{"field": "otp", "code": "otp_length", "message": message}])
         async with self._audited_rejection(AuthEventType.OTP_VERIFICATION_FAILED, channel, None, device_id):
-            await self.throttle.hit("otp_verify:ip", self.client.ip_address, self.settings.otp_verify_limit_per_ip)
+            is_review = await self._is_review_challenge(payload.request_id, purpose, channel)
+            if not is_review:
+                await self.throttle.hit("otp_verify:ip", self.client.ip_address, self.settings.otp_verify_limit_per_ip)
             challenge = await self._lock_challenge(payload.request_id, purpose, channel)
             if challenge.consumed_at is not None:
                 raise ApiError("OTP_ALREADY_USED", status.HTTP_400_BAD_REQUEST)
             if utc_naive(challenge.expires_at) <= now:
                 raise ApiError("OTP_EXPIRED", status.HTTP_400_BAD_REQUEST)
-            if challenge.attempts >= challenge.max_attempts:
-                raise ApiError("OTP_ATTEMPTS_EXCEEDED", status.HTTP_400_BAD_REQUEST)
-            await self._enforce_failed_attempt_lockout(challenge.mobile_number, purpose, channel)
+            if not is_review:
+                if challenge.attempts >= challenge.max_attempts:
+                    raise ApiError("OTP_ATTEMPTS_EXCEEDED", status.HTTP_400_BAD_REQUEST)
+                await self._enforce_failed_attempt_lockout(challenge.mobile_number, purpose, channel)
         if challenge.dispatch_suppressed or not verify_secret(payload.otp, challenge.otp_hash):
             challenge.attempts += 1
             await self.audit.record(
@@ -412,7 +424,7 @@ class AuthenticationService:
             request_id=challenge.id,
             message=message,
             expires_in=self.settings.otp_expiry_seconds,
-            resend_after=self.settings.otp_resend_cooldown_seconds,
+            resend_after=0 if review_code_for(self.settings, challenge.mobile_number, challenge.purpose, LoginChannel(challenge.login_channel)) is not None else self.settings.otp_resend_cooldown_seconds,
             # Settings validation guarantees this is off outside local/development/test.
             dev_otp=dev_otp,
         )
@@ -460,6 +472,8 @@ class AuthenticationService:
     async def _code_eligibility(self, mobile: str, channel: LoginChannel, purpose: str) -> tuple[User | None, tuple[str, int] | None]:
         """Return the account and, when no code may be sent, the (error code, HTTP status) to raise."""
         user = await self._find_user_by_mobile(mobile)
+        if mobile in review_numbers(self.settings).values() and review_code_for(self.settings, mobile, purpose, channel) is None:
+            return user, ("CHANNEL_NOT_ALLOWED", status.HTTP_403_FORBIDDEN)
         if purpose == REGISTRATION_PURPOSE:
             if user is not None and user.status == "BLOCKED":
                 return user, ("ACCOUNT_BLOCKED", status.HTTP_403_FORBIDDEN)
@@ -509,8 +523,9 @@ class AuthenticationService:
         The plaintext is only ever handed back to the caller so that `_request_response` can echo it
         under DEV_EXPOSE_OTP_IN_RESPONSE. It is never stored: the row keeps only the hash.
         """
+        review_code = review_code_for(self.settings, mobile, purpose, channel)
         is_test_number = mobile in self.settings.otp_test_numbers
-        otp = self.settings.otp_test_code if is_test_number else self._development_or_random_otp()
+        otp = review_code or (self.settings.otp_test_code if is_test_number else self._development_or_random_otp())
         challenge = await self.otp_service.store_hashed_otp(
             payload=payload,
             mobile_number=mobile,
@@ -520,12 +535,14 @@ class AuthenticationService:
             ip_address=self.client.ip_address,
         )
         challenge.dispatch_suppressed = False
-        if is_test_number:
+        if review_code is not None:
+            challenge.resend_available_at = challenge.created_at
+        if is_test_number or review_code is not None:
             # No provider call: the whole point is that this account signs in while there is no
             # SMS credit left. The row says so rather than claiming a message was sent, because
             # the OTP log screen is read when somebody is working out why a code never arrived.
             challenge.delivery_status = "TEST_BYPASS"
-            challenge.delivery_provider = "test-number"
+            challenge.delivery_provider = "play-review" if review_code is not None else "test-number"
             challenge.delivery_reference = None
             await self.audit.record(
                 AuthEventType.OTP_REQUESTED,
@@ -533,7 +550,7 @@ class AuthenticationService:
                 success=True,
                 mobile_number=mobile,
                 client=self.client,
-                reason="TEST_NUMBER_FIXED_OTP",
+                reason="PLAY_REVIEW_FIXED_OTP" if review_code is not None else "TEST_NUMBER_FIXED_OTP",
             )
             return challenge, otp
         try:
@@ -559,6 +576,24 @@ class AuthenticationService:
         challenge.delivery_provider = result.provider
         challenge.delivery_reference = result.reference
         return challenge, otp
+
+    async def _is_review_challenge(self, request_id: str, purpose: str, channel: LoginChannel) -> bool:
+        """Trust the stored challenge, never the optional mobile_number in verify payloads.
+
+        Invalid IDs, other channels and registration purposes retain normal IP throttling.
+        Do this lookup before throttling so an already exhausted shared IP/device bucket
+        cannot lock out the three explicitly configured demo logins.
+        """
+        if not self.settings.play_review_otp_enabled:
+            return False
+        mobile = await self.db.scalar(
+            select(OtpChallenge.mobile_number).where(
+                OtpChallenge.id == request_id,
+                OtpChallenge.purpose == purpose,
+                OtpChallenge.login_channel == channel.value,
+            )
+        )
+        return review_code_for(self.settings, mobile, purpose, channel) is not None
 
     async def _lock_challenge(self, request_id: str, purpose: str, channel: LoginChannel) -> OtpChallenge:
         result = await self.db.execute(select(OtpChallenge).where(OtpChallenge.id == request_id).with_for_update())

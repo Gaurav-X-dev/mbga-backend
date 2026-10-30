@@ -376,6 +376,9 @@ class OrderService:
             address_city=address.city or None,
             address_state=address.state or None,
             address_pincode=address.pincode or None,
+            delivery_latitude=address.latitude,
+            delivery_longitude=address.longitude,
+            delivery_instructions=address.delivery_instructions,
             total_cylinders=priced.total_cylinders,
             items_summary=priced.items_summary[:255],
             total_amount=priced.total_amount,
@@ -1252,6 +1255,9 @@ def _customer_address(customer: CustomerProfile) -> Address:
         city=customer.address_city or "",
         state=customer.address_state or "",
         pincode=customer.address_pincode or "",
+        latitude=customer.address_latitude,
+        longitude=customer.address_longitude,
+        delivery_instructions=customer.delivery_instructions,
     )
 
 
@@ -1262,6 +1268,9 @@ def _site_address(site: CustomerDeliverySite) -> Address:
         city=site.address_city,
         state=site.address_state,
         pincode=site.address_pincode,
+        latitude=site.latitude,
+        longitude=site.longitude,
+        delivery_instructions=site.delivery_instructions,
     )
 
 
@@ -1304,6 +1313,9 @@ def _order_view(
             city=order.address_city or "",
             state=order.address_state or "",
             pincode=order.address_pincode or "",
+            latitude=order.delivery_latitude,
+            longitude=order.delivery_longitude,
+            delivery_instructions=order.delivery_instructions,
         ),
         subtotal=order.subtotal,
         gst_percent=order.gst_percent,

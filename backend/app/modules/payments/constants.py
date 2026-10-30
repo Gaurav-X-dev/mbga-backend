@@ -35,6 +35,7 @@ class PaymentMode(StrEnum):
     CASH = "CASH"
     UPI = "UPI"
     NEFT = "NEFT"
+    SPLIT = "SPLIT"
 
 
 class ReconciliationStatus(StrEnum):
@@ -58,14 +59,14 @@ class ReconciliationStatus(StrEnum):
 #: Separate from the enum above on purpose. Dropping `NEFT` from that would make every existing
 #: NEFT payment unreadable, which is a worse answer than an option nobody picks: an old row is
 #: a record of what happened, and records do not change when a policy does.
-OFFERED_PAYMENT_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.CASH, PaymentMode.UPI})
+OFFERED_PAYMENT_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.CASH, PaymentMode.UPI, PaymentMode.SPLIT})
 
 #: Modes that are settled as soon as they are recorded. Anything else waits for a bank match.
 SELF_EVIDENT_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.CASH})
 
 #: Modes that must carry a reference - a UTR, a UPI transaction id, a cheque number. Without one
 #: the payment cannot be reconciled later, which makes recording it close to pointless.
-REFERENCE_REQUIRED_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.UPI, PaymentMode.NEFT})
+REFERENCE_REQUIRED_MODES: frozenset[PaymentMode] = frozenset({PaymentMode.UPI, PaymentMode.NEFT, PaymentMode.SPLIT})
 
 #: `reconciliationStatus = ALL` on the list filter (spec §12.3).
 ALL_STATUSES = "ALL"

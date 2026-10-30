@@ -20,6 +20,8 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
+from app.modules.einvoice.schemas import EInvoiceStatusResponse
+from app.modules.einvoice.service import einvoice_view, requeue
 from app.modules.customers.dependencies import ActorDep, CustomerActorDep, StorageDep
 from app.modules.einvoice.schemas import EInvoiceStatusResponse
 from app.modules.einvoice.service import einvoice_view, requeue
@@ -29,6 +31,7 @@ from app.modules.orders.models import Order
 from app.modules.payments.invoice_documents import (
     build_issue_snapshot,
     document_payload,
+    load_signed_qr_code,
     merchant_settings_view,
     read_snapshot,
 )
@@ -146,7 +149,7 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
                 snapshot = await build_issue_snapshot(
                     service.session, invoice=invoice, order=order, customer=customer, delivered=None
                 )
-        return document_payload(invoice, snapshot)
+        return document_payload(invoice, snapshot, signed_qr_code=await load_signed_qr_code(service.session, invoice))
 
     @router.get(
         "/invoices/{invoiceId}/document",
@@ -258,6 +261,8 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
                 max_length=20,
             ),
         ] = None,
+        source: Annotated[str | None, Query(pattern="^(BY_CUSTOMER|ON_DELIVERY|STAFF_COLLECTION)$")] = None,
+        grouped: Annotated[bool | None, Query(description="One record per transaction; false for invoice allocation rows.")] = None,
         search: Annotated[
             str | None,
             Query(
@@ -276,6 +281,8 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
                 customer_id=customer_id,
                 reconciliation_status=reconciliation_status,
                 search=search,
+                source=source,
+                grouped=(channel != LoginChannel.ADMIN if grouped is None else grouped),
             )
         )
 
@@ -286,9 +293,13 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
         responses=error_responses(401, 403, 404),
         summary="Payment detail",
     )
-    async def get_payment(payment_id: PaymentIdPath, service: ServiceDep) -> PaymentResponse:
+    async def get_payment(
+        payment_id: PaymentIdPath, service: ServiceDep,
+        source: Annotated[str | None, Query(pattern="^ON_DELIVERY$")] = None,
+        grouped: bool | None = None,
+    ) -> PaymentResponse:
         """One receipt (spec §12.4)."""
-        return await service.get_payment(payment_id)
+        return await service.get_payment(payment_id, source=source, grouped=(channel != LoginChannel.ADMIN if grouped is None else grouped))
 
     @router.get(
         "/payments/{paymentId}/proof",
@@ -394,14 +405,16 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
         ) -> PaymentResponse:
             """Collect money against an open invoice (spec §12.5).
 
-            Cash is reconciled immediately - the person recording it is holding the notes. UPI
-            and NEFT land `PENDING` until somebody matches the reference against a statement,
-            and the reference is required for exactly that reason.
+            Cash is reconciled immediately - the person recording it is holding the notes.
+            Online payments land `PENDING` until matched against a statement.
+            Merchant callers may omit the UTR/reference; admin callers still require it
+            for non-cash payments. Reconciliation and amount checks are unchanged.
 
-            A `422` names the field: `amount` for a figure above the balance, `reference` for a
-            missing UTR. `409` means the invoice is already settled in full.
+            A `422` names the invalid field. `409` means the invoice is already settled.
             """
-            return await service.record(payload)
+            return await service.record(
+                payload, reference_required=channel != LoginChannel.MERCHANT
+            )
 
         @router.post(
             "/payments/{paymentId}/reconcile",
@@ -411,7 +424,9 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
             summary="Reconcile a payment",
         )
         async def reconcile_payment(
-            payment_id: PaymentIdPath, payload: ReconcilePaymentRequest, service: ServiceDep
+            payment_id: PaymentIdPath, payload: ReconcilePaymentRequest, service: ServiceDep,
+            source: Annotated[str | None, Query(pattern="^ON_DELIVERY$")] = None,
+            grouped: bool | None = None,
         ) -> PaymentResponse:
             """Settle a pending payment against the bank statement.
 
@@ -423,6 +438,6 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
             customer who believes they have paid is about to be told they still owe, and the
             person who decides that deserves to leave a note behind.
             """
-            return await service.reconcile(payment_id, payload)
+            return await service.reconcile(payment_id, payload, source=source, grouped=(channel != LoginChannel.ADMIN if grouped is None else grouped))
 
     return router

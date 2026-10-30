@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -238,6 +238,7 @@ async def application_detail(application_id: str, session: SessionDep) -> KycApp
         profile,
         sites=sites.get(profile.id, []),
         documents=documents.get(profile.id, []),
+        document_files=loader.document_files,
     )
 
 
@@ -253,6 +254,7 @@ async def reveal_document_number(
     document_id: str,
     context: ContextDep,
     session: SessionDep,
+    response: Response,
     cipher: Annotated[FieldCipher, Depends(get_document_cipher)],
 ) -> RevealedDocumentNumber:
     """The merchant reviewer's reveal, without the tenancy check.
@@ -282,6 +284,9 @@ async def reveal_document_number(
         )
 
     number = cipher.decrypt(document.number_encrypted)
+    if number is None:
+        raise ApiError("DOCUMENT_NUMBER_UNAVAILABLE",status.HTTP_409_CONFLICT,
+            "The stored number could not be decrypted. Please contact an administrator.")
     session.add(
         AuditLog(
             id=str(uuid4()),
@@ -294,6 +299,8 @@ async def reveal_document_number(
         )
     )
     await session.commit()
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Pragma"] = "no-cache"
     return RevealedDocumentNumber(
         document_id=document.id,
         document_type=document.document_type,
