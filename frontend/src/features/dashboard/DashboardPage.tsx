@@ -35,6 +35,7 @@ type TrendRange = "6m" | "12m";
 const RANGE_DAYS: Record<ChartRange, number> = { "7d": 7, "30d": 30 };
 const RANGE_MONTH_COUNT: Record<TrendRange, number> = { "6m": 6, "12m": 12 };
 import { formatDate, formatDateTime, formatNumber, formatRelativeTime } from "../../utils/format";
+import { NetworkOperations } from "./NetworkOperations";
 import { AUDIT_SEVERITY_META, auditEntityLabel, auditEventLabel, auditSeverity, channelLabel, statusMeta } from "../../utils/labels";
 
 const DASHBOARD_STALE = 60_000;
@@ -56,6 +57,21 @@ function useMerchantCount(status: "" | "ACTIVE" | "BLOCKED", enabled: boolean) {
     enabled,
     staleTime: DASHBOARD_STALE
   });
+}
+
+function useDashboardAnalytics(days: number, months: number) {
+  const params = { days, months };
+  return useQuery({
+    queryKey: queryKeys.adminDashboard.analytics(params),
+    queryFn: ({ signal }) => getAdminDashboardAnalytics(params, signal),
+    staleTime: DASHBOARD_STALE
+  });
+}
+
+/** Percentage change, or null when there is nothing to compare against. */
+function percentChange(current: number, previous: number) {
+  if (previous <= 0) return null;
+  return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
 function Value({ value, isLoading }: { value: number | undefined; isLoading: boolean }) {
@@ -115,17 +131,14 @@ export function DashboardPage() {
     staleTime: DASHBOARD_STALE
   });
 
-  // The chart series. One call for all six charts, so they always agree on "as of when".
-  // The widest selected window is requested once rather than refetching per chart.
-  const analyticsParams = {
-    days: Math.max(RANGE_DAYS[otpRange], RANGE_DAYS[channelRange], RANGE_DAYS[activityRange]),
-    months: RANGE_MONTH_COUNT[growthRange]
-  };
-  const analytics = useQuery({
-    queryKey: queryKeys.adminDashboard.analytics(analyticsParams),
-    queryFn: ({ signal }) => getAdminDashboardAnalytics(analyticsParams, signal),
-    staleTime: DASHBOARD_STALE
-  });
+  // The chart series. Each chart asks for its own window - login channels are an aggregate,
+  // so slicing one wide response would quietly show the wrong range. Identical windows share
+  // one cached request. Team activity asks for twice its window so the trend can compare the
+  // selected period with the one before it.
+  const months = RANGE_MONTH_COUNT[growthRange];
+  const analytics = useDashboardAnalytics(RANGE_DAYS[otpRange], months);
+  const channelAnalytics = useDashboardAnalytics(RANGE_DAYS[channelRange], months);
+  const activityAnalytics = useDashboardAnalytics(Math.min(RANGE_DAYS[activityRange] * 2, 90), months);
 
   const pendingKycParams = { status: "PENDING", limit: 4, offset: 0 };
   const pendingKycQuery = useQuery({
@@ -256,13 +269,17 @@ export function DashboardPage() {
     failed: 0
   });
   const otpRate = Math.round((otpTotals.success / Math.max(otpTotals.success + otpTotals.failed, 1)) * 1000) / 10;
-  const channels = series?.login_channels ?? [];
+  const channels = channelAnalytics.data?.login_channels ?? [];
   // Both of these read the first element of a series that is empty while the request is in
   // flight, so they are resolved to a value rather than indexed at render time.
   const topChannel = [...channels].sort((a, b) => b.sessions - a.sessions)[0] ?? null;
   const kycPendingCount = analytics.data?.kyc_pending ?? 0;
-  const weekly = (series?.user_activity ?? []).map((point) => ({ label: point.label, signIns: point.sign_ins }));
+  const activityDays = RANGE_DAYS[activityRange];
+  const activityAll = (activityAnalytics.data?.user_activity ?? []).map((point) => ({ label: point.label, signIns: point.sign_ins }));
+  const weekly = activityAll.slice(-activityDays);
   const weeklyTotal = weekly.reduce((sum, day) => sum + day.signIns, 0);
+  const previousActivity = activityAll.slice(0, Math.max(activityAll.length - activityDays, 0)).reduce((sum, day) => sum + day.signIns, 0);
+  const activityChange = percentChange(weeklyTotal, previousActivity);
   const kycSlices = (series?.kyc_status ?? []).map((item) => {
     const value = item.status.toUpperCase();
     return {
@@ -351,12 +368,18 @@ export function DashboardPage() {
         </div>
       </section>
 
+      {auth.can(PERMISSIONS.reportsView) ? <NetworkOperations /> : null}
+
       <section className="stack" aria-labelledby="analytics-heading">
         <SectionHeader
           id="analytics-heading"
           title="Operational Analytics"
-          description="Growth, authentication and review trends. Merchant status is live; trend series are preview data until the reporting API ships."
-          actions={<Badge tone="warning">Preview analytics</Badge>}
+          description="Growth, authentication and review trends, live from the platform."
+          actions={
+            <span className="meta">
+              {analytics.dataUpdatedAt ? `Updated ${formatRelativeTime(new Date(analytics.dataUpdatedAt).toISOString())}` : null}
+            </span>
+          }
         />
         <div className="chart-grid">
           <ChartCard
@@ -439,7 +462,7 @@ export function DashboardPage() {
             footer={
               <>
                 <Icon name="trendingUp" size={15} />
-                {topChannel ? `${topChannel.channel} app drives most sign-ins.` : "No sign-ins in this window yet."}
+                {channelAnalytics.isLoading ? "Loading…" : topChannel ? `${topChannel.channel} app drives most sign-ins.` : "No sign-ins in this window yet."}
               </>
             }
           >
@@ -455,7 +478,18 @@ export function DashboardPage() {
             title="Team activity"
             subtitle="Panel sign-ins by team users"
             value={formatNumber(weeklyTotal)}
-            trend={<MetricTrend value="+6.2%" label="vs previous period" />}
+            trend={
+              activityChange === null ? (
+                <span className="meta">no earlier period to compare</span>
+              ) : (
+                <MetricTrend
+                  value={`${activityChange >= 0 ? "+" : ""}${activityChange}%`}
+                  label="vs previous period"
+                  direction={activityChange > 0 ? "up" : activityChange < 0 ? "down" : "flat"}
+                  positive={activityChange >= 0}
+                />
+              )
+            }
             actions={<RangeSelect label="Team activity range" value={activityRange} options={RANGE_7_30} onChange={setActivityRange} />}
           >
             <ColumnChart

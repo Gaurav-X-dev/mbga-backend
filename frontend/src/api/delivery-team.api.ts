@@ -20,6 +20,8 @@ export type DeliveryMember = {
   approval_status: string;
   role: string;
   allowed_channel: string;
+  /** Clocked on in the Delivery app. */
+  on_duty?: boolean;
   created_at: string;
 };
 

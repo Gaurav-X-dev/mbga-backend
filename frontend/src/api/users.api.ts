@@ -34,6 +34,11 @@ export type UserCreateInput = {
   email?: string;
   country_code?: string;
   status?: string;
+  role?: string;
+  /** Required when the user is agency (merchant) staff. */
+  merchantId?: string;
+  /** Optional job title; the role is used when omitted. */
+  staffType?: string;
 };
 
 export type UserUpdateInput = {

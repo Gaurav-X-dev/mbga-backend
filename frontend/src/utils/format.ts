@@ -97,6 +97,8 @@ export function emptyToNull(value: string | null | undefined): string | null {
 }
 
 
-export function formatCurrency(value: number | null | undefined, fallback = '?'): string {
-  return typeof value === 'number' && Number.isFinite(value) ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value) : fallback;
+export function formatCurrency(value: number | null | undefined, fallback = "₹0"): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value)
+    : fallback;
 }

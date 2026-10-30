@@ -28,8 +28,8 @@ describe("route protection", () => {
     expect(await screen.findByRole("heading", { name: "Welcome to MBGA" })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/login");
     expect(router.state.location.state).toEqual({ from: "/admin/merchants?status=ACTIVE" });
-    // The destination is in the Admin panel, so Admin is preselected.
-    expect(screen.getByRole("radio", { name: "Admin panel" })).toBeChecked();
+    // Panel selection is hidden on the login form.
+    expect(screen.queryByRole("radio", { name: /Admin panel|Merchant panel/ })).not.toBeInTheDocument();
   });
 
   it("refuses to open Admin pages with a Merchant session", async () => {

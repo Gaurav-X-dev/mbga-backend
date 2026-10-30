@@ -58,12 +58,27 @@ function panelFromPath(path: unknown): AuthChannel | null {
 
 function loginErrorMessage(error: AppError): string {
   if (error.code === "ROLE_NOT_ASSIGNED" || error.code === "PERMISSION_DENIED" || error.code === "CHANNEL_NOT_ALLOWED") {
-    return "Your account does not have access to this panel. Check that you selected the correct account type.";
+    return "Your account does not have access to this panel. Please use the sign-in link for your account.";
   }
   return error.userMessage;
 }
 
 export function LoginPage() {
+  // The sign-in page is a fixed light illustration, so it is shown in the light theme
+  // whatever the operator picked for the panel. In dark mode the code boxes were white
+  // text on a white field - the digits were being typed into nothing.
+  //
+  // Their choice is restored on the way out, so the panel still opens in their theme.
+  useEffect(() => {
+    const root = document.documentElement;
+    const chosen = root.getAttribute("data-theme");
+    root.setAttribute("data-theme", "light");
+    return () => {
+      if (chosen) root.setAttribute("data-theme", chosen);
+      else root.removeAttribute("data-theme");
+    };
+  }, []);
+
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -72,7 +87,7 @@ export function LoginPage() {
   const initialChannel: AuthChannel =
     panelFromPath(from) ?? (searchParams.get("panel") === "merchant" ? "merchant" : "admin");
 
-  const [channel, setChannel] = useState<AuthChannel>(initialChannel);
+  const channel = initialChannel;
   const [mobileInput, setMobileInput] = useState("");
   const [mobileError, setMobileError] = useState<string | undefined>();
   const [challenge, setChallenge] = useState<Challenge | null>(null);
@@ -244,38 +259,6 @@ export function LoginPage() {
 
           {!challenge ? (
             <form className="stack-lg" onSubmit={submitMobile} noValidate>
-              <fieldset className="field" style={{ border: 0, margin: 0, padding: 0 }}>
-                <legend className="field__label" style={{ marginBottom: "var(--space-2)" }}>
-                  Sign in to
-                </legend>
-                <div className="segmented">
-                  {(
-                    [
-                      ["admin", "Admin panel", "shield"],
-                      ["merchant", "Merchant panel", "store"]
-                    ] as const
-                  ).map(([value, label, icon]) => (
-                    <label key={value} className="segmented__option">
-                      <input
-                        type="radio"
-                        name="panel"
-                        value={value}
-                        checked={channel === value}
-                        disabled={requestMutation.isPending}
-                        onChange={() => {
-                          setChannel(value);
-                          setFormError(null);
-                        }}
-                      />
-                      <span>
-                        <Icon name={icon} size={16} />
-                        {label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
               <Field
                 label="Mobile number"
                 required

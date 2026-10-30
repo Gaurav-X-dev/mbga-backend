@@ -24,7 +24,8 @@ type SidebarProps = {
 };
 
 export function Sidebar({ channel, sections, collapsed, onToggleCollapsed }: SidebarProps) {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const [closed, setClosed] = useState<string[]>(readClosed);
 
   // A section holding the page you are on is never left folded away.
@@ -47,6 +48,24 @@ export function Sidebar({ channel, sections, collapsed, onToggleCollapsed }: Sid
       }
       return next;
     });
+  }
+
+  /**
+   * NavLink matches the path only, so "/admin/payments" and "/admin/payments?view=invoices" would
+   * both light up. A link with a query is active when the address carries that query; the plain
+   * link to the same path steps aside when a sibling's query matches.
+   */
+  const allLinks = sections.flatMap((section) => section.items.map((item) => item.to));
+  function queryMatches(to: string) {
+    const [path, query] = to.split("?");
+    if (!query || location.pathname !== path) return false;
+    const current = new URLSearchParams(location.search);
+    return [...new URLSearchParams(query)].every(([key, value]) => current.get(key) === value);
+  }
+  function linkActive(to: string, pathActive: boolean) {
+    if (to.includes("?")) return queryMatches(to);
+    if (!pathActive && location.pathname !== to) return false;
+    return !allLinks.some((other) => other !== to && other.startsWith(`${to}?`) && queryMatches(other));
   }
 
   return (
@@ -82,7 +101,12 @@ export function Sidebar({ channel, sections, collapsed, onToggleCollapsed }: Sid
                 <ul className="nav-list" id={listId}>
                   {section.items.map((item) => (
                     <li key={item.to}>
-                      <NavLink to={item.to} className="nav-link" title={collapsed ? item.label : undefined}>
+                      <NavLink
+                        to={item.to}
+                        className={({ isActive }) => (linkActive(item.to, isActive) ? "nav-link active" : "nav-link")}
+                        aria-current={linkActive(item.to, false) ? "page" : undefined}
+                        title={collapsed ? item.label : undefined}
+                      >
                         <Icon name={item.icon} size={17} />
                         <span className="nav-link__label">{item.label}</span>
                         {item.unavailable ? <span className="nav-link__tag">Soon</span> : null}

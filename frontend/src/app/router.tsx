@@ -12,9 +12,11 @@ import { RootRedirect } from "./RootRedirect";
 import { RouteErrorPage } from "./RouteErrorPage";
 
 /** Route-level code splitting for named page exports. */
-function page<K extends string>(loader: () => Promise<Record<K, ComponentType>>, name: K) {
+function page<K extends string>(loader: () => Promise<Record<K, ComponentType<any>>>, name: K) {
   return lazy(async () => ({ default: (await loader())[name] }));
 }
+
+const PrivacyPolicyAdminPage = page(() => import("../features/legal-pages/PrivacyPolicyAdminPage"), "PrivacyPolicyAdminPage");
 
 const DashboardPage = page(() => import("../features/dashboard/DashboardPage"), "DashboardPage");
 const MerchantsListPage = page(() => import("../features/merchants/MerchantsListPage"), "MerchantsListPage");
@@ -33,7 +35,10 @@ const CustomerKycDetailPage = page(
 );
 const ApprovalsPage = page(() => import("../features/approvals/ApprovalsPage"), "ApprovalsPage");
 const ApiExplorerPage = page(() => import("../features/api-explorer/ApiExplorerPage"), "ApiExplorerPage");
+const OtpLogsPage = page(() => import("../features/otp-logs/OtpLogsPage"), "OtpLogsPage");
+const AdminCataloguePage = page(() => import("../features/admin-catalogue/AdminCataloguePage"), "AdminCataloguePage");
 const LoginSessionsPage = page(() => import("../features/sessions/LoginSessionsPage"), "LoginSessionsPage");
+const AppSettingsPage = page(() => import("../features/app-settings/AppSettingsPage"), "AppSettingsPage");
 const ProfilePage = page(() => import("../features/profile/ProfilePage"), "ProfilePage");
 const MerchantDashboardPage = page(
   () => import("../features/merchant-dashboard/MerchantDashboardPage"),
@@ -52,10 +57,19 @@ const MerchantReportsPage = page(() => import("../features/merchant-reports/Merc
 
 const AdminOrdersPage = page(() => import("../features/admin-orders/AdminOrdersPage"), "AdminOrdersPage");
 const AdminInventoryPage = page(() => import("../features/admin-inventory/AdminInventoryPage"), "AdminInventoryPage");
-const AdminPaymentsPage = page(() => import("../features/admin-payments/AdminPaymentsPage"), "AdminPaymentsPage");
-const AdminEInvoicePage = page(() => import("../features/admin-einvoice/AdminEInvoicePage"), "AdminEInvoicePage");
-const AdminReportsPage = page(() => import("../features/admin-reports/AdminReportsPage"), "AdminReportsPage");
+const AdminExpensesPage = page(() => import("../features/admin-expenses/AdminExpensesPage"), "AdminExpensesPage");
+const AdminTasksPage = page(() => import("../features/admin-tasks/AdminTasksPage"), "AdminTasksPage");
+const AdminTaskDetailPage = page(() => import("../features/admin-tasks/AdminTaskDetailPage"), "AdminTaskDetailPage");
+const AdminDeliveriesPage = page(() => import("../features/admin-deliveries/AdminDeliveriesPage"), "AdminDeliveriesPage");
+const AdminCustomersPage = page(() => import("../features/admin-customers/AdminCustomersPage"), "AdminCustomersPage");
+const AdminCustomerDetailPage = page(() => import("../features/admin-customers/AdminCustomerDetailPage"), "AdminCustomerDetailPage");
+const LiveLocationPage = page(() => import("../features/live-location/LiveLocationPage"), "LiveLocationPage");
+const AdminDeliveryUsersPage = page(() => import("../features/admin-delivery-users/AdminDeliveryUsersPage"), "AdminDeliveryUsersPage");
+const AdminPricingPage = page(() => import("../features/admin-pricing/AdminPricingPage"), "AdminPricingPage");
+const AdminVehiclesPage = page(() => import("../features/admin-vehicles/AdminVehiclesPage"), "AdminVehiclesPage");
 const AdminCreditPage = page(() => import("../features/admin-credit/AdminCreditPage"), "AdminCreditPage");
+const AdminPaymentsPage = page(() => import("../features/admin-payments/AdminPaymentsPage"), "AdminPaymentsPage");
+const AdminReportsPage = page(() => import("../features/admin-reports/AdminReportsPage"), "AdminReportsPage");
 
 const DeliveryMemberDetailPage = page(
   () => import("../features/delivery-team/DeliveryMemberDetailPage"),
@@ -92,10 +106,19 @@ export const routes: RouteObject[] = [
           { path: "merchants/:merchantId", element: guarded(PERMISSIONS.merchantsView, <MerchantDetailPage />) },
           { path: "orders", element: guarded(PERMISSIONS.ordersView, <AdminOrdersPage />) },
           { path: "inventory", element: guarded(PERMISSIONS.inventoryView, <AdminInventoryPage />) },
+          { path: "deliveries", element: <AdminDeliveriesPage /> },
+          { path: "delivery-users", element: guarded(PERMISSIONS.deliveryUsersView, <AdminDeliveryUsersPage />) },
+          { path: "live-location", element: guarded([PERMISSIONS.merchantsView, PERMISSIONS.deliveryUsersView], <LiveLocationPage />) },
+          { path: "vehicles", element: <AdminVehiclesPage /> },
+          { path: "pricing", element: <AdminPricingPage /> },
           { path: "payments", element: guarded(PERMISSIONS.paymentsView, <AdminPaymentsPage />) },
-          { path: "einvoice", element: guarded(PERMISSIONS.paymentsView, <AdminEInvoicePage />) },
-          { path: "reports", element: guarded(PERMISSIONS.reportsView, <AdminReportsPage />) },
           { path: "credit", element: guarded(PERMISSIONS.creditView, <AdminCreditPage />) },
+          { path: "expenses", element: <AdminExpensesPage /> },
+          { path: "tasks", element: <AdminTasksPage /> },
+          { path: "tasks/:taskId", element: <AdminTaskDetailPage /> },
+          { path: "reports", element: guarded(PERMISSIONS.reportsView, <AdminReportsPage />) },
+          { path: "customer-accounts", element: <AdminCustomersPage /> },
+          { path: "customer-accounts/:customerId", element: <AdminCustomerDetailPage /> },
           { path: "customers", element: <CustomerKycPage /> },
           { path: "customers/:applicationId", element: <CustomerKycDetailPage /> },
           { path: "approvals", element: <ApprovalsPage /> },
@@ -105,7 +128,11 @@ export const routes: RouteObject[] = [
           { path: "roles/:roleId", element: guarded(PERMISSIONS.rolesView, <RoleDetailPage />) },
           { path: "permissions", element: guarded(PERMISSIONS.permissionsView, <PermissionsPage />) },
           { path: "login-sessions", element: guarded(PERMISSIONS.usersRevokeSessions, <LoginSessionsPage />) },
+          { path: "otp-logs", element: <OtpLogsPage /> },
+          { path: "catalogue", element: <AdminCataloguePage /> },
           { path: "audit-logs", element: guarded(PERMISSIONS.auditLogsView, <AuditLogsPage />) },
+          { path: "app-settings", element: guarded(PERMISSIONS.platformSettingsView, <AppSettingsPage />) },
+          { path: "privacy-policy", element: guarded(PERMISSIONS.platformSettingsView, <PrivacyPolicyAdminPage />) },
           { path: "profile", element: <ProfilePage /> },
           { path: "api-console", element: <ApiExplorerPage /> },
           { path: "*", element: <NotFoundContent /> }
@@ -133,11 +160,20 @@ export const routes: RouteObject[] = [
             path: "delivery-team/:memberId",
             element: guarded(PERMISSIONS.deliveryUsersView, <DeliveryMemberDetailPage />)
           },
-          { path: "customers", element: <FeatureUnavailablePage feature="merchant-customers" /> },
-          { path: "orders", element: <FeatureUnavailablePage feature="merchant-orders" /> },
-          { path: "inventory", element: <FeatureUnavailablePage feature="merchant-inventory" /> },
-          { path: "payments", element: <FeatureUnavailablePage feature="merchant-payments" /> },
-          { path: "reports", element: <FeatureUnavailablePage feature="merchant-reports" /> },
+          { path: "customers", element: <MerchantCustomersPage /> },
+          { path: "customers/:customerId", element: <AdminCustomerDetailPage /> },
+          { path: "orders", element: <MerchantOrdersPage /> },
+          { path: "deliveries", element: <AdminDeliveriesPage isMerchantPanel /> },
+          { path: "vehicles", element: <AdminVehiclesPage isMerchantPanel /> },
+          { path: "inventory", element: <MerchantInventoryPage /> },
+          { path: "pricing", element: <AdminPricingPage isMerchantPanel /> },
+          { path: "payments", element: <MerchantPaymentsPage /> },
+          { path: "credit", element: <AdminCreditPage isMerchantPanel /> },
+          { path: "expenses", element: <AdminExpensesPage isMerchantPanel /> },
+          { path: "tasks", element: <AdminTasksPage isMerchantPanel /> },
+          { path: "tasks/:taskId", element: <AdminTaskDetailPage /> },
+          { path: "reports", element: <MerchantReportsPage /> },
+          { path: "app-settings", element: guarded(PERMISSIONS.deliveryView, <AppSettingsPage />) },
           { path: "profile", element: <ProfilePage /> },
           { path: "*", element: <NotFoundContent /> }
         ]

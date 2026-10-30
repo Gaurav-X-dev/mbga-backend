@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -16,8 +17,17 @@ import { useSearchFilter, useUrlFilters } from "../../hooks/useUrlFilters";
 import { formatDate, formatDateTime, formatNumber, formatRelativeTime } from "../../utils/format";
 import { statusMeta } from "../../utils/labels";
 import { DocumentProgress } from "./DocumentProgress";
+import { KycDecisionDialogs, type KycDecisionTarget } from "./KycDecisionDialogs";
 
 const PAGE_SIZE = 20;
+
+/** Carries the merchant and customer so the detail page can load the customer's orders. */
+function detailHref(item: KycApplicationSummary) {
+  const query = new URLSearchParams();
+  if (item.merchant_id) query.set("merchant", item.merchant_id);
+  query.set("customer", item.customer_id);
+  return `/admin/customers/${item.id}?${query.toString()}`;
+}
 const FILTERS = ["search", "status", "merchant"] as const;
 
 const TABS = [
@@ -43,10 +53,11 @@ export function CustomerKycPage() {
   const { values, page, setFilter, setPage, reset, hasFilters } = useUrlFilters(FILTERS);
   const [searchText, setSearchText] = useSearchFilter(values.search, (value) => setFilter("search", value));
   const tab = values.status || "PENDING";
+  const [decision, setDecision] = useState<KycDecisionTarget | null>(null);
 
   const params = {
     status: tab,
-    merchant_id: values.merchant || undefined,
+    merchantId: values.merchant || undefined,
     search: values.search || undefined,
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE
@@ -82,7 +93,7 @@ export function CustomerKycPage() {
         <div className="cell-primary">
           <UserAvatar name={item.customer_name} />
           <div className="cell-primary__text">
-            <Link to={`/admin/customers/${item.id}`} className="cell-primary__title">
+            <Link to={detailHref(item)} className="cell-primary__title">
               {item.customer_name ?? "Unnamed customer"}
             </Link>
             <span className="cell-primary__subtitle">{item.customer_type ?? "Customer"}</span>
@@ -214,10 +225,25 @@ export function CustomerKycPage() {
           columns={columns}
           rows={query.data?.items}
           getRowKey={(item) => item.id}
-          getRowHref={(item) => `/admin/customers/${item.id}`}
+          getRowHref={detailHref}
           rowLabel={(item) => item.customer_name ?? item.id}
           rowActions={(item) => [
-            { label: "Open application", icon: "eye", onSelect: () => navigate(`/admin/customers/${item.id}`) }
+            { label: "Open application", icon: "eye", onSelect: () => navigate(detailHref(item)) },
+            {
+              label: "Approve",
+              icon: "checkCircle",
+              hidden: item.status !== "PENDING" || !item.merchant_id,
+              onSelect: () =>
+                setDecision({ merchantId: item.merchant_id!, customerId: item.customer_id, name: item.customer_name ?? "this customer", decision: "approve" })
+            },
+            {
+              label: "Reject",
+              icon: "xCircle",
+              danger: true,
+              hidden: item.status !== "PENDING" || !item.merchant_id,
+              onSelect: () =>
+                setDecision({ merchantId: item.merchant_id!, customerId: item.customer_id, name: item.customer_name ?? "this customer", decision: "reject" })
+            }
           ]}
           isLoading={query.isLoading}
           error={query.error}
@@ -252,10 +278,11 @@ export function CustomerKycPage() {
       </Card>
 
       <p className="meta">
-        Reviewing is done by the merchant that holds the customer relationship, so this screen is read-only. Statuses
+        Merchants usually review their own customers; head office can approve or reject from the row menu or the application. Statuses
         shown here are {statusMeta("PENDING").label.toLowerCase()}, {statusMeta("APPROVED").label.toLowerCase()} and{" "}
         {statusMeta("REJECTED").label.toLowerCase()}.
       </p>
+      <KycDecisionDialogs target={decision} onClose={() => setDecision(null)} />
     </div>
   );
 }

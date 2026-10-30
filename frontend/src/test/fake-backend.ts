@@ -604,22 +604,22 @@ export function createFakeBackend() {
       const application = kycApplications.find((item) => item.id === kycDetail[1]);
       if (!application) return respond(config, 404, { detail: "Application not found" });
       return respond(config, 200, {
+        // KycApplicationResponse, as the backend sends it (camelCase, flat).
         id: application.id,
-        status: application.status,
-        submitted_at: application.submitted_at,
-        reviewed_at: null,
-        reviewed_by_name: null,
-        rejection_reason: null,
-        customer: {
-          id: application.customer_id,
-          name: application.customer_name,
-          mobile_number: application.customer_mobile,
-          customer_type: application.customer_type,
-          address_city: application.city,
-          merchant_id: application.merchant_id
-        },
+        customerId: application.customer_id,
+        customerType: application.customer_type,
+        businessName: application.customer_name,
+        ownerName: null,
+        mobile: application.customer_mobile,
+        email: null,
         documents: [],
-        delivery_sites: []
+        deliveryAddress: { line1: "", line2: null, city: application.city, state: "", pincode: "" },
+        sites: [],
+        status: application.status,
+        submittedAt: application.submitted_at,
+        reviewedAt: null,
+        reviewedBy: null,
+        rejectionReason: null
       });
     }
 

@@ -28,7 +28,7 @@ export function renderWithProviders(ui: ReactElement, initialPath = "/") {
     client,
     ...render(
       <AppProviders client={client}>
-        <MemoryRouter initialEntries={[initialPath]} future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <MemoryRouter initialEntries={[initialPath]}>
           {ui}
         </MemoryRouter>
       </AppProviders>

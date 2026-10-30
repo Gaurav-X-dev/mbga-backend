@@ -48,9 +48,9 @@ describe("visibleNavigation", () => {
     expect(paths).not.toContain("/admin/audit-logs");
   });
 
-  it("marks modules without a backend as unavailable", () => {
+  it("includes merchant operational modules in navigation", () => {
     const items = visibleNavigation("merchant", []).flatMap((section) => section.items);
-    expect(items.find((item) => item.to === "/merchant/orders")?.unavailable).toBe(true);
+    expect(items.find((item) => item.to === "/merchant/orders")).toBeDefined();
     expect(items.find((item) => item.to === "/merchant/delivery-team")).toBeUndefined();
   });
 });

@@ -299,18 +299,15 @@ describe("features without a backend API", () => {
     expect(backend.calls).toContain("GET /admin/kyc/applications/kyc-1");
   });
 
-  it.each(["customers", "orders", "inventory", "payments", "reports"])(
-    "Merchant %s shows the message and no data",
-    async (page) => {
-      await seedSession("merchant", MERCHANT_MOBILE);
-      renderApp(`/merchant/${page}`);
-      expect(await screen.findByText(MESSAGE, {}, SLOW)).toBeInTheDocument();
-      expect(screen.queryByRole("table")).not.toBeInTheDocument();
-      expect(document.querySelector(".stat-card, svg.chart, canvas")).toBeNull();
-      expect(screen.queryByText(/₹|\d+ (orders|cylinders|payments)/i)).not.toBeInTheDocument();
-      expect(backend.calls.filter((call) => !call.includes("/auth/"))).toEqual([]);
-      const nav = screen.getByRole("navigation", { name: "Main" });
-      expect(within(nav).getByRole("link", { name: new RegExp(page, "i") })).toHaveTextContent("Soon");
-    }
-  );
+  it.each([
+    ["customers", "Customer Accounts"],
+    ["orders", "Cylinder Orders"],
+    ["inventory", "Warehouse Inventory"],
+    ["payments", "Agency Payments & Invoices"],
+    ["reports", "Business Reports"]
+  ])("Merchant %s renders completed page", async (page, heading) => {
+    await seedSession("merchant", MERCHANT_MOBILE);
+    renderApp(`/merchant/${page}`);
+    expect(await screen.findByRole("heading", { name: heading, level: 1 }, SLOW)).toBeInTheDocument();
+  });
 });

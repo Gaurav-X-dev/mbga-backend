@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../../auth/auth-context";
 import { CHANNEL_HOME } from "../../auth/permissions";
@@ -96,8 +96,24 @@ export function AccessDeniedContent() {
 
 /** Standalone page used when a signed-in account opens another panel's address. */
 export function AccessDeniedPage() {
-  const { channel } = useAuth();
+  const { channel, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [switching, setSwitching] = useState(false);
   useTitle("Access denied");
+
+  const targetPanel = channel === "merchant" ? "admin" : "merchant";
+  const targetLabel = channel === "merchant" ? "Admin panel" : "Merchant panel";
+
+  const handleSwitch = async () => {
+    setSwitching(true);
+    try {
+      await signOut();
+      navigate(`/login?panel=${targetPanel}`, { replace: true });
+    } catch {
+      window.location.href = `/login?panel=${targetPanel}`;
+    }
+  };
+
   return (
     <StandalonePage>
       <EmptyState
@@ -107,12 +123,21 @@ export function AccessDeniedPage() {
         description={
           channel === "merchant"
             ? "You are signed in to the Merchant panel. Admin pages are only available to MBGA administrators."
-            : "You are signed in to the Admin panel. To use the Merchant panel, sign out and sign in with a merchant account."
+            : "You are signed in to the Admin panel. To use the Merchant panel, switch your session or sign in with a merchant account."
         }
         action={
-          <ButtonLink to={homePath(channel)} variant="primary">
-            Go to my dashboard
-          </ButtonLink>
+          <div className="row" style={{ gap: "var(--space-2)", justifyContent: "center", flexWrap: "wrap" }}>
+            <Button
+              variant="primary"
+              disabled={switching}
+              onClick={handleSwitch}
+            >
+              {switching ? "Switching..." : `Switch to ${targetLabel}`}
+            </Button>
+            <ButtonLink to={homePath(channel)} variant="secondary">
+              Go to my dashboard
+            </ButtonLink>
+          </div>
         }
       />
     </StandalonePage>

@@ -91,7 +91,7 @@ export function UsersPage() {
             <Link to={`/admin/users/${user.id}`} className="cell-primary__title">
               {userDisplayName(user)}
             </Link>
-            <span className="cell-primary__subtitle">{user.username ? `@${user.username}` : "No username"}</span>
+            {user.username ? <span className="cell-primary__subtitle">@{user.username}</span> : null}
           </div>
         </div>
       )

@@ -10,6 +10,12 @@ export type Permission = {
   description: string | null;
   is_system: boolean;
   is_active: boolean;
+  /**
+   * The permissions this one cannot be used without, by code. The backend grants these
+   * alongside it on save, so the matrix ticks them here too rather than letting the screen
+   * disagree with what was stored.
+   */
+  requires: string[];
 };
 
 export type PermissionGroup = { module: string; permissions: Permission[] };

@@ -2,6 +2,8 @@ import type { AuthChannel } from "./token-storage";
 
 /** Permission codes enforced by the backend (see backend/app/modules/roles/seeds.py). */
 export const PERMISSIONS = {
+  platformSettingsView: "platform_settings.view",
+  platformSettingsManage: "platform_settings.manage",
   dashboardView: "dashboard.view",
   merchantsView: "merchants.view",
   merchantsCreate: "merchants.create",
@@ -35,6 +37,17 @@ export const PERMISSIONS = {
   deliveryUsersActivate: "delivery_users.activate",
   deliveryUsersBlock: "delivery_users.block",
   customersView: "customers.view",
+  customersReview: "customers.review",
+  deliveryView: "delivery.view",
+  deliveryConfirm: "delivery.confirm",
+  pricingView: "pricing.view",
+  pricingManage: "pricing.manage",
+  expensesView: "expenses.view",
+  expensesManage: "expenses.manage",
+  tasksView: "tasks.view",
+  catalogueView: "catalogue.view",
+  catalogueManage: "catalogue.manage",
+  otpLogsView: "authentication.view_otp_logs",
   ordersView: "orders.view",
   inventoryView: "inventory.view",
   paymentsView: "payments.view",

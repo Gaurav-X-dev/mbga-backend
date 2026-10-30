@@ -93,6 +93,9 @@
   --surface: #ffffff;
   --surface-muted: #f8fafc;
   --surface-hover: #f8fafc;
+  --surface-2: var(--surface-muted);
+  --color-brand: var(--blue-600);
+  --color-brand-subtle: var(--blue-50);
   --surface-selected: var(--blue-50);
   --surface-tint: #f1f5f9;
   --border: #e2e8f0;
@@ -107,6 +110,8 @@
   --glass-border: rgba(255, 255, 255, 0.6);
   --glass-solid: rgba(255, 255, 255, 0.92);
   --text: #0f172a;
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
   --text-muted: #475569;
   --text-subtle: #64748b;
   --text-placeholder: #94a3b8;
@@ -119,16 +124,35 @@
   --success-200: #a7f3d0;
   --success-100: #d1fae5;
   --success-50: #ecfdf5;
+  --green-700: var(--success-700);
+  --green-600: var(--success-600);
+  --green-500: var(--success-500);
+  --green-200: var(--success-200);
+  --green-100: var(--success-100);
+  --green-50: var(--success-50);
+
   --warning-700: #b45309;
   --warning-500: #f59e0b;
   --warning-200: #fde68a;
   --warning-50: #fffbeb;
+  --amber-700: var(--warning-700);
+  --amber-500: var(--warning-500);
+  --amber-200: var(--warning-200);
+  --amber-50: var(--warning-50);
+
   --danger-700: #b91c1c;
   --danger-800: #991b1b;
   --danger-600: #dc2626;
   --danger-500: #ef4444;
   --danger-200: #fecaca;
   --danger-50: #fef2f2;
+  --red-700: var(--danger-700);
+  --red-600: var(--danger-600);
+  --red-500: var(--danger-500);
+  --red-200: var(--danger-200);
+  --red-100: #fee2e2;
+  --red-50: var(--danger-50);
+
   --info-700: var(--blue-700);
   --info-200: var(--blue-200);
   --info-50: var(--blue-50);
@@ -226,6 +250,9 @@
   --surface: #121a2b;
   --surface-muted: #172033;
   --surface-hover: #1b2539;
+  --surface-2: var(--surface-muted);
+  --color-brand: var(--blue-600);
+  --color-brand-subtle: var(--blue-50);
   --surface-selected: rgba(59, 130, 246, 0.16);
   --surface-tint: #1e293b;
   --border: #253048;
@@ -239,9 +266,11 @@
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-solid: rgba(18, 26, 43, 0.94);
   --text: #f1f5f9;
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
   --text-muted: #cbd5e1;
   --text-subtle: #94a3b8;
-  --text-placeholder: #64748b;
+  --text-placeholder: #8899ac;
   --neutral-badge-bg: rgba(148, 163, 184, 0.16);
 
   /* --navy-* and --text-inverse are deliberately NOT flipped: they name surfaces that stay
@@ -249,6 +278,8 @@
      blue gradient of a primary button. */
 
   /* --- Brand ------------------------------------------------------------------------------ */
+  --blue-950: #bfdbfe;
+  --blue-900: #93c5fd;
   --blue-800: #93c5fd;
   --blue-700: #7dd3fc;
   --blue-600: #60a5fa;
@@ -281,16 +312,35 @@
   --success-200: rgba(52, 211, 153, 0.34);
   --success-100: rgba(52, 211, 153, 0.22);
   --success-50: rgba(16, 185, 129, 0.14);
+  --green-700: var(--success-700);
+  --green-600: var(--success-600);
+  --green-500: var(--success-500);
+  --green-200: var(--success-200);
+  --green-100: var(--success-100);
+  --green-50: var(--success-50);
+
   --warning-700: #fcd34d;
   --warning-500: #f59e0b;
   --warning-200: rgba(252, 211, 77, 0.32);
   --warning-50: rgba(245, 158, 11, 0.14);
+  --amber-700: var(--warning-700);
+  --amber-500: var(--warning-500);
+  --amber-200: var(--warning-200);
+  --amber-50: var(--warning-50);
+
   --danger-800: #fca5a5;
   --danger-700: #fca5a5;
   --danger-600: #f87171;
   --danger-500: #ef4444;
   --danger-200: rgba(248, 113, 113, 0.34);
   --danger-50: rgba(239, 68, 68, 0.14);
+  --red-700: var(--danger-700);
+  --red-600: var(--danger-600);
+  --red-500: var(--danger-500);
+  --red-200: var(--danger-200);
+  --red-100: rgba(248, 113, 113, 0.22);
+  --red-50: var(--danger-50);
+
   --info-700: #7dd3fc;
   --info-200: rgba(96, 165, 250, 0.4);
   --info-50: rgba(59, 130, 246, 0.14);

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { listPermissionsGrouped } from "../../api/permissions.api";
+import { listPermissionsGrouped, type Permission } from "../../api/permissions.api";
 import { queryKeys } from "../../api/query-keys";
 import {
   deleteRole,
@@ -107,10 +107,53 @@ function PermissionsTab({ role }: { role: Role }) {
     .filter((group) => group.permissions.length > 0)
     .sort((a, b) => permissionModuleOrder(a.module) - permissionModuleOrder(b.module));
 
+  const allPermissions = (catalogue.data?.groups ?? []).flatMap((group) => group.permissions);
+  const byId = new Map(allPermissions.map((item) => [item.id, item]));
+  const byCode = new Map(allPermissions.map((item) => [item.code, item]));
+
+  /**
+   * One permission's id plus the ids of everything it cannot be used without.
+   *
+   * The backend grants these alongside it on save either way, so ticking them here keeps the
+   * screen honest: nobody saves "Create users" and returns to find a box ticked that they did
+   * not touch.
+   *
+   * Only applied when switching **on**. Clearing a box leaves its dependencies alone - they
+   * may still be holding up another permission that is granted, and quietly revoking those
+   * would remove rights nobody asked to remove.
+   */
+  function withDependencies(permissionId: string): string[] {
+    const resolved = new Set([permissionId]);
+    const queue = [permissionId];
+    while (queue.length) {
+      const current = byId.get(queue.shift()!);
+      for (const code of current?.requires ?? []) {
+        const required = byCode.get(code);
+        if (required && !resolved.has(required.id)) {
+          resolved.add(required.id);
+          queue.push(required.id);
+        }
+      }
+    }
+    return [...resolved];
+  }
+
+  /** The permission's own sentence, followed by what granting it also brings. */
+  function describe(item: Permission): string | undefined {
+    const sentence = permissionDescription(item);
+    const comesWith = (item.requires ?? [])
+      .map((code) => byCode.get(code)?.name)
+      .filter(Boolean) as string[];
+    if (!comesWith.length) return sentence;
+    const also = `Also grants: ${comesWith.join(", ")}`;
+    return sentence ? `${sentence} ${also}` : also;
+  }
+
   function toggle(ids: string[], on: boolean) {
+    const targets = on ? [...new Set(ids.flatMap(withDependencies))] : ids;
     setSelected((previous) => {
       const next = new Set(previous);
-      ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
+      targets.forEach((id) => (on ? next.add(id) : next.delete(id)));
       return next;
     });
   }
@@ -165,7 +208,7 @@ function PermissionsTab({ role }: { role: Role }) {
                     <Checkbox
                       key={item.id}
                       label={item.name}
-                      description={permissionDescription(item)}
+                      description={describe(item)}
                       checked={selected.has(item.id) || isProtected}
                       disabled={!canEdit || mutation.isPending}
                       onChange={(event) => toggle([item.id], event.target.checked)}

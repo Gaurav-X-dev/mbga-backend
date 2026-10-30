@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -17,7 +17,7 @@ async function enterOtp(user: UserEvent, code: string) {
 
 async function signIn(user: UserEvent, panel: "Admin panel" | "Merchant panel", localMobile: string, code = "1234") {
   await screen.findByRole("heading", { name: "Welcome to MBGA" });
-  await user.click(screen.getByRole("radio", { name: panel }));
+  expect(screen.queryByRole("radio", { name: panel })).not.toBeInTheDocument();
   await user.type(screen.getByLabelText(/Mobile number/), localMobile);
   await user.click(screen.getByRole("button", { name: "Send verification code" }));
   await enterOtp(user, code);
@@ -114,12 +114,12 @@ describe("sign in", () => {
     expect(await screen.findByRole("heading", { name: ADMIN_HOME })).toBeInTheDocument();
   });
 
-  it("tells an Admin who picked the Merchant panel that they have no access there", async () => {
+  it("denies an Admin using a Merchant sign-in link", async () => {
     const user = userEvent.setup();
-    renderApp("/login");
+    renderApp("/login?panel=merchant");
     await signIn(user, "Merchant panel", "9999900001");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Your account does not have access to this panel. Check that you selected the correct account type."
+      "Your account does not have access to this panel. Please use the sign-in link for your account."
     );
     expect(tokenStorage.get()).toBeNull();
   });
@@ -181,7 +181,7 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
 
   it("completes the whole journey through the UI", async () => {
     const user = userEvent.setup();
-    renderApp("/login");
+    const { router } = renderApp("/login");
 
     // Admin signs in and adds a merchant.
     await signIn(user, "Admin panel", "9999900001");
@@ -240,6 +240,8 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
     await screen.findByRole("heading", { name: "Merchant Network", level: 1 });
 
     await signOut(user);
+
+    await act(() => router.navigate("/login?panel=merchant"));
 
     // The merchant signs in and adds a driver and a helper.
     await signIn(user, "Merchant panel", "9111111111");

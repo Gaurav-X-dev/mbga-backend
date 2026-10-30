@@ -99,6 +99,10 @@ export function PermissionsPage() {
     saved[role.id] = data ? new Set(data.map((item) => item.id)) : undefined;
   });
 
+  const allPermissions = (catalogue.data?.groups ?? []).flatMap((group) => group.permissions);
+  const byId = new Map(allPermissions.map((item) => [item.id, item]));
+  const byCode = new Map(allPermissions.map((item) => [item.code, item]));
+
   const groups = [...(catalogue.data?.groups ?? [])].sort((a, b) => permissionModuleOrder(a.module) - permissionModuleOrder(b.module));
   const term = search.trim().toLowerCase();
   const visible = groups
@@ -130,10 +134,38 @@ export function PermissionsPage() {
     return saved[role.id]?.has(permissionId) ?? false;
   }
 
+  /**
+   * One permission's id plus the ids of everything it cannot be used without.
+   *
+   * The backend adds these on save either way. Resolving them here as well means the ticks on
+   * screen match what will be stored, so nobody saves "Create users" and comes back to find a
+   * second box ticked that they did not touch.
+   *
+   * Only ever used when switching a cell **on**. Untick leaves the dependencies alone: they
+   * may be holding up another permission that is still granted, and silently revoking those
+   * would take away rights nobody asked to remove.
+   */
+  function withDependencies(permissionId: string): string[] {
+    const resolved = new Set([permissionId]);
+    const queue = [permissionId];
+    while (queue.length) {
+      const current = byId.get(queue.shift()!);
+      for (const code of current?.requires ?? []) {
+        const required = byCode.get(code);
+        if (required && !resolved.has(required.id)) {
+          resolved.add(required.id);
+          queue.push(required.id);
+        }
+      }
+    }
+    return [...resolved];
+  }
+
   function setCells(role: Role, permissionIds: string[], on: boolean) {
+    const targets = on ? [...new Set(permissionIds.flatMap(withDependencies))] : permissionIds;
     setChanges((previous) => {
       const cells = { ...(previous[role.id] ?? {}) };
-      permissionIds.forEach((id) => {
+      targets.forEach((id) => {
         const original = saved[role.id]?.has(id) ?? false;
         if (original === on) delete cells[id];
         else cells[id] = on;
@@ -329,12 +361,22 @@ export function PermissionsPage() {
                     </tr>
                     {group.permissions.map((item: Permission) => {
                       const description = permissionDescription(item);
+                      // Named here so granting this is not a surprise: these come with it,
+                      // and the backend stores them whether or not the matrix shows them.
+                      const comesWith = (item.requires ?? [])
+                        .map((code) => byCode.get(code)?.name)
+                        .filter(Boolean) as string[];
                       return (
                         <tr key={item.id}>
                           <th scope="row">
                             <span className="matrix__perm">
                               <strong>{item.name}</strong>
                               {description ? <small>{description}</small> : null}
+                              {comesWith.length ? (
+                                <small className="matrix__perm-requires">
+                                  Also grants: {comesWith.join(", ")}
+                                </small>
+                              ) : null}
                             </span>
                           </th>
                           {shownRoles.map((role) => {

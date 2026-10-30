@@ -223,20 +223,26 @@ export function DataTable<T>({
         </table>
       </div>
       <ul className="mobile-list" aria-label={caption}>
-        {sorted.map((row) => (
-          <li key={getRowKey(row)} className="mobile-list__item">
-            <div className="row-between" style={{ flexWrap: "nowrap" }}>
-              <div style={{ minWidth: 0 }}>{primary.render(row)}</div>
-              {rowActions ? <Menu label={`Actions for ${rowLabel?.(row) ?? "this row"}`} actions={rowActions(row)} /> : null}
-            </div>
-            {secondary.map((column) => (
-              <div key={column.key} className="mobile-list__row">
-                <span className="mobile-list__label">{column.mobileLabel ?? column.header}</span>
-                <span>{column.render(row)}</span>
+        {sorted.map((row) => {
+          const selected = isSelected?.(row);
+          return (
+            <li
+              key={getRowKey(row)}
+              className={["mobile-list__item", selected && "is-selected"].filter(Boolean).join(" ")}
+            >
+              <div className="row-between" style={{ flexWrap: "nowrap" }}>
+                <div style={{ minWidth: 0 }}>{primary.render(row)}</div>
+                {rowActions ? <Menu label={`Actions for ${rowLabel?.(row) ?? "this row"}`} actions={rowActions(row)} /> : null}
               </div>
-            ))}
-          </li>
-        ))}
+              {secondary.map((column) => (
+                <div key={column.key} className="mobile-list__row">
+                  <span className="mobile-list__label">{column.mobileLabel ?? column.header}</span>
+                  <span>{column.render(row)}</span>
+                </div>
+              ))}
+            </li>
+          );
+        })}
       </ul>
       {footer}
     </>

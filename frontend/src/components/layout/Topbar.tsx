@@ -10,7 +10,6 @@ import type { AuthChannel } from "../../auth/token-storage";
 import {
   NAVIGATION,
   PANEL_LABEL,
-  QUICK_ACTIONS,
   SEARCH_PLACEHOLDER,
   SEARCH_TARGETS,
   type NavSection
@@ -235,7 +234,6 @@ export const Topbar = forwardRef<HTMLButtonElement, TopbarProps>(function Topbar
   const displayName = user?.display_name ?? "Operator";
   const primaryRole = user?.active_roles[0];
   const module = currentModule(channel, pathname);
-  const quickActions = QUICK_ACTIONS[channel].filter((action) => action.permissions.every((code) => auth.permissions.includes(code)));
   const canAudit = channel === "admin" && auth.can(PERMISSIONS.auditLogsView);
 
   return (
@@ -270,20 +268,6 @@ export const Topbar = forwardRef<HTMLButtonElement, TopbarProps>(function Topbar
       <GlobalSearch channel={channel} sections={sections} />
 
       <div className="topbar__actions">
-        {quickActions.length > 0 ? (
-          <Menu
-            label="Create new"
-            triggerClassName="btn btn--primary btn--sm topbar__create"
-            trigger={() => (
-              <>
-                <Icon name="plus" size={16} />
-                <span className="topbar__create-label">Create</span>
-              </>
-            )}
-            actions={quickActions.map((action) => ({ label: action.label, icon: action.icon, onSelect: () => navigate(action.to) }))}
-          />
-        ) : null}
-
         {canAudit ? (
           <Popover label="Recent activity" trigger={<Icon name="bell" />} panelClassName="popover__panel--wide">
             {(close) => <NotificationsPanel close={close} />}
@@ -318,6 +302,14 @@ export const Topbar = forwardRef<HTMLButtonElement, TopbarProps>(function Topbar
             }
             actions={[
               { label: "Profile settings", icon: "settings", onSelect: () => navigate(`/${channel}/profile`) },
+              {
+                label: channel === "admin" ? "Switch to Merchant Panel" : "Switch to Admin Panel",
+                icon: "refresh",
+                onSelect: async () => {
+                  await auth.signOut();
+                  navigate(`/login?panel=${channel === "admin" ? "merchant" : "admin"}`);
+                }
+              },
               { label: "Sign out from all devices", icon: "devices", onSelect: onSignOutEverywhere },
               { label: signingOut ? "Signing out..." : "Sign out", icon: "logout", disabled: signingOut, onSelect: onSignOut }
             ]}

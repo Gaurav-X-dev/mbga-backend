@@ -116,6 +116,11 @@ export function permissionModuleOrder(module: string): number {
 }
 
 const EVENT_LABELS: Record<string, string> = {
+  "inventory.reorder_threshold_updated": "Inventory reorder level updated",
+  "expense.created": "Expense added",
+  "expense.updated": "Expense updated",
+  "expense.deleted": "Expense deleted",
+  "expense.receipt_updated": "Expense receipt updated",
   "merchant.created": "Merchant added",
   "merchant.updated": "Merchant details updated",
   "merchant.active": "Merchant account activated",
@@ -153,6 +158,8 @@ export function auditEventLabel(eventType: string): string {
 }
 
 const ENTITY_LABELS: Record<string, string> = {
+  stock_item: "Inventory settings",
+  expense: "Expenses",
   merchant: "Merchants",
   merchant_user: "Merchant staff",
   delivery_profile: "Delivery team",

@@ -5,7 +5,10 @@
 function readApiBaseUrl(): string {
   const value = import.meta.env.VITE_API_BASE_URL;
   if (!value) {
-    if (import.meta.env.DEV || import.meta.env.MODE === "test") {
+    if (import.meta.env.DEV) {
+      return "/api/v1";
+    }
+    if (import.meta.env.MODE === "test") {
       return "http://127.0.0.1:8005/api/v1";
     }
     throw new Error("VITE_API_BASE_URL is not configured");
@@ -16,5 +19,8 @@ function readApiBaseUrl(): string {
 export const env = {
   apiBaseUrl: readApiBaseUrl(),
   /** Local preview helpers (for example the development verification code hint). */
-  previewMode: import.meta.env.VITE_ENABLE_PREVIEW_MODE === "true"
+  previewMode: import.meta.env.VITE_ENABLE_PREVIEW_MODE === "true",
+  googleMapsApiKey:
+    (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) ||
+    "AIzaSyCvfvL3GEMqW0kG4a6VCYOTUPewuLIQUq8"
 };
