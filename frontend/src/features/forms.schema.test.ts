@@ -21,13 +21,16 @@ describe("merchant form validation", () => {
     merchant_code: "sharma-gas-01",
     business_name: "Sharma Gas Agency",
     contact_person_name: "Rakesh Sharma",
-    mobile_number: "98765 43210"
+    mobile_number: "98765 43210",
+    // Required since an agency without them cannot take a rupee at the gate.
+    upi_id: "sharmagas@okhdfcbank",
+    upi_payee_name: "Sharma Gas Agency"
   };
 
   it("requires the fields the backend requires", () => {
     const result = merchantCreateSchema.safeParse(emptyMerchantCreate);
     expect(Object.keys(issues(result)).sort()).toEqual(
-      ["business_name", "contact_person_name", "merchant_code", "mobile_number"].sort()
+      ["business_name", "contact_person_name", "merchant_code", "mobile_number", "upi_id", "upi_payee_name"].sort()
     );
   });
 
@@ -56,7 +59,13 @@ describe("merchant form validation", () => {
       address_line_2: undefined,
       city: undefined,
       state: undefined,
-      postal_code: undefined
+      postal_code: undefined,
+      upi_id: "sharmagas@okhdfcbank",
+      upi_payee_name: "Sharma Gas Agency",
+      invoice_bank_name: undefined,
+      invoice_bank_account_name: undefined,
+      invoice_bank_account_number: undefined,
+      invoice_bank_ifsc: undefined
     });
   });
 
@@ -72,7 +81,11 @@ describe("merchant form validation", () => {
       state: "",
       postal_code: "",
       upi_id: "",
-      upi_payee_name: ""
+      upi_payee_name: "",
+      invoice_bank_name: "",
+      invoice_bank_account_name: "",
+      invoice_bank_account_number: "",
+      invoice_bank_ifsc: ""
     };
     expect(toMerchantUpdateInput({ ...original, city: "", business_name: "B Gas" }, original)).toEqual({
       business_name: "B Gas",
@@ -92,7 +105,11 @@ describe("merchant form validation", () => {
       state: "",
       postal_code: "",
       upi_id: "",
-      upi_payee_name: ""
+      upi_payee_name: "",
+      invoice_bank_name: "",
+      invoice_bank_account_name: "",
+      invoice_bank_account_number: "",
+      invoice_bank_ifsc: ""
     };
     expect(
       toMerchantUpdateInput(

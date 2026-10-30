@@ -24,6 +24,11 @@ export type Merchant = {
    * can put a QR on screen. Half-configured behaves exactly like unconfigured.
    */
   upi_ready: boolean;
+  /** Printed on the invoice so a customer paying by NEFT has somewhere to send it. */
+  invoice_bank_name: string | null;
+  invoice_bank_account_name: string | null;
+  invoice_bank_account_number: string | null;
+  invoice_bank_ifsc: string | null;
   primary_user_id: string | null;
   status: string;
   approval_status: string;
@@ -60,8 +65,13 @@ export type MerchantCreateInput = {
   city?: string;
   state?: string;
   postal_code?: string;
-  upi_id?: string;
-  upi_payee_name?: string;
+  /** Required: an agency without these cannot take a rupee at the gate. */
+  upi_id: string;
+  upi_payee_name: string;
+  invoice_bank_name?: string;
+  invoice_bank_account_name?: string;
+  invoice_bank_account_number?: string;
+  invoice_bank_ifsc?: string;
 };
 
 export type MerchantUpdateInput = {
@@ -76,6 +86,10 @@ export type MerchantUpdateInput = {
   postal_code?: string | null;
   upi_id?: string | null;
   upi_payee_name?: string | null;
+  invoice_bank_name?: string | null;
+  invoice_bank_account_name?: string | null;
+  invoice_bank_account_number?: string | null;
+  invoice_bank_ifsc?: string | null;
 };
 
 export type MerchantUser = {

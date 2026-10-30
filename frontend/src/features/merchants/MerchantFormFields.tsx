@@ -145,7 +145,6 @@ export function MerchantFormFields({ register, errors, mode, disabled, section }
         >
           <Field
             label="UPI ID"
-            optional
             error={e("upi_id")}
             hint="The agency's own VPA, like madhavgas@okhdfcbank"
           >
@@ -160,7 +159,6 @@ export function MerchantFormFields({ register, errors, mode, disabled, section }
           </Field>
           <Field
             label="UPI payee name"
-            optional
             error={e("upi_payee_name")}
             hint="What the customer's app shows before they pay"
           >
@@ -169,6 +167,47 @@ export function MerchantFormFields({ register, errors, mode, disabled, section }
               placeholder="Madhav Bharat Gas Agency"
               disabled={disabled}
               {...register("upi_payee_name")}
+            />
+          </Field>
+        </FormSection>
+      ) : null}
+
+      {show("payments") ? (
+        <FormSection
+          title="Bank details for invoices"
+          icon="fileText"
+          description="Printed on the invoice so a customer paying by bank transfer has somewhere to send it. Optional — leave blank if this agency takes no transfers."
+        >
+          <Field label="Bank name" optional error={e("invoice_bank_name")}>
+            <Input id="field-invoice_bank_name" placeholder="HDFC Bank" disabled={disabled} {...register("invoice_bank_name")} />
+          </Field>
+          <Field label="Account holder name" optional error={e("invoice_bank_account_name")} hint="As it appears on the account">
+            <Input
+              id="field-invoice_bank_account_name"
+              placeholder="Madhav Bharat Gas Agency"
+              disabled={disabled}
+              {...register("invoice_bank_account_name")}
+            />
+          </Field>
+          <Field label="Account number" optional error={e("invoice_bank_account_number")}>
+            <Input
+              id="field-invoice_bank_account_number"
+              inputMode="numeric"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="50100123456789"
+              disabled={disabled}
+              {...register("invoice_bank_account_number")}
+            />
+          </Field>
+          <Field label="IFSC" optional error={e("invoice_bank_ifsc")} hint="Eleven characters, like HDFC0001234">
+            <Input
+              id="field-invoice_bank_ifsc"
+              autoCapitalize="characters"
+              spellCheck={false}
+              placeholder="HDFC0001234"
+              disabled={disabled}
+              {...register("invoice_bank_ifsc")}
             />
           </Field>
         </FormSection>

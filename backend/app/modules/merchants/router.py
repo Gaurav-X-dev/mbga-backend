@@ -51,6 +51,10 @@ def _merchant_response(merchant: Merchant, primary_user_id: str | None = None) -
         postal_code=merchant.postal_code,
         upi_id=merchant.upi_id,
         upi_payee_name=merchant.upi_payee_name,
+        invoice_bank_name=merchant.invoice_bank_name,
+        invoice_bank_account_name=merchant.invoice_bank_account_name,
+        invoice_bank_account_number=merchant.invoice_bank_account_number,
+        invoice_bank_ifsc=merchant.invoice_bank_ifsc,
         # The driver app needs both before it can show a QR, so "ready" is the pair, not
         # either half. Derived here rather than on the panel, so one rule answers it.
         upi_ready=bool(merchant.upi_id and merchant.upi_payee_name),
@@ -215,6 +219,10 @@ async def create_merchant(
         postal_code=payload.postal_code,
         upi_id=payload.upi_id,
         upi_payee_name=payload.upi_payee_name,
+        invoice_bank_name=payload.invoice_bank_name,
+        invoice_bank_account_name=payload.invoice_bank_account_name,
+        invoice_bank_account_number=payload.invoice_bank_account_number,
+        invoice_bank_ifsc=payload.invoice_bank_ifsc,
         status="ACTIVE",
         approval_status="APPROVED",
         created_by=context.user_id,

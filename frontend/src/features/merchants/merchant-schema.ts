@@ -24,11 +24,28 @@ const businessFields = {
    * The backend refuses one without the other, because half a configuration behaves exactly
    * like none - the driver app shows a QR only when both are set.
    */
-  upi_id: optionalText("UPI ID", 120).refine(
-    (value) => !value || /^[a-zA-Z0-9][a-zA-Z0-9.\-_]{1,255}@[a-zA-Z][a-zA-Z0-9.\-]{1,63}$/.test(value.trim()),
+  upi_id: requiredText("the UPI ID", 3, 120).refine(
+    (value) => /^[a-zA-Z0-9][a-zA-Z0-9.\-_]{1,255}@[a-zA-Z][a-zA-Z0-9.\-]{1,63}$/.test(value.trim()),
     "A UPI ID looks like name@bank, for example madhavgas@okhdfcbank."
   ),
-  upi_payee_name: optionalText("UPI payee name", 160)
+  upi_payee_name: requiredText("the UPI payee name", 2, 160),
+  /**
+   * The bank an invoice names for a NEFT transfer. Optional: an agency that takes no
+   * transfers needs none of it, and an invoice without bank details is still valid.
+   *
+   * The IFSC is checked because a wrong one does not fail here - it fails days later when
+   * the transfer bounces, by which time nobody connects it back to this screen.
+   */
+  invoice_bank_name: optionalText("bank name", 160),
+  invoice_bank_account_name: optionalText("account holder name", 160),
+  invoice_bank_account_number: optionalText("account number", 80).refine(
+    (value) => !value || /^[A-Za-z0-9]{6,20}$/.test(value.replace(/\s/g, "")),
+    "An account number is 6 to 20 letters or digits."
+  ),
+  invoice_bank_ifsc: optionalText("IFSC", 30).refine(
+    (value) => !value || /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(value.trim()),
+    "An IFSC looks like HDFC0001234 - four letters, a zero, then six characters."
+  )
 };
 
 export const merchantCreateSchema = z.object({
@@ -58,7 +75,11 @@ export const MERCHANT_FIELD_LABELS: Record<string, string> = {
   state: "State",
   postal_code: "PIN code",
   upi_id: "UPI ID",
-  upi_payee_name: "UPI payee name"
+  upi_payee_name: "UPI payee name",
+  invoice_bank_name: "Bank name",
+  invoice_bank_account_name: "Account holder name",
+  invoice_bank_account_number: "Account number",
+  invoice_bank_ifsc: "IFSC"
 };
 
 export const MERCHANT_CREATE_FIELDS = Object.keys(MERCHANT_FIELD_LABELS);
@@ -70,7 +91,14 @@ export const MERCHANT_SECTION_FIELDS: Record<MerchantFormSection, Array<keyof Me
   business: ["business_name", "merchant_code", "gst_number"],
   contact: ["contact_person_name", "mobile_number", "email"],
   region: ["address_line_1", "address_line_2", "city", "state", "postal_code"],
-  payments: ["upi_id", "upi_payee_name"]
+  payments: [
+    "upi_id",
+    "upi_payee_name",
+    "invoice_bank_name",
+    "invoice_bank_account_name",
+    "invoice_bank_account_number",
+    "invoice_bank_ifsc"
+  ]
 };
 
 export const emptyMerchantCreate: MerchantCreateValues = {
@@ -86,7 +114,11 @@ export const emptyMerchantCreate: MerchantCreateValues = {
   state: "",
   postal_code: "",
   upi_id: "",
-  upi_payee_name: ""
+  upi_payee_name: "",
+  invoice_bank_name: "",
+  invoice_bank_account_name: "",
+  invoice_bank_account_number: "",
+  invoice_bank_ifsc: ""
 };
 
 export function toMerchantCreateInput(values: MerchantCreateValues): MerchantCreateInput {
@@ -104,8 +136,12 @@ export function toMerchantCreateInput(values: MerchantCreateValues): MerchantCre
     postal_code: emptyToUndefined(values.postal_code),
     // Lowercased to match the server: UPI handles are not case-sensitive, so two spellings
     // of one address must not read as two different addresses.
-    upi_id: emptyToUndefined(values.upi_id)?.toLowerCase(),
-    upi_payee_name: emptyToUndefined(values.upi_payee_name)
+    upi_id: values.upi_id.trim().toLowerCase(),
+    upi_payee_name: values.upi_payee_name.trim(),
+    invoice_bank_name: emptyToUndefined(values.invoice_bank_name),
+    invoice_bank_account_name: emptyToUndefined(values.invoice_bank_account_name),
+    invoice_bank_account_number: emptyToUndefined(values.invoice_bank_account_number)?.replace(/\s/g, ""),
+    invoice_bank_ifsc: emptyToUndefined(values.invoice_bank_ifsc)?.toUpperCase()
   };
 }
 
@@ -121,24 +157,31 @@ export function merchantToUpdateValues(merchant: Merchant): MerchantUpdateValues
     state: merchant.state ?? "",
     postal_code: merchant.postal_code ?? "",
     upi_id: merchant.upi_id ?? "",
-    upi_payee_name: merchant.upi_payee_name ?? ""
+    upi_payee_name: merchant.upi_payee_name ?? "",
+    invoice_bank_name: merchant.invoice_bank_name ?? "",
+    invoice_bank_account_name: merchant.invoice_bank_account_name ?? "",
+    invoice_bank_account_number: merchant.invoice_bank_account_number ?? "",
+    invoice_bank_ifsc: merchant.invoice_bank_ifsc ?? ""
   };
 }
 
 /** Sends only the fields that changed. */
 export function toMerchantUpdateInput(values: MerchantUpdateValues, original: MerchantUpdateValues): MerchantUpdateInput {
   const input: MerchantUpdateInput = {};
-  const required = ["business_name", "contact_person_name"] as const;
-  const optional = ["email", "gst_number", "address_line_1", "address_line_2", "city", "state", "postal_code", "upi_id", "upi_payee_name"] as const;
+  const required = ["business_name", "contact_person_name", "upi_id", "upi_payee_name"] as const;
+  const optional = ["email", "gst_number", "address_line_1", "address_line_2", "city", "state", "postal_code", "invoice_bank_name", "invoice_bank_account_name", "invoice_bank_account_number", "invoice_bank_ifsc"] as const;
   for (const key of required) {
-    if (values[key].trim() !== original[key].trim()) input[key] = values[key].trim();
+    if (values[key].trim() !== original[key].trim()) {
+      input[key] = key === "upi_id" ? values[key].trim().toLowerCase() : values[key].trim();
+    }
   }
   for (const key of optional) {
     if (values[key].trim() !== original[key].trim()) {
       let value = emptyToNull(values[key]);
       if (value && key === "email") value = value.toLowerCase();
       if (value && key === "gst_number") value = value.toUpperCase();
-      if (value && key === "upi_id") value = value.toLowerCase();
+      if (value && key === "invoice_bank_ifsc") value = value.toUpperCase();
+      if (value && key === "invoice_bank_account_number") value = value.replace(/\s/g, "");
       input[key] = value;
     }
   }

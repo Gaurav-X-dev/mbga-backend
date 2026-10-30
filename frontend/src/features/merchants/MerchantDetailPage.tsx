@@ -168,11 +168,15 @@ export function MerchantDetailPage() {
           ]}
         />
       </Card>
-      <Card title="Payments">
+      <Card title="Payments & bank">
         <DetailsPanel
           items={[
             { label: "UPI ID", value: merchant.upi_id },
             { label: "UPI payee name", value: merchant.upi_payee_name },
+            { label: "Bank name", value: merchant.invoice_bank_name },
+            { label: "Account holder", value: merchant.invoice_bank_account_name },
+            { label: "Account number", value: merchant.invoice_bank_account_number },
+            { label: "IFSC", value: merchant.invoice_bank_ifsc },
             {
               label: "Gate collection",
               // `upi_ready` is the server's answer, not a check repeated here: the driver app

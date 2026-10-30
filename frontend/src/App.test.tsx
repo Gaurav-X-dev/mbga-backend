@@ -204,9 +204,10 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.type(await screen.findByLabelText(/^City/), "Kanpur");
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    // Payments: where gate collections land. Left blank here, which is allowed - the agency
-    // simply cannot take UPI until somebody fills it in, and the review step says so.
-    await screen.findByLabelText(/UPI ID/);
+    // Payments. The UPI pair is required: an agency without it cannot take a rupee at the
+    // gate, because the driver app refuses to show a QR.
+    await user.type(await screen.findByLabelText(/UPI ID/), "sharmagas@okhdfcbank");
+    await user.type(screen.getByLabelText(/UPI payee name/), "Sharma Gas Agency");
     await user.click(screen.getByRole("button", { name: "Continue to review" }));
     expect(await screen.findByRole("heading", { name: "Review and create" })).toBeInTheDocument();
     expect(screen.getByText("SHARMA-GAS-01")).toBeInTheDocument();
@@ -234,6 +235,8 @@ describe("core flow: Admin adds a merchant, merchant builds a delivery team", ()
     await user.type(screen.getByLabelText(/^Mobile number/), "9222222222");
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(await screen.findByRole("button", { name: "Continue" }));
+    await user.type(await screen.findByLabelText(/UPI ID/), "another@okhdfcbank");
+    await user.type(screen.getByLabelText(/UPI payee name/), "Another Agency");
     await user.click(await screen.findByRole("button", { name: "Continue to review" }));
     await user.click(await screen.findByRole("button", { name: "Create merchant" }));
     // The server's field error sends the user back to the step that owns the field.
