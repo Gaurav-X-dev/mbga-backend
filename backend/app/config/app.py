@@ -156,6 +156,32 @@ class Settings(BaseSettings):
     fcm_auto_dispatch: bool = True
     # How many outbox rows one dispatcher pass takes.
     fcm_batch_size: int = Field(default=100, ge=1, le=1000)
+    # --- e-Invoice (GST / IRN / e-Way Bill) -------------------------------------------------
+    # Off by default, and deliberately: with this false an invoice is still raised, still
+    # printed and still paid - it simply carries no government reference. Turning it on later
+    # works through the queued backlog rather than leaving those invoices behind.
+    einvoice_enabled: bool = False
+    # The provider's staging host answers with IRNs that are not legally valid. Production is
+    # a different host, so the environment that is pointed at staging must never be the one
+    # issuing real documents.
+    einvoice_base_url: str = "https://staging.perione.in"
+    einvoice_email: str | None = None
+    einvoice_username: str | None = None
+    einvoice_password: str | None = None
+    einvoice_client_id: str | None = None
+    einvoice_client_secret: str | None = None
+    einvoice_bearer_token: str | None = None
+    # The GSTIN the provider account is registered against. A merchant whose own GSTIN differs
+    # from this is skipped rather than filed under somebody else's registration.
+    einvoice_gstin: str | None = None
+    # The provider matches calls against a registered IP. A mismatch is rejected before the
+    # document is even read, so this has to be the server's public address.
+    einvoice_ip_address: str | None = None
+    # NIC schema version for the GENERATE endpoint.
+    einvoice_schema_version: str = "V1_03"
+    # How many invoices one worker pass takes.
+    einvoice_batch_size: int = Field(default=20, ge=1, le=200)
+
     # --- KYC document storage --------------------------------------------------------------
     # "local" keeps files on a private disk path. No vendor is hard-coded; a production
     # provider binds to the same StorageProvider interface and changes no route.

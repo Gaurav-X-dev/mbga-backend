@@ -726,7 +726,14 @@ class OrderService:
         groups: list[BulkAssignmentGroupResponse] = []
         for pincode, rows in sorted(grouped.items(), key=lambda item: item[0] or ""):
             vehicles = (
-                await available_for_pincode(self.session, self.merchant_id, pincode)
+                await available_for_pincode(
+                    self.session,
+                    self.merchant_id,
+                    pincode,
+                    # Every order in a group goes out together, so the first one's date is the
+                    # day the whole group's van would be held for.
+                    on_date=rows[0].scheduled_delivery_date,
+                )
                 if pincode
                 else []
             )

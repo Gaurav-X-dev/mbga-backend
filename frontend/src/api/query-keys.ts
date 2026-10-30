@@ -79,5 +79,11 @@ export const queryKeys = {
     lists: () => ["merchant", "delivery-team", "list"] as const,
     list: (params: DeliveryMemberListParams) => ["merchant", "delivery-team", "list", params] as const,
     detail: (memberId: string) => ["merchant", "delivery-team", "detail", memberId] as const
+  },
+
+  einvoice: {
+    all: ["admin", "einvoice"] as const,
+    invoices: () => ["admin", "einvoice", "invoices"] as const,
+    state: (invoiceId: string) => ["admin", "einvoice", "state", invoiceId] as const
   }
 };

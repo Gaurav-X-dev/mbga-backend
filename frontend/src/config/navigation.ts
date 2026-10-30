@@ -27,6 +27,7 @@ export const NAVIGATION: Record<AuthChannel, NavSection[]> = {
         { to: "/admin/orders", label: "Orders", icon: "cart", permissions: [PERMISSIONS.ordersView] },
         { to: "/admin/inventory", label: "Inventory", icon: "box", permissions: [PERMISSIONS.inventoryView] },
         { to: "/admin/payments", label: "Payments", icon: "wallet", permissions: [PERMISSIONS.paymentsView] },
+        { to: "/admin/einvoice", label: "e-Invoice (GST)", icon: "shield", permissions: [PERMISSIONS.paymentsView] },
         { to: "/admin/reports", label: "Reports", icon: "chart", permissions: [PERMISSIONS.reportsView] },
         { to: "/admin/credit", label: "Credit Control", icon: "wallet", permissions: [PERMISSIONS.creditView] },
         { to: "/admin/customers", label: "Customer KYC", icon: "idCard" },

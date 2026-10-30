@@ -53,6 +53,7 @@ const MerchantReportsPage = page(() => import("../features/merchant-reports/Merc
 const AdminOrdersPage = page(() => import("../features/admin-orders/AdminOrdersPage"), "AdminOrdersPage");
 const AdminInventoryPage = page(() => import("../features/admin-inventory/AdminInventoryPage"), "AdminInventoryPage");
 const AdminPaymentsPage = page(() => import("../features/admin-payments/AdminPaymentsPage"), "AdminPaymentsPage");
+const AdminEInvoicePage = page(() => import("../features/admin-einvoice/AdminEInvoicePage"), "AdminEInvoicePage");
 const AdminReportsPage = page(() => import("../features/admin-reports/AdminReportsPage"), "AdminReportsPage");
 const AdminCreditPage = page(() => import("../features/admin-credit/AdminCreditPage"), "AdminCreditPage");
 
@@ -92,6 +93,7 @@ export const routes: RouteObject[] = [
           { path: "orders", element: guarded(PERMISSIONS.ordersView, <AdminOrdersPage />) },
           { path: "inventory", element: guarded(PERMISSIONS.inventoryView, <AdminInventoryPage />) },
           { path: "payments", element: guarded(PERMISSIONS.paymentsView, <AdminPaymentsPage />) },
+          { path: "einvoice", element: guarded(PERMISSIONS.paymentsView, <AdminEInvoicePage />) },
           { path: "reports", element: guarded(PERMISSIONS.reportsView, <AdminReportsPage />) },
           { path: "credit", element: guarded(PERMISSIONS.creditView, <AdminCreditPage />) },
           { path: "customers", element: <CustomerKycPage /> },

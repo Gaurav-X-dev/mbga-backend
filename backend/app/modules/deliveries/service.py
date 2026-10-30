@@ -57,6 +57,7 @@ from app.modules.deliveries.schemas import (
     ReassignDeliveryRequest,
 )
 from app.modules.delivery_users.models import DeliveryProfile
+from app.modules.einvoice import service as einvoice
 from app.modules.inventory.ledger import StockLedger
 from app.modules.notifications.events import deliveries as delivery_events
 from app.modules.notifications.events import orders as order_events
@@ -495,6 +496,12 @@ class DeliveryService:
                     slip.order_number,
                 )
             )
+            # Queue the IRN, never fetch it here. The GST portal is a third party, and a
+            # handover that physically happened must not fail to record because that portal
+            # was slow. A worker does the talking; this writes one row and returns. Queuing
+            # decides for itself whether a government reference applies at all - a sale to a
+            # customer with no GSTIN is B2C and is not filed.
+            await einvoice.queue_for(self.session, invoice, now=now)
         await self.session.commit()
         return await self._view(slip)
 

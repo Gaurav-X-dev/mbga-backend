@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.customers.dependencies import ActorDep, CustomerActorDep, StorageDep
+from app.modules.einvoice.schemas import EInvoiceStatusResponse
+from app.modules.einvoice.service import einvoice_view, requeue
 from app.modules.customers.models import CustomerProfile
 from app.modules.merchants.models import Merchant
 from app.modules.orders.models import Order
@@ -340,6 +342,44 @@ def build_payment_router(channel: LoginChannel) -> APIRouter:
                 setattr(invoice, field, value)
             await service.session.commit()
             return await _document(invoice_id, service)
+
+        @router.get(
+            "/invoices/{invoiceId}/einvoice",
+            response_model=EInvoiceStatusResponse,
+            dependencies=read_guards,
+            responses=error_responses(401, 403, 404),
+            summary="e-Invoice filing status",
+        )
+        async def einvoice_status(
+            invoice_id: InvoiceIdPath, service: ServiceDep
+        ) -> EInvoiceStatusResponse:
+            """Where this invoice has got to with the GST portal.
+
+            A null status is not an error: a sale to a customer with no GSTIN is B2C, is
+            never filed, and the screen says so rather than showing a failure.
+            """
+            invoice = await service.get_invoice_row(invoice_id)
+            return await einvoice_view(service.session, invoice)
+
+        @router.post(
+            "/invoices/{invoiceId}/einvoice/retry",
+            response_model=EInvoiceStatusResponse,
+            dependencies=[*staff_guards, Depends(require_permission("payments.reconcile"))],
+            responses=error_responses(401, 403, 404, 409),
+            summary="Retry e-Invoice filing",
+        )
+        async def einvoice_retry(
+            invoice_id: InvoiceIdPath, service: ServiceDep
+        ) -> EInvoiceStatusResponse:
+            """Put a rejected invoice back in the queue, after the data behind it was fixed.
+
+            Does not call the portal: it clears the back-off and lets the worker pick the row
+            up on its next pass, so a staff member leaning on the button cannot turn one
+            document into a burst of requests.
+            """
+            invoice = await service.get_invoice_row(invoice_id)
+            await requeue(service.session, invoice)
+            return await einvoice_view(service.session, invoice)
 
         @router.post(
             "/payments",

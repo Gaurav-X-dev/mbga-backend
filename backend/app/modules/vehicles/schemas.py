@@ -54,3 +54,13 @@ class VehiclePincodeResponse(BaseModel):
 class AvailableVehicleResponse(VehicleResponse):
     priority: int = 0
     matched_pincode: str = Field(alias="matchedPincode")
+    #: Who this van is already out with on the day being scheduled, or null when it is free.
+    #:
+    #: The rule is one van, one driver, one day - so a van already out is only a clash for a
+    #: **different** driver; the same driver filling a round through the morning is the ordinary
+    #: case and stays allowed. That is why a busy van is still listed: hiding it would block the
+    #: assignment that is actually correct.
+    #:
+    #: The screen's job is to say so before the operator presses Confirm, rather than after.
+    busy_with_driver_name: str | None = Field(default=None, alias="busyWithDriverName")
+    busy_with_driver_user_id: str | None = Field(default=None, alias="busyWithDriverUserId")
