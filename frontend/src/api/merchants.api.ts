@@ -15,6 +15,15 @@ export type Merchant = {
   city: string | null;
   state: string | null;
   postal_code: string | null;
+  /** The agency's own VPA. Money collected at the gate lands here. */
+  upi_id: string | null;
+  /** The name the customer's payment app shows before they confirm. */
+  upi_payee_name: string | null;
+  /**
+   * True only when both UPI fields are filled, which is what the driver app needs before it
+   * can put a QR on screen. Half-configured behaves exactly like unconfigured.
+   */
+  upi_ready: boolean;
   primary_user_id: string | null;
   status: string;
   approval_status: string;
@@ -51,6 +60,8 @@ export type MerchantCreateInput = {
   city?: string;
   state?: string;
   postal_code?: string;
+  upi_id?: string;
+  upi_payee_name?: string;
 };
 
 export type MerchantUpdateInput = {
@@ -63,6 +74,8 @@ export type MerchantUpdateInput = {
   city?: string | null;
   state?: string | null;
   postal_code?: string | null;
+  upi_id?: string | null;
+  upi_payee_name?: string | null;
 };
 
 export type MerchantUser = {

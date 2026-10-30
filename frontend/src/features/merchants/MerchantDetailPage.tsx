@@ -9,7 +9,7 @@ import { useAuth } from "../../auth/auth-context";
 import { PERMISSIONS } from "../../auth/permissions";
 import { Button } from "../../components/common/Button";
 import { Menu } from "../../components/common/Menu";
-import { StatusBadge, UserAvatar } from "../../components/common/StatusBadge";
+import { Badge, StatusBadge, UserAvatar } from "../../components/common/StatusBadge";
 import { Tabs } from "../../components/common/Tabs";
 import { Alert, ErrorState, LoadingSkeleton, RefreshIndicator } from "../../components/feedback/Feedback";
 import { useToast } from "../../components/feedback/toast-context";
@@ -165,6 +165,24 @@ export function MerchantDetailPage() {
             { label: "City", value: merchant.city },
             { label: "State", value: merchant.state },
             { label: "PIN code", value: merchant.postal_code }
+          ]}
+        />
+      </Card>
+      <Card title="Payments">
+        <DetailsPanel
+          items={[
+            { label: "UPI ID", value: merchant.upi_id },
+            { label: "UPI payee name", value: merchant.upi_payee_name },
+            {
+              label: "Gate collection",
+              // `upi_ready` is the server's answer, not a check repeated here: the driver app
+              // shows a QR only when both fields are set, and one rule should decide that.
+              value: merchant.upi_ready ? (
+                <Badge tone="success">QR ready</Badge>
+              ) : (
+                <Badge tone="warning">No QR — drivers cannot take UPI</Badge>
+              )
+            }
           ]}
         />
       </Card>

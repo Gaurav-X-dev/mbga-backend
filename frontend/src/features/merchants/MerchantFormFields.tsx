@@ -136,6 +136,43 @@ export function MerchantFormFields({ register, errors, mode, disabled, section }
           </Field>
         </FormSection>
       ) : null}
+
+      {show("payments") ? (
+        <FormSection
+          title="Payments"
+          icon="wallet"
+          description="Where money collected at the gate lands. Without both of these the driver app cannot show a QR."
+        >
+          <Field
+            label="UPI ID"
+            optional
+            error={e("upi_id")}
+            hint="The agency's own VPA, like madhavgas@okhdfcbank"
+          >
+            <Input
+              id="field-upi_id"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="madhavgas@okhdfcbank"
+              disabled={disabled}
+              {...register("upi_id")}
+            />
+          </Field>
+          <Field
+            label="UPI payee name"
+            optional
+            error={e("upi_payee_name")}
+            hint="What the customer's app shows before they pay"
+          >
+            <Input
+              id="field-upi_payee_name"
+              placeholder="Madhav Bharat Gas Agency"
+              disabled={disabled}
+              {...register("upi_payee_name")}
+            />
+          </Field>
+        </FormSection>
+      ) : null}
     </>
   );
 }

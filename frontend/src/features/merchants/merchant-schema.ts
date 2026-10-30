@@ -15,7 +15,20 @@ const businessFields = {
   address_line_2: optionalText("address line 2", 255),
   city: optionalText("city", 120),
   state: optionalText("state", 120),
-  postal_code: optionalText("PIN code", 20)
+  postal_code: optionalText("PIN code", 20),
+  /**
+   * The agency's own VPA, and the name the customer's payment app shows before they confirm.
+   * Checked here as well as on the server: a malformed address still renders a QR, and the
+   * failure then surfaces on the customer's phone with the driver standing at the gate.
+   *
+   * The backend refuses one without the other, because half a configuration behaves exactly
+   * like none - the driver app shows a QR only when both are set.
+   */
+  upi_id: optionalText("UPI ID", 120).refine(
+    (value) => !value || /^[a-zA-Z0-9][a-zA-Z0-9.\-_]{1,255}@[a-zA-Z][a-zA-Z0-9.\-]{1,63}$/.test(value.trim()),
+    "A UPI ID looks like name@bank, for example madhavgas@okhdfcbank."
+  ),
+  upi_payee_name: optionalText("UPI payee name", 160)
 };
 
 export const merchantCreateSchema = z.object({
@@ -43,18 +56,21 @@ export const MERCHANT_FIELD_LABELS: Record<string, string> = {
   address_line_2: "Address line 2",
   city: "City",
   state: "State",
-  postal_code: "PIN code"
+  postal_code: "PIN code",
+  upi_id: "UPI ID",
+  upi_payee_name: "UPI payee name"
 };
 
 export const MERCHANT_CREATE_FIELDS = Object.keys(MERCHANT_FIELD_LABELS);
 
-export type MerchantFormSection = "business" | "contact" | "region";
+export type MerchantFormSection = "business" | "contact" | "region" | "payments";
 
 /** Which fields each form section owns - the create wizard validates one section at a time. */
 export const MERCHANT_SECTION_FIELDS: Record<MerchantFormSection, Array<keyof MerchantCreateValues>> = {
   business: ["business_name", "merchant_code", "gst_number"],
   contact: ["contact_person_name", "mobile_number", "email"],
-  region: ["address_line_1", "address_line_2", "city", "state", "postal_code"]
+  region: ["address_line_1", "address_line_2", "city", "state", "postal_code"],
+  payments: ["upi_id", "upi_payee_name"]
 };
 
 export const emptyMerchantCreate: MerchantCreateValues = {
@@ -68,7 +84,9 @@ export const emptyMerchantCreate: MerchantCreateValues = {
   address_line_2: "",
   city: "",
   state: "",
-  postal_code: ""
+  postal_code: "",
+  upi_id: "",
+  upi_payee_name: ""
 };
 
 export function toMerchantCreateInput(values: MerchantCreateValues): MerchantCreateInput {
@@ -83,7 +101,11 @@ export function toMerchantCreateInput(values: MerchantCreateValues): MerchantCre
     address_line_2: emptyToUndefined(values.address_line_2),
     city: emptyToUndefined(values.city),
     state: emptyToUndefined(values.state),
-    postal_code: emptyToUndefined(values.postal_code)
+    postal_code: emptyToUndefined(values.postal_code),
+    // Lowercased to match the server: UPI handles are not case-sensitive, so two spellings
+    // of one address must not read as two different addresses.
+    upi_id: emptyToUndefined(values.upi_id)?.toLowerCase(),
+    upi_payee_name: emptyToUndefined(values.upi_payee_name)
   };
 }
 
@@ -97,7 +119,9 @@ export function merchantToUpdateValues(merchant: Merchant): MerchantUpdateValues
     address_line_2: merchant.address_line_2 ?? "",
     city: merchant.city ?? "",
     state: merchant.state ?? "",
-    postal_code: merchant.postal_code ?? ""
+    postal_code: merchant.postal_code ?? "",
+    upi_id: merchant.upi_id ?? "",
+    upi_payee_name: merchant.upi_payee_name ?? ""
   };
 }
 
@@ -105,7 +129,7 @@ export function merchantToUpdateValues(merchant: Merchant): MerchantUpdateValues
 export function toMerchantUpdateInput(values: MerchantUpdateValues, original: MerchantUpdateValues): MerchantUpdateInput {
   const input: MerchantUpdateInput = {};
   const required = ["business_name", "contact_person_name"] as const;
-  const optional = ["email", "gst_number", "address_line_1", "address_line_2", "city", "state", "postal_code"] as const;
+  const optional = ["email", "gst_number", "address_line_1", "address_line_2", "city", "state", "postal_code", "upi_id", "upi_payee_name"] as const;
   for (const key of required) {
     if (values[key].trim() !== original[key].trim()) input[key] = values[key].trim();
   }
@@ -114,6 +138,7 @@ export function toMerchantUpdateInput(values: MerchantUpdateValues, original: Me
       let value = emptyToNull(values[key]);
       if (value && key === "email") value = value.toLowerCase();
       if (value && key === "gst_number") value = value.toUpperCase();
+      if (value && key === "upi_id") value = value.toLowerCase();
       input[key] = value;
     }
   }

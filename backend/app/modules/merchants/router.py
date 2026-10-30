@@ -49,10 +49,40 @@ def _merchant_response(merchant: Merchant, primary_user_id: str | None = None) -
         city=merchant.city,
         state=merchant.state,
         postal_code=merchant.postal_code,
+        upi_id=merchant.upi_id,
+        upi_payee_name=merchant.upi_payee_name,
+        # The driver app needs both before it can show a QR, so "ready" is the pair, not
+        # either half. Derived here rather than on the panel, so one rule answers it.
+        upi_ready=bool(merchant.upi_id and merchant.upi_payee_name),
         primary_user_id=primary_user_id,
         status=merchant.status,
         approval_status=merchant.approval_status,
         created_at=merchant.created_at,
+    )
+
+
+def _check_upi_pair(merchant: Merchant) -> None:
+    """Refuse a half-configured UPI, because half is indistinguishable from none.
+
+    The driver app asks for a QR only when both the address and the payee name are present,
+    and answers `MERCHANT_UPI_NOT_CONFIGURED` otherwise. An operator who fills one and saves
+    sees a successful save and a merchant that still cannot take money at the gate - with
+    nothing on the screen connecting the two. So the save is refused instead, naming the
+    half that is missing.
+
+    Clearing both together is allowed: that is an agency that has stopped taking UPI.
+    """
+    has_id = bool((merchant.upi_id or "").strip())
+    has_name = bool((merchant.upi_payee_name or "").strip())
+    if has_id == has_name:
+        return
+    missing = "payee name" if has_id else "ID"
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": "MERCHANT_UPI_INCOMPLETE",
+            "message": f"A UPI {missing} is also needed. The driver app shows a QR only when both are set.",
+        },
     )
 
 
@@ -183,12 +213,17 @@ async def create_merchant(
         city=payload.city,
         state=payload.state,
         postal_code=payload.postal_code,
+        upi_id=payload.upi_id,
+        upi_payee_name=payload.upi_payee_name,
         status="ACTIVE",
         approval_status="APPROVED",
         created_by=context.user_id,
         created_at=now,
         updated_at=now,
     )
+    # Both halves or neither, checked before the row exists rather than after - a merchant
+    # created with half a UPI would look configured and still refuse to show a QR.
+    _check_upi_pair(merchant)
     session.add(merchant)
     await session.flush()
     merchant_user = MerchantUser(
@@ -284,6 +319,7 @@ async def update_merchant(
         if key == "email" and isinstance(value, str):
             value = value.lower()
         setattr(merchant, key, value)
+    _check_upi_pair(merchant)
     merchant.updated_at = datetime.now(UTC)
     await _audit(session, "merchant.updated", context.user_id, "merchant", merchant.id, "Merchant updated")
     await session.commit()

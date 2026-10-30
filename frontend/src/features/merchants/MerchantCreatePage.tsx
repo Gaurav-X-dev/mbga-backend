@@ -35,10 +35,11 @@ const STEPS: Array<Step & { id: StepId }> = [
   { id: "business", title: "Business information", description: "Name, code and GSTIN", icon: "store" },
   { id: "contact", title: "Owner & contact", description: "Who manages the account", icon: "user" },
   { id: "region", title: "Operating region", description: "Address and service area", icon: "mapPin" },
+  { id: "payments", title: "Payments", description: "Where gate collections land", icon: "wallet" },
   { id: "review", title: "Review & submit", description: "Access setup and confirmation", icon: "checkCircle" }
 ];
 
-const FORM_STEPS: MerchantFormSection[] = ["business", "contact", "region"];
+const FORM_STEPS: MerchantFormSection[] = ["business", "contact", "region", "payments"];
 
 function stepOfField(name: string): MerchantFormSection | undefined {
   return FORM_STEPS.find((step) => (MERCHANT_SECTION_FIELDS[step] as string[]).includes(name));
@@ -235,7 +236,10 @@ export function MerchantCreatePage() {
                   Cancel
                 </ButtonLink>
                 <Button type="submit" variant="primary">
-                  {step === "region" ? "Continue to review" : "Continue"}
+                  {/* The last form step leads to review. Tied to the list rather than named,
+                      so adding a step does not silently leave two steps calling themselves
+                      the last one. */}
+                  {step === FORM_STEPS[FORM_STEPS.length - 1] ? "Continue to review" : "Continue"}
                 </Button>
               </div>
             </form>
@@ -290,6 +294,29 @@ export function MerchantCreatePage() {
                       {editButton("region")}
                     </div>
                     <DetailsPanel items={[{ label: "Address", value: formatAddress(values) }]} columns={1} />
+                  </div>
+                  <div className="review-group">
+                    <div className="review-group__header">
+                      <h3>Payments</h3>
+                      {editButton("payments")}
+                    </div>
+                    <DetailsPanel
+                      items={[
+                        { label: "UPI ID", value: values.upi_id.trim().toLowerCase() },
+                        { label: "UPI payee name", value: values.upi_payee_name.trim() },
+                        {
+                          label: "Gate collection",
+                          // Said here because it is the last chance to catch it before the
+                          // agency goes live and a driver finds the QR missing at a doorstep.
+                          value:
+                            values.upi_id.trim() && values.upi_payee_name.trim() ? (
+                              <Badge tone="success">QR ready</Badge>
+                            ) : (
+                              <Badge tone="warning">No QR — drivers cannot take UPI</Badge>
+                            )
+                        }
+                      ]}
+                    />
                   </div>
                   <div className="review-group">
                     <div className="review-group__header">

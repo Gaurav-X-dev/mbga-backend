@@ -70,11 +70,38 @@ describe("merchant form validation", () => {
       address_line_2: "",
       city: "Delhi",
       state: "",
-      postal_code: ""
+      postal_code: "",
+      upi_id: "",
+      upi_payee_name: ""
     };
     expect(toMerchantUpdateInput({ ...original, city: "", business_name: "B Gas" }, original)).toEqual({
       business_name: "B Gas",
       city: null
+    });
+  });
+
+  it("sends the UPI pair when it is filled in, lowercasing the address", () => {
+    const original = {
+      business_name: "A Gas",
+      contact_person_name: "Ravi",
+      email: "a@b.in",
+      gst_number: "",
+      address_line_1: "",
+      address_line_2: "",
+      city: "Delhi",
+      state: "",
+      postal_code: "",
+      upi_id: "",
+      upi_payee_name: ""
+    };
+    expect(
+      toMerchantUpdateInput(
+        { ...original, upi_id: "MadhavGas@OkHdfcBank", upi_payee_name: "Madhav Bharat Gas" },
+        original
+      )
+    ).toEqual({
+      upi_id: "madhavgas@okhdfcbank",
+      upi_payee_name: "Madhav Bharat Gas"
     });
   });
 });
