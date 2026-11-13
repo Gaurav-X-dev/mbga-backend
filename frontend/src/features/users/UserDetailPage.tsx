@@ -36,6 +36,7 @@ import { emptyToNull, formatDate, formatDateTime, humanize } from "../../utils/f
 import { CHANNELS, channelLabel, permissionModuleLabel, permissionModuleOrder, roleLabel } from "../../utils/labels";
 import { formatMobileNumber } from "../../utils/mobile";
 import { useUserStatusActions } from "./useUserActions";
+import { MerchantAccessCard } from "./MerchantAccessCard";
 import { userDisplayName } from "./user-utils";
 
 const editSchema = z.object({
@@ -477,6 +478,10 @@ export function UserDetailPage() {
       )
     },
     { id: "roles", label: "Roles", content: <RolesTab user={user} /> },
+    // A head-office user signing in to the Merchant app belongs to exactly one agency, and
+    // this is where that is set. The backend refuses a second active membership, so the tab
+    // is the only place the first one is chosen.
+    { id: "merchant-access", label: "Merchant access", content: <MerchantAccessCard userId={user.id} /> },
     ...(auth.can(PERMISSIONS.usersViewPermissions) ? [{ id: "access", label: "Access", content: <AccessTab user={user} /> }] : [])
   ];
 

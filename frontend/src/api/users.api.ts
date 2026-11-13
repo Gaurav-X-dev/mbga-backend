@@ -122,3 +122,16 @@ export async function assignUserRole(userId: string, roleId: string) {
 export async function removeUserRole(userId: string, assignmentId: string) {
   await apiClient.delete(`${base(userId)}/roles/${encodeURIComponent(assignmentId)}`);
 }
+
+/** Which agency a head-office user may sign in to the Merchant app for. */
+export type MerchantAccess = { merchant_id: string; merchant_name: string; status: string };
+
+export async function listMerchantAccess(userId: string, signal?: AbortSignal) {
+  const { data } = await apiClient.get<MerchantAccess[]>(`${base(userId)}/merchant-access`, { signal });
+  return data;
+}
+
+export async function grantMerchantAccess(userId: string, merchantId: string) {
+  const { data } = await apiClient.put<MerchantAccess>(`${base(userId)}/merchant-access`, { merchant_id: merchantId });
+  return data;
+}
