@@ -94,6 +94,8 @@ class InvoiceRaiser:
 
         billed = await self._billed(order, delivered)
         if billed is None:
+            from app.modules.finance.advances import release
+            await release(self.session, order.id)
             return None
         total_amount, subtotal, gst_amount = billed
         moment = now or datetime.now(UTC)
@@ -164,6 +166,8 @@ class InvoiceRaiser:
         await savepoint.commit()
 
         order.invoice_id = invoice.id
+        from app.modules.finance.advances import apply_to_invoice
+        await apply_to_invoice(self.session, order, invoice)
         return invoice
 
     async def _billed(

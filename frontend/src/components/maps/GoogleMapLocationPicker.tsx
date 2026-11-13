@@ -49,6 +49,8 @@ export interface GoogleMapLocationPickerProps {
   onChange: (next: Address) => void;
   prefix?: string;
   merchantId?: string;
+  locationChannel?: "admin" | "merchant";
+  postalOnly?: boolean;
   onServiceabilityChange?: (isServiceable: boolean, errorMsg?: string) => void;
 }
 
@@ -58,6 +60,8 @@ export function GoogleMapLocationPicker({
   prefix = "Delivery",
   merchantId,
   onServiceabilityChange,
+  locationChannel = "admin",
+  postalOnly = false,
 }: GoogleMapLocationPickerProps) {
   const [mapsReady, setMapsReady] = useState(false);
   const [mapsError, setMapsError] = useState<string | null>(null);
@@ -98,8 +102,8 @@ export function GoogleMapLocationPicker({
 
   // MBGA authoritative pincode serviceability query
   const lookup = useQuery({
-    queryKey: queryKeys.locations.pincode(pincode, merchantId),
-    queryFn: ({ signal }) => lookupPincode(pincode, merchantId, signal),
+    queryKey: [...queryKeys.locations.pincode(pincode, merchantId), locationChannel],
+    queryFn: ({ signal }) => lookupPincode(pincode, merchantId, signal, locationChannel),
     enabled: isPincodeValid,
     staleTime: 60 * 60_000,
     retry: false,
@@ -1015,12 +1019,12 @@ export function GoogleMapLocationPicker({
         {/* MBGA Authoritative Serviceability Alert */}
         {isPincodeValid && lookup.data && !lookup.data.serviceable && (
           <Alert tone="error">
-            Delivery Unavailable — MBGA does not deliver to pincode {pincode} yet. Please verify or choose another delivery address.
+            {postalOnly ? `No postal delivery availability is recorded for ${pincode}. You can still record this competitor depot; merchant coverage has not been checked.` : `Delivery Unavailable — MBGA does not deliver to pincode ${pincode} yet. Please verify or choose another delivery address.`}
           </Alert>
         )}
         {isPincodeValid && lookup.data && lookup.data.serviceable && (
           <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "#15803d", fontWeight: 600 }}>
-            <span>✓ Verified serviceable delivery area</span>
+            <span>{postalOnly ? "✓ Postal delivery availability verified; merchant coverage is not confirmed" : "✓ Verified serviceable delivery area"}</span>
             {lookup.data.district && <span>· {lookup.data.district}, {lookup.data.state}</span>}
           </div>
         )}

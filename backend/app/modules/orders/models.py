@@ -44,6 +44,7 @@ class Order(Base):
         Index("ix_orders_customer_placed", "customer_id", "placed_at"),
     )
 
+    priority_code: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True, server_default="MEDIUM")
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     # Readable and sequential per merchant (ORD-2609-0151). Never used for authorisation -
     # it is guessable by design, so every lookup still applies the tenancy filter.

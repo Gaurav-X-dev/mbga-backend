@@ -32,6 +32,7 @@ class PaymentMode(StrEnum):
     mode it was taken in and that row has to keep reading back.
     """
 
+    ADVANCE = "ADVANCE"
     CASH = "CASH"
     UPI = "UPI"
     NEFT = "NEFT"

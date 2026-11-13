@@ -1,3 +1,5 @@
+import { getLogisticsOptions } from "../../api/logistics.api";
+import "../logistics/logistics.css";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
@@ -42,7 +44,7 @@ import { OrderDrawer } from "./OrderDrawer";
 
 const PAGE_SIZE = 20;
 const TRUNCATE = { display: "block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
-const FILTERS = ["merchant", "status", "search"] as const;
+const FILTERS = ["merchant", "status", "search", "priority"] as const;
 
 const TABS = [
   { value: "ACTIVE", label: "Active" },
@@ -118,7 +120,8 @@ export function AdminOrdersPage({
     setSelected(new Set());
   }, [merchantId, tab, values.search, cylinderFilter]);
 
-  const params = { merchantId, status: tab, search: values.search || undefined };
+  const priorityOptions=useQuery({queryKey:["logistics","options",merchantId],queryFn:({signal})=>getLogisticsOptions({merchant:isMerchantPanel,merchantId},signal),enabled:Boolean(merchantId),retry:false});
+  const params = { merchantId, status: tab, search: values.search || undefined, priorityCode:values.priority || undefined };
   const query = useQuery({
     queryKey: queryKeys.orders.list(params),
     queryFn: ({ signal }) => listOrders(params, signal),
@@ -246,6 +249,7 @@ export function AdminOrdersPage({
   const merchantName = merchants.data?.items.find((merchant) => merchant.id === merchantId)?.business_name;
 
   const columns: Column<Order>[] = [
+    {key:"priority",header:"Priority",render:order=>{const p=priorityOptions.data?.policy.priorities.find(p=>p.code===order.priorityCode);return p?<span className="logistics-priority" style={{borderColor:p.color,color:"var(--text)"}}>{p.label}</span>:order.priorityCode || "—";}},
     {
       key: "select",
       header: <span className="sr-only">Select</span>,
@@ -521,7 +525,7 @@ export function AdminOrdersPage({
                 reset();
                 setCylinderFilter("ALL");
               }}
-              canReset={Boolean(values.search || cylinderFilter !== "ALL")}
+              canReset={Boolean(values.priority || values.search || cylinderFilter !== "ALL")}
               actions={
                 <span className="text-muted text-small nowrap">
                   {filteredRows.length} {filteredRows.length === 1 ? "order" : "orders"}
@@ -535,6 +539,7 @@ export function AdminOrdersPage({
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
               />
+              <Field label="Priority"><Select value={values.priority} placeholder="All priorities" options={(priorityOptions.data?.policy.priorities || []).map(p=>({value:p.code,label:p.label}))} onChange={e=>setFilter("priority",e.target.value)}/></Field>
             </FilterBar>
 
             {/* 4. Select All Bar (Parity with Merchant App Screenshot) */}

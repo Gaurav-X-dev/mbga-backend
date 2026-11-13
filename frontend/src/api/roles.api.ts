@@ -5,6 +5,8 @@ import type { User } from "./users.api";
 
 /** Admin channel: /admin/roles */
 export type Role = {
+  login_channels?: string[];
+  requires_merchant?: boolean;
   id: string;
   name: string;
   code: string;

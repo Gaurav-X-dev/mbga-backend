@@ -2,6 +2,9 @@ from enum import StrEnum
 
 
 class ReportType(StrEnum):
+    VEHICLE_DISPATCH_RETURN = "VEHICLE_DISPATCH_RETURN"
+    OUTSTANDING_DUES = "OUTSTANDING_DUES"
+    CUSTOMER_COLLECTION = "CUSTOMER_COLLECTION"
     DAILY_DELIVERY = "DAILY_DELIVERY"
     PAYMENT_COLLECTION = "PAYMENT_COLLECTION"
     PENDING_PICKUP = "PENDING_PICKUP"
@@ -22,6 +25,9 @@ class ExportFormat(StrEnum):
 
 
 REPORT_TITLES = {
+    ReportType.VEHICLE_DISPATCH_RETURN: "Vehicle Dispatch & Returns",
+    ReportType.OUTSTANDING_DUES: "Outstanding Dues",
+    ReportType.CUSTOMER_COLLECTION: "Customer Collections",
     ReportType.DAILY_DELIVERY: "Daily Delivery Report",
     ReportType.PAYMENT_COLLECTION: "Payment Collection Report",
     ReportType.PENDING_PICKUP: "Pending Empty Pickup Report",

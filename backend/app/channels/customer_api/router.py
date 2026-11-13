@@ -1,5 +1,6 @@
 """Customer API channel."""
 from fastapi import APIRouter
+from app.modules.finance.router import build_router as build_finance_router
 
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
@@ -38,3 +39,8 @@ router.include_router(locations_router)
 
 # Customer-owned cylinder handovers; independent of merchant warehouse inventory.
 router.include_router(customer_inventory_router)
+
+router.include_router(build_finance_router(LoginChannel.CUSTOMER))
+
+from app.modules.customer_access.router import build_router as build_customer_access_router
+router.include_router(build_customer_access_router(LoginChannel.CUSTOMER))

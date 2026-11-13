@@ -25,8 +25,8 @@ describe("report figures", () => {
 describe("cylinder labels", () => {
   it.each([
     ["LPG_19KG", "19 kg"],
-    ["LPG_47_5KG_L", "47.5 kg (L)"],
-    ["LPG_47_5KG_V", "47.5 kg (V)"],
+    ["LPG_47_5KG_L", "47.5 kg (LOT)"],
+    ["LPG_47_5KG_V", "47.5 kg (VOT)"],
     ["LPG_422KG_HIPPO", "422 kg Hippo"]
   ])("%s reads as %s", (code, label) => expect(cylinderLabel(code)).toBe(label));
 });

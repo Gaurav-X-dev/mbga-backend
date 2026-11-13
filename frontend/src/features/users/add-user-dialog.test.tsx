@@ -1,0 +1,61 @@
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, expect, it, vi } from "vitest";
+import { AddUserDialog } from "./AddUserDialog";
+import { renderWithProviders } from "../../test/render";
+import { listRoles } from "../../api/roles.api";
+import { listMerchants } from "../../api/merchants.api";
+import { createUser, listUsers } from "../../api/users.api";
+vi.mock("../../api/roles.api",()=>({listRoles:vi.fn()}));
+vi.mock("../../api/merchants.api",()=>({listMerchants:vi.fn()}));
+vi.mock("../../api/users.api",()=>({createUser:vi.fn(),listUsers:vi.fn()}));
+const role=(code:string,channels:string[])=>({id:code,code,name:code,description:null,is_active:true,is_system:false,login_channels:channels,requires_merchant:channels.includes("MERCHANT")});
+beforeEach(()=>{
+ vi.clearAllMocks();
+ vi.mocked(listRoles).mockResolvedValue({items:[role("salesperson_v2",["ADMIN","MERCHANT"]),role("custom_office_admin",["ADMIN"]),role("new_merchant_role",["MERCHANT"])],total:3,page:1,page_size:100,total_pages:1});
+ vi.mocked(listMerchants).mockResolvedValue({items:[{id:"m1",business_name:"Dynamic Agency",merchant_code:"AGENCY-1"}] as any,total:1,limit:100,offset:0});
+ vi.mocked(listUsers).mockResolvedValue({items:[],total:0,limit:20,offset:0});
+ vi.mocked(createUser).mockImplementation(()=>new Promise(()=>{}));
+});
+it("keeps Merchant visible and required for a custom ADMIN + MERCHANT role",async()=>{
+ renderWithProviders(<AddUserDialog open onClose={vi.fn()}/>);
+ const user=userEvent.setup();await screen.findByRole("option",{name:"salesperson_v2"});
+ await user.selectOptions(screen.getByLabelText(/^Role/),"salesperson_v2");
+ expect(screen.getByLabelText(/^Merchant/)).toBeEnabled();
+ await user.type(screen.getByLabelText(/^Full name/),"Test Salesperson");
+ await user.type(screen.getByLabelText(/^Mobile number/),"9876543210");
+ await user.click(screen.getByRole("button",{name:"Add user"}));
+ expect(await screen.findByText("Choose the merchant this user works for.")).toBeInTheDocument();
+ expect(createUser).not.toHaveBeenCalled();
+ await user.selectOptions(screen.getByLabelText(/^Merchant/),"m1");
+ await user.click(screen.getByRole("button",{name:"Add user"}));
+ await waitFor(()=>expect(createUser).toHaveBeenCalledWith(expect.objectContaining({role:"salesperson_v2",merchantId:"m1"})));
+ expect(listRoles).not.toHaveBeenCalledWith(expect.objectContaining({login_channel:"ADMIN"}),expect.anything());
+});
+it("omits stale merchant values for any dynamically configured admin-only role",async()=>{
+ renderWithProviders(<AddUserDialog open onClose={vi.fn()}/>);const user=userEvent.setup();
+ await screen.findByRole("option",{name:"salesperson_v2"});
+ await user.selectOptions(screen.getByLabelText(/^Role/),"salesperson_v2");
+ await user.selectOptions(screen.getByLabelText(/^Merchant/),"m1");
+ await user.selectOptions(screen.getByLabelText(/^Role/),"custom_office_admin");
+ expect(screen.queryByLabelText(/^Merchant/)).not.toBeInTheDocument();
+ await user.type(screen.getByLabelText(/^Full name/),"Office Admin");await user.type(screen.getByLabelText(/^Mobile number/),"9876543210");
+ await user.click(screen.getByRole("button",{name:"Add user"}));
+ await waitFor(()=>expect(createUser).toHaveBeenCalledWith(expect.objectContaining({role:"custom_office_admin",merchantId:undefined,staffType:undefined})));
+});
+it("does not reuse another dialog's obsolete role classification",async()=>{
+ const first=renderWithProviders(<AddUserDialog open onClose={vi.fn()}/>);await screen.findByRole("option",{name:"custom_office_admin"});first.unmount();
+ vi.mocked(listRoles).mockResolvedValue({items:[role("custom_office_admin",["ADMIN","MERCHANT"])],total:1,page:1,page_size:100,total_pages:1});
+ renderWithProviders(<AddUserDialog open onClose={vi.fn()}/>);await screen.findByRole("option",{name:"custom_office_admin"});
+ await userEvent.selectOptions(screen.getByLabelText(/^Role/),"custom_office_admin");expect(screen.getByLabelText(/^Merchant/)).toBeEnabled();
+});
+it("loads dynamic roles and merchants beyond the first page",async()=>{
+ vi.mocked(listRoles).mockImplementation(async params=>({items:params.page===1?[role("page_one",["ADMIN"])]:[role("page_two_staff",["MERCHANT"])],total:101,page:params.page,page_size:100,total_pages:2}));
+ vi.mocked(listMerchants).mockImplementation(async params=>({items:[{id:params.offset?"m2":"m1",business_name:params.offset?"Later Agency":"First Agency",merchant_code:params.offset?"AG-2":"AG-1"}] as any,total:101,limit:100,offset:params.offset}));
+ renderWithProviders(<AddUserDialog open onClose={vi.fn()}/>);
+ await screen.findByRole("option",{name:"page_two_staff"});
+ await userEvent.selectOptions(screen.getByLabelText(/^Role/),"page_two_staff");
+ expect(await screen.findByRole("option",{name:"Later Agency (AG-2)"})).toBeInTheDocument();
+ expect(listRoles).toHaveBeenCalledWith(expect.objectContaining({page:2}),expect.anything());
+ expect(listMerchants).toHaveBeenCalledWith(expect.objectContaining({offset:100}),expect.anything());
+});

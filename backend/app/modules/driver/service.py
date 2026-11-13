@@ -125,6 +125,7 @@ class DeliveryFilters:
     #: for it. The order behind it stays open for ever and the customer is never told.
     include_overdue: bool = False
     limit: int = 50
+    offset: int = 0
 
 
 #: The history tabs the delivery app offers. `week` is the last seven days including today,
@@ -143,27 +144,30 @@ def _history_window(period: str, today: date) -> date | None:
     return None if days is None else today - timedelta(days=days)
 
 
-#: What a settled round can have ended as. A history tab shows both; a "completed" screen asks
-#: for one.
-#:
-#: Keyed on the words the driver's app already reads back off each row - `completed`, `failed`
-#: - as well as the stored codes, so the filter is asked for in the same vocabulary the list
-#: answers in. A screen showing rows marked "completed" should not have to know that the
-#: database calls them DELIVERED.
-#:
-#: Anything else falls back to both rather than to an empty list, the same way the period window
-#: does: a screen reading "no deliveries" is the worst possible answer to a typo.
-HISTORY_OUTCOMES: dict[str, tuple[str, ...]] = {
-    DriverDeliveryStatus.COMPLETED.value: (DeliveryStatus.DELIVERED.value,),
-    DeliveryStatus.DELIVERED.value.lower(): (DeliveryStatus.DELIVERED.value,),
-    DriverDeliveryStatus.FAILED.value: (DeliveryStatus.FAILED.value,),
-}
 _BOTH_OUTCOMES: tuple[str, ...] = (DeliveryStatus.DELIVERED.value, DeliveryStatus.FAILED.value)
 
 
 def _history_statuses(status: str) -> tuple[str, ...]:
-    """Which outcomes the history list shows. Unknown or `ALL` means both."""
-    return HISTORY_OUTCOMES.get((status or "").strip().lower(), _BOTH_OUTCOMES)
+    """Explicit app/stored aliases; ALL includes pending work as well as settled records."""
+    aliases = {
+        "all": tuple(item.value for item in DeliveryStatus),
+        "active": tuple(LIVE_STATUSES),
+        "pending": (DeliveryStatus.SCHEDULED.value,),
+        "assigned": (DeliveryStatus.SCHEDULED.value,),
+        "scheduled": (DeliveryStatus.SCHEDULED.value,),
+        "out_for_delivery": (DeliveryStatus.DISPATCHED.value,),
+        "dispatched": (DeliveryStatus.DISPATCHED.value,),
+        "on_location": (DeliveryStatus.ON_LOCATION.value,),
+        "completed": (DeliveryStatus.DELIVERED.value,),
+        "delivered": (DeliveryStatus.DELIVERED.value,),
+        "failed": (DeliveryStatus.FAILED.value,),
+        "cancelled": (DeliveryStatus.FAILED.value,),
+        "settled": _BOTH_OUTCOMES,
+    }
+    value = aliases.get((status or "all").strip().lower())
+    if value is None:
+        raise ApiError("DELIVERY_STATUS_INVALID", 422, "Select a supported delivery status.")
+    return value
 
 
 def _as_instant(moment: datetime | None) -> str | None:
@@ -228,7 +232,7 @@ class DriverService:
                     [DeliveryStatus.DELIVERED.value, DeliveryStatus.FAILED.value]
                 )
             )
-        statement = statement.limit(filters.limit)
+        statement = statement.offset(filters.offset).limit(filters.limit)
         slips = list(await self.session.scalars(statement))
         return [await self._view(slip) for slip in slips]
 
@@ -571,7 +575,7 @@ class DriverService:
             upi_id=merchant.upi_id,
             payee_name=merchant.upi_payee_name,
             amount=amount,
-            order_id=slip.order_id,
+            order_number=slip.order_number,
             notes=payload.notes,
         )
         return GenerateQrResponseData(
@@ -847,7 +851,10 @@ class DriverService:
             if order
             else 0
         )
-        return max(int(delivery + await self._previous_due(slip)) - await self._pending_payment_total(slip), 0)
+        from app.modules.finance.advances import held_amount
+        invoice = await self.session.scalar(select(Invoice).where(Invoice.order_id == slip.order_id))
+        current = invoice.balance if invoice else max(delivery-min(await held_amount(self.session,slip.order_id),delivery),0)
+        return max(int(current + await self._previous_due(slip)) - await self._pending_payment_total(slip), 0)
 
     async def _pending_payment_total(self, slip: DeliverySlip) -> int:
         invoice_ids = list(await self.session.scalars(select(Invoice.id).where(
@@ -1039,7 +1046,9 @@ class DriverService:
         merchant = await self.session.get(Merchant, slip.merchant_id)
         upi_ready = bool(merchant and merchant.upi_id and merchant.upi_payee_name)
 
+        from app.modules.finance.advances import held_amount
         return PaymentSummaryResponseData(
+            advance_reserved=await held_amount(self.session,slip.order_id),
             delivery_id=slip.id,
             order_number=slip.order_number,
             customer_name=slip.customer_name,
@@ -1211,20 +1220,10 @@ class DriverService:
     async def list_history(
         self, period: str, page: int, limit: int, status: str = ALL_STATUSES
     ) -> HistoryDeliveriesResponseData:
-        """The driver's settled rounds, newest first, for the window the tab asks for.
+        """Assigned delivery register, filtered by original scheduled India calendar date.
 
-        **`period` used to be read and ignored**, so Today, This Week and All returned the same
-        unfiltered list; `page` was ignored too, so every page was the first one, and `total`
-        reported the length of that page rather than how many there are. `completedAt` was the
-        delivery's **date** rather than the moment it was settled.
-
-        Windows are IST calendar days, because that is the day the driver worked - a round
-        confirmed at 11pm belongs to that evening, not to the next UTC day.
-
-        `status` narrows settled work to one outcome. The default is both, which is what a
-        history tab wants, but a screen showing only what was completed had no way to ask for
-        it - so it read the first page and counted the delivered rows on it, which is a
-        different number from how many there are and was reported as the total being wrong.
+        ALL includes open work; settled preserves the former completed/failed-only view.
+        Pagination totals count all matches rather than only the current page.
         """
         today = business_today()
         window = _history_window(period, today)
@@ -1258,12 +1257,12 @@ class DriverService:
                     id=slip.id,
                     order_number=slip.order_number,
                     customer_name=slip.customer_name,
-                    status=APP_STATUS.get(slip.status, DriverDeliveryStatus.PENDING).value,
+                    status=(DriverDeliveryStatus.OUT_FOR_DELIVERY if slip.status == DeliveryStatus.DISPATCHED.value and slip.started_at is not None else APP_STATUS.get(slip.status, DriverDeliveryStatus.PENDING)).value,
                     delivery_date=slip.scheduled_date.isoformat(),
                     # The moment it was settled, as an instant. MySQL keeps no offset, so a
                     # naive read is marked UTC rather than left to be read as local time.
                     completed_at=_as_instant(slip.delivered_at),
-                    total_delivered_count=sum(i.quantity for i in items),
+                    total_delivered_count=sum(i.quantity for i in items) if slip.status == DeliveryStatus.DELIVERED.value else 0,
                     # What actually came back, not what was expected to: the expected figure
                     # was what this line reported, so a round that collected nothing still
                     # showed the day's quota.
@@ -1650,8 +1649,10 @@ class DriverService:
         if invoice is not None:
             return float(invoice.total_amount), float(invoice.paid_amount), float(invoice.balance)
         order = await self.session.get(Order, slip.order_id)
-        total = float(order.total_amount) if order else 0.0
-        return total, 0.0, total
+        from app.modules.finance.advances import held_amount
+        total = float(await delivered_total(self.session,order,await self._delivered_counts(slip))) if order else 0.0
+        covered = min(await held_amount(self.session,slip.order_id), total)
+        return total, 0.0, max(total-covered,0)
 
     async def _empty_items(self, slip: DeliverySlip) -> list[DeliveryItemResponse]:
         """Which sizes of empty cylinder came back, and how many of each.

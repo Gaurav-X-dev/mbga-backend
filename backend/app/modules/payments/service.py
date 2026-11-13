@@ -395,6 +395,9 @@ class PaymentService:
             updated_at=now,
         )
         self.session.add(payment)
+        if delivery_id and cash > 0:
+            from app.modules.finance.cash import capture
+            await capture(self.session, payment)
         self.notifications.queue(
             payment_events.payment_recorded(
                 invoice.customer_id,

@@ -22,6 +22,8 @@ class RoleUpdate(BaseModel):
 
 
 class RoleResponse(BaseModel):
+    login_channels: list[LoginChannel] = Field(default_factory=list)
+    requires_merchant: bool = False
     id: str
     name: str
     code: str

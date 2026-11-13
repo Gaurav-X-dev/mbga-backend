@@ -1,3 +1,4 @@
+from app.modules.logistics.report import TripReportFilters, trip_report_filters
 from datetime import datetime
 from typing import Annotated
 
@@ -54,6 +55,7 @@ async def _build(
     permissions: EffectivePermissionService,
     fuel_filters: FuelFilters | None = None,
     all_time: bool = False,
+    trip_filters: TripReportFilters | None = None,
 ) -> ReportResponse:
     if godown_id:
         raise ApiError(
@@ -68,7 +70,7 @@ async def _build(
         start, end = await fuel_all_time_range(session, actor.require_merchant_id())
     else:
         start, end = report_range(date_from, date_to)
-    return await ReportService(session, ReportScope.merchant(actor), fuel_filters).build(
+    return await ReportService(session, ReportScope.merchant(actor), fuel_filters, trip_filters).build(
         report_type, start, end, customer_id=customer_id
     )
 
@@ -86,6 +88,7 @@ async def get_report(
     context: ContextDep,
     permissions: PermissionDep,
     fuel_filters: Annotated[FuelFilters, Depends(fuel_filter_params)],
+    trip_filters: Annotated[TripReportFilters, Depends(trip_report_filters)],
     report_type: Annotated[ReportType, Query(alias="type")],
     all_time: Annotated[bool, Query(alias="allTime")] = False,
     date_from: Annotated[datetime | None, Query(alias="from")] = None,
@@ -93,7 +96,7 @@ async def get_report(
     customer_id: Annotated[str | None, Query(alias="customerId", max_length=36)] = None,
     godown_id: Annotated[str | None, Query(alias="godownId", max_length=36)] = None,
 ) -> ReportResponse:
-    return await _build(report_type, date_from, date_to, customer_id, godown_id, session, actor, context, permissions, fuel_filters=fuel_filters, all_time=all_time)
+    return await _build(report_type, date_from, date_to, customer_id, godown_id, session, actor, context, permissions, fuel_filters=fuel_filters, all_time=all_time, trip_filters=trip_filters)
 
 
 @router.get(
@@ -108,6 +111,7 @@ async def export_report(
     context: ContextDep,
     permissions: PermissionDep,
     fuel_filters: Annotated[FuelFilters, Depends(fuel_filter_params)],
+    trip_filters: Annotated[TripReportFilters, Depends(trip_report_filters)],
     report_type: Annotated[ReportType, Query(alias="type")],
     export_format: Annotated[ExportFormat, Query(alias="format")],
     all_time: Annotated[bool, Query(alias="allTime")] = False,
@@ -116,5 +120,5 @@ async def export_report(
     customer_id: Annotated[str | None, Query(alias="customerId", max_length=36)] = None,
     godown_id: Annotated[str | None, Query(alias="godownId", max_length=36)] = None,
 ):
-    report = await _build(report_type, date_from, date_to, customer_id, godown_id, session, actor, context, permissions, fuel_filters=fuel_filters, all_time=all_time)
+    report = await _build(report_type, date_from, date_to, customer_id, godown_id, session, actor, context, permissions, fuel_filters=fuel_filters, all_time=all_time, trip_filters=trip_filters)
     return export_response(report, export_format)

@@ -10,6 +10,7 @@ from app.modules.audit_logs.models import AuditLog
 from app.modules.authentication.constants import LoginChannel
 from app.modules.authentication.mobile_number import normalize_mobile_number
 from app.modules.authentication.models import LoginSession
+from app.modules.merchants.models import Merchant, MerchantUser
 from app.modules.roles.models import Role, RoleLoginChannel
 from app.modules.roles.permissions import (
     USER_ACTIVATE,
@@ -23,7 +24,6 @@ from app.modules.roles.permissions import (
     USER_VIEW,
     USER_VIEW_PERMISSIONS,
 )
-from app.modules.merchants.models import Merchant, MerchantUser
 from app.modules.users.models import User
 from app.modules.users.role_models import UserRole
 from app.modules.users.role_repository import UserRoleRepository
@@ -40,7 +40,8 @@ from app.modules.users.schemas import (
     UserSummary,
     UserUpdate,
 )
-from app.shared.authorization.dependencies import require_permission
+from app.shared.authorization.context import AuthContext
+from app.shared.authorization.dependencies import require_authenticated_user, require_permission
 from app.shared.database.session import get_db_session
 
 router = APIRouter()
@@ -66,7 +67,9 @@ def _role_response(assignment: UserRole, role_code: str | None = None) -> UserRo
     )
 
 
-async def _audit(session: AsyncSession, event_type: str, actor_user_id: str | None, entity_id: str, message: str) -> None:
+async def _audit(
+    session: AsyncSession, event_type: str, actor_user_id: str | None, entity_id: str, message: str
+) -> None:
     session.add(
         AuditLog(
             id=str(uuid4()),
@@ -80,7 +83,9 @@ async def _audit(session: AsyncSession, event_type: str, actor_user_id: str | No
     )
 
 
-@router.get("/users", response_model=UserListResponse, dependencies=[Depends(require_permission(USER_VIEW))])
+@router.get(
+    "/users", response_model=UserListResponse, dependencies=[Depends(require_permission(USER_VIEW))]
+)
 async def list_users(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     search: str | None = None,
@@ -91,20 +96,48 @@ async def list_users(
     filters = []
     if search:
         like = f"%{search.lower()}%"
-        filters.append(or_(func.lower(User.email).like(like), func.lower(User.username).like(like), User.mobile_number.like(like)))
+        filters.append(
+            or_(
+                func.lower(User.email).like(like),
+                func.lower(User.username).like(like),
+                User.mobile_number.like(like),
+            )
+        )
     if status_filter:
         filters.append(User.status == status_filter.upper())
-    stmt = select(User).where(*filters).order_by(User.created_at.desc(), User.id).limit(limit).offset(offset)
+    stmt = (
+        select(User)
+        .where(*filters)
+        .order_by(User.created_at.desc(), User.id)
+        .limit(limit)
+        .offset(offset)
+    )
     count_stmt = select(func.count()).select_from(User).where(*filters)
     users = (await session.execute(stmt)).scalars().all()
     total = int(await session.scalar(count_stmt) or 0)
-    return UserListResponse(items=[_summary(user) for user in users], total=total, limit=limit, offset=offset)
+    return UserListResponse(
+        items=[_summary(user) for user in users], total=total, limit=limit, offset=offset
+    )
 
 
-@router.post("/users", response_model=UserSummary, dependencies=[Depends(require_permission(USER_CREATE))])
-async def create_user(payload: UserCreate, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
+@router.post(
+    "/users",
+    response_model=UserSummary,
+    dependencies=[
+        Depends(require_permission(USER_CREATE)),
+        Depends(require_permission(USER_ASSIGN_ROLES)),
+    ],
+)
+async def create_user(
+    payload: UserCreate,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    context: Annotated[AuthContext, Depends(require_authenticated_user)],
+) -> UserSummary:
     if not payload.email and not payload.username and not payload.mobile_number:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="email, username or mobile number required")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="email, username or mobile number required",
+        )
     mobile = normalize_mobile_number(payload.mobile_number) if payload.mobile_number else None
     if payload.email or payload.username or mobile:
         identity_filters = []
@@ -117,6 +150,39 @@ async def create_user(payload: UserCreate, session: Annotated[AsyncSession, Depe
         result = await session.execute(select(User).where(or_(*identity_filters)))
         if result.scalar_one_or_none():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists")
+    selected_role = await session.scalar(select(Role).where(Role.code == payload.role))
+    if selected_role is None or not selected_role.is_active:
+        raise HTTPException(status_code=422, detail="Select an active role from the role catalogue")
+    channels = set(
+        await session.scalars(
+            select(RoleLoginChannel.login_channel).where(
+                RoleLoginChannel.role_id == selected_role.id, RoleLoginChannel.is_allowed.is_(True)
+            )
+        )
+    )
+    if not channels.intersection({LoginChannel.ADMIN.value, LoginChannel.MERCHANT.value}):
+        raise HTTPException(
+            status_code=422,
+            detail="Select an Admin or Merchant role. Customer and Delivery users use their registration flows.",
+        )
+    requires_merchant = LoginChannel.MERCHANT.value in channels
+    if requires_merchant and not payload.merchant_id:
+        from app.shared.exceptions.api_error import ApiError
+
+        raise ApiError(
+            "VALIDATION_ERROR",
+            422,
+            fields=[
+                {
+                    "field": "merchantId",
+                    "code": "required",
+                    "message": "Choose the merchant this user works for.",
+                }
+            ],
+        )
+    if not requires_merchant:
+        payload.merchant_id = None
+        payload.staff_type = None
     now = datetime.now(UTC)
     user = User(
         id=str(uuid4()),
@@ -132,8 +198,25 @@ async def create_user(payload: UserCreate, session: Annotated[AsyncSession, Depe
         updated_at=now,
     )
     session.add(user)
+    await session.flush()
     await _link_to_merchant(session, user, payload, now)
-    await _audit(session, "user.created", None, user.id, "User created")
+    session.add(
+        UserRole(
+            id=str(uuid4()),
+            user_id=user.id,
+            role_id=selected_role.id,
+            assigned_at=now,
+            assigned_by=context.user_id,
+            valid_from=None,
+            valid_until=None,
+            is_active=True,
+            scope_type="merchant" if requires_merchant else "global",
+            scope_id=payload.merchant_id if requires_merchant else "global",
+        )
+    )
+    await _audit(
+        session, "user.created", context.user_id, user.id, "User created with initial role"
+    )
     await session.commit()
     return _summary(user)
 
@@ -152,9 +235,7 @@ async def _link_to_merchant(session: AsyncSession, user: User, payload: UserCrea
         return
     merchant = await session.get(Merchant, payload.merchant_id)
     if merchant is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found")
     session.add(
         MerchantUser(
             id=str(uuid4()),
@@ -171,16 +252,28 @@ async def _link_to_merchant(session: AsyncSession, user: User, payload: UserCrea
     )
 
 
-@router.get("/users/{user_id}", response_model=UserSummary, dependencies=[Depends(require_permission(USER_VIEW))])
-async def get_user(user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
+@router.get(
+    "/users/{user_id}",
+    response_model=UserSummary,
+    dependencies=[Depends(require_permission(USER_VIEW))],
+)
+async def get_user(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> UserSummary:
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return _summary(user)
 
 
-@router.patch("/users/{user_id}", response_model=UserSummary, dependencies=[Depends(require_permission(USER_UPDATE))])
-async def update_user(user_id: str, payload: UserUpdate, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
+@router.patch(
+    "/users/{user_id}",
+    response_model=UserSummary,
+    dependencies=[Depends(require_permission(USER_UPDATE))],
+)
+async def update_user(
+    user_id: str, payload: UserUpdate, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> UserSummary:
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -191,7 +284,9 @@ async def update_user(user_id: str, payload: UserUpdate, session: Annotated[Asyn
             select(User).where(User.mobile_number == mobile, User.id != user.id)
         )
         if owner is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Mobile number already exists")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Mobile number already exists"
+            )
         updates["mobile_number"] = mobile
     for key, value in updates.items():
         if key in {"email", "username"} and isinstance(value, str):
@@ -205,8 +300,14 @@ async def update_user(user_id: str, payload: UserUpdate, session: Annotated[Asyn
     return _summary(user)
 
 
-@router.post("/users/{user_id}/activate", response_model=UserSummary, dependencies=[Depends(require_permission(USER_ACTIVATE))])
-async def activate_user(user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
+@router.post(
+    "/users/{user_id}/activate",
+    response_model=UserSummary,
+    dependencies=[Depends(require_permission(USER_ACTIVATE))],
+)
+async def activate_user(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> UserSummary:
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -217,8 +318,14 @@ async def activate_user(user_id: str, session: Annotated[AsyncSession, Depends(g
     return _summary(user)
 
 
-@router.post("/users/{user_id}/block", response_model=UserSummary, dependencies=[Depends(require_permission(USER_BLOCK))])
-async def block_user(user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
+@router.post(
+    "/users/{user_id}/block",
+    response_model=UserSummary,
+    dependencies=[Depends(require_permission(USER_BLOCK))],
+)
+async def block_user(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> UserSummary:
     user = await session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -229,8 +336,14 @@ async def block_user(user_id: str, session: Annotated[AsyncSession, Depends(get_
     return _summary(user)
 
 
-@router.post("/users/{user_id}/unblock", response_model=UserSummary, dependencies=[Depends(require_permission(USER_BLOCK))])
-async def unblock_user(user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]) -> UserSummary:
+@router.post(
+    "/users/{user_id}/unblock",
+    response_model=UserSummary,
+    dependencies=[Depends(require_permission(USER_BLOCK))],
+)
+async def unblock_user(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> UserSummary:
     return await activate_user(user_id, session)
 
 
@@ -252,8 +365,14 @@ async def get_effective_permissions(
     return EffectivePermissionsResponse(user_id=user_id, permissions=sorted(permissions))
 
 
-@router.post("/users/{user_id}/logout-all", status_code=204, dependencies=[Depends(require_permission(USER_REVOKE_SESSIONS))])
-async def logout_user_sessions(user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]) -> None:
+@router.post(
+    "/users/{user_id}/logout-all",
+    status_code=204,
+    dependencies=[Depends(require_permission(USER_REVOKE_SESSIONS))],
+)
+async def logout_user_sessions(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> None:
     await session.execute(
         update(LoginSession)
         .where(LoginSession.user_id == user_id, LoginSession.revoked_at.is_(None))
@@ -263,8 +382,14 @@ async def logout_user_sessions(user_id: str, session: Annotated[AsyncSession, De
     await session.commit()
 
 
-@router.get("/users/{user_id}/roles", response_model=list[UserRoleResponse], dependencies=[Depends(require_permission(USER_VIEW))])
-async def list_user_roles(user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]) -> list[UserRoleResponse]:
+@router.get(
+    "/users/{user_id}/roles",
+    response_model=list[UserRoleResponse],
+    dependencies=[Depends(require_permission(USER_VIEW))],
+)
+async def list_user_roles(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> list[UserRoleResponse]:
     result = await session.execute(
         select(UserRole, Role.code)
         .join(Role, Role.id == UserRole.role_id)
@@ -290,7 +415,9 @@ async def assign_user_role(
     if user is None or role is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User or role not found")
     if not role.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive role cannot be assigned")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive role cannot be assigned"
+        )
     existing = await session.execute(
         select(UserRole).where(
             UserRole.user_id == user_id,
@@ -300,7 +427,9 @@ async def assign_user_role(
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Role assignment already exists")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Role assignment already exists"
+        )
     now = datetime.now(UTC)
     assignment = UserRole(
         id=str(uuid4()),
@@ -333,7 +462,9 @@ async def update_user_role_assignment(
 ) -> UserRoleResponse:
     assignment = await session.get(UserRole, assignment_id)
     if assignment is None or assignment.user_id != user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found"
+        )
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(assignment, key, value)
     role = await session.get(Role, assignment.role_id)
@@ -354,7 +485,9 @@ async def remove_user_role_assignment(
 ) -> None:
     assignment = await session.get(UserRole, assignment_id)
     if assignment is None or assignment.user_id != user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found"
+        )
     assignment.is_active = False
     assignment.valid_until = assignment.valid_until or datetime.now(UTC)
     await _audit(session, "user_role.removed", None, assignment.id, "User role assignment removed")

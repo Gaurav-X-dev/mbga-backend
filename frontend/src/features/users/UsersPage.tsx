@@ -35,7 +35,7 @@ export function UsersPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const canCreate = auth.can(PERMISSIONS.usersCreate);
+  const canCreate = auth.can(PERMISSIONS.usersCreate) && auth.can(PERMISSIONS.usersAssignRoles);
   const [adding, setAdding] = useState(() => canCreate && searchParams.get("create") === "1");
   const { values, page, setFilter, setPage, reset, hasFilters } = useUrlFilters(FILTERS);
   const [searchText, setSearchText] = useSearchFilter(values.search, (value) => setFilter("search", value));

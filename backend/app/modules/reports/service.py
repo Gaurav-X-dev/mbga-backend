@@ -117,8 +117,9 @@ def _badge(value: str) -> StatusBadge:
 
 
 class ReportService:
-    def __init__(self, session: AsyncSession, scope: ReportScope, fuel_filters=None) -> None:
+    def __init__(self, session: AsyncSession, scope: ReportScope, fuel_filters=None, trip_filters=None) -> None:
         self.session = session
+        self.trip_filters = trip_filters
         self.fuel_filters = fuel_filters
         self.scope = scope
         self.merchant_id = scope.merchant_id
@@ -132,6 +133,8 @@ class ReportService:
         *,
         customer_id: str | None = None,
     ) -> ReportResponse:
+        if report_type in {ReportType.OUTSTANDING_DUES, ReportType.CUSTOMER_COLLECTION}:
+            raise ApiError("REPORT_ENDPOINT_REQUIRED", 422, "Use the Admin reports/receivables endpoint for this report.")
         if self.scope.all_merchants:
             self._merchant_names = {
                 merchant_id: name
@@ -139,7 +142,11 @@ class ReportService:
                     select(Merchant.id, Merchant.name)
                 )
             }
+        from app.modules.logistics.report import build_trip_report
+        async def vehicle_returns(start,end,customer_id):
+            return await build_trip_report(self,start,end,customer_id)
         builders = {
+            ReportType.VEHICLE_DISPATCH_RETURN: vehicle_returns,
             ReportType.DAILY_DELIVERY: self._deliveries,
             ReportType.PAYMENT_COLLECTION: self._payments,
             ReportType.PENDING_PICKUP: self._pending_pickups,
@@ -256,7 +263,7 @@ class ReportService:
         )
 
     async def _payments(self, start, end, customer_id):
-        filters = [*self._merchant_filter(Payment.merchant_id), Payment.paid_at.between(start, end)]
+        filters = [*self._merchant_filter(Payment.merchant_id), Payment.paid_at.between(start, end), Payment.mode != "ADVANCE"]
         if customer_id:
             filters.append(Payment.customer_id == customer_id)
         payments = list(

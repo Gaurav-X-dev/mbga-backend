@@ -27,7 +27,11 @@ from app.modules.customers.dependencies import (
     UploadDep,
     get_auditor,
 )
-from app.shared.authorization.dependencies import require_login_channel, require_permission
+from app.shared.authorization.dependencies import (
+    require_any_permission,
+    require_login_channel,
+    require_permission,
+)
 from app.shared.business.actor import BusinessActorResolver
 from app.shared.business.admin_scope import AdminMerchantActorDep
 from app.shared.business.audit import BusinessAuditor
@@ -61,7 +65,11 @@ def build_document_router(
     if is_admin:
         guards.append(Depends(require_permission("merchants.view")))
     view_guards = guards + [Depends(require_permission(name)) for name in view_permissions]
-    upload_guards = view_guards if is_admin else guards
+    upload_guards = guards + (
+        []
+        if channel is LoginChannel.CUSTOMER
+        else [Depends(require_any_permission("customers.create", "customers.update"))]
+    )
 
     @router.post(
         "",

@@ -1,5 +1,13 @@
+from app.modules.logistics.router import build_router as build_trip_router
 """Merchant API channel."""
 from fastapi import APIRouter
+from app.modules.finance.router import build_router as build_finance_router
+
+from app.modules.reminders.router import build_router as build_reminder_router
+from app.modules.competitor_pricing.router import (
+    router as competitor_router,
+    base_router as competitor_base_router,
+)
 
 from app.modules.business_catalogue.router import build_catalogue_router
 from app.modules.authentication.channel_router import build_channel_auth_router
@@ -84,3 +92,16 @@ router.include_router(vehicles_router)
 
 # States and cities for the address forms. Public, like /constants.
 router.include_router(locations_router)
+
+router.include_router(competitor_router)
+router.include_router(competitor_base_router)
+
+
+router.include_router(build_reminder_router(LoginChannel.MERCHANT))
+
+router.include_router(build_finance_router(LoginChannel.MERCHANT))
+
+router.include_router(build_trip_router(LoginChannel.MERCHANT))
+
+from app.modules.customer_access.router import build_router as build_customer_access_router
+router.include_router(build_customer_access_router(LoginChannel.MERCHANT))

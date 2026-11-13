@@ -181,6 +181,12 @@ class DeliverySiteResponse(BaseModel):
 
 
 class CustomerResponse(BaseModel):
+    account_kind: str = Field(default="STANDALONE", alias="accountKind")
+    owner_customer_id: str | None = Field(default=None, alias="ownerCustomerId")
+    owner_customer_name: str | None = Field(default=None, alias="ownerCustomerName")
+    can_create_branches: bool = Field(default=True, alias="canCreateBranches")
+    branch_permissions: list[str] | None = Field(default=None, alias="branchPermissions")
+    priority_code: str | None = Field(default=None, alias="priorityCode")
     """Spec §3.6, the shape both apps render a customer with."""
 
     id: str
@@ -208,6 +214,7 @@ class CustomerResponse(BaseModel):
     last_order_at: UtcTime | None = Field(default=None, alias="lastOrderAt")
     # Credit terms are editable by authorised admin/merchant users, but read-only in the
     # customer app. Values are always returned so all three clients share one contract.
+    configured_credit_limit: int = Field(default=0, alias="configuredCreditLimit")
     credit_enabled: bool = Field(default=False, alias="creditEnabled")
     credit_limit: int = Field(default=0, alias="creditLimit")
     credit_days: int | None = Field(default=None, alias="creditDays")

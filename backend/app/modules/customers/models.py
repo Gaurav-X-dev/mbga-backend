@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +24,7 @@ class CustomerProfile(Base):
         Index("ix_customer_profiles_mobile", "mobile_number"),
     )
 
+    priority_code: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     # Display code (MBGA-R-0001). Unique, but never used for authorisation - `id` is.
     code: Mapped[str | None] = mapped_column(String(40), unique=True, nullable=True)
@@ -200,4 +202,27 @@ class CustomerCodeSequence(Base):
 
     prefix: Mapped[str] = mapped_column(String(20), primary_key=True)
     next_value: Mapped[int] = mapped_column(BigInteger, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CustomerReportGroup(Base):
+    """One primary, merchant-scoped reporting classification per customer."""
+
+    __tablename__ = "customer_report_groups"
+    __table_args__ = (UniqueConstraint("merchant_id", "name", name="uq_customer_report_group_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("merchants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[str] = mapped_column(String(36))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CustomerReportMembership(Base):
+    __tablename__ = "customer_report_memberships"
+
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customer_profiles.id"), primary_key=True)
+    group_id: Mapped[str] = mapped_column(ForeignKey("customer_report_groups.id"), index=True)
+    updated_by: Mapped[str] = mapped_column(String(36))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

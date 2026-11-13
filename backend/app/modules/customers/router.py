@@ -153,9 +153,9 @@ async def kyc_requirements(
 ) -> KycRequirementsResponse:
     """Dynamic KYC form rules for the selected customer type."""
     customer_type_code = customer_type.strip().upper()
-    requirements = await BusinessCatalogueService(session).active_kyc_requirements(
-        customer_type_code
-    )
+    catalogue = BusinessCatalogueService(session)
+    definition = await catalogue.require_active_customer_type(customer_type_code)
+    requirements = await catalogue.active_kyc_requirements(customer_type_code)
     required_count = sum(1 for rule, _ in requirements if rule.requirement_mode == "REQUIRED")
     groups: dict[str, int] = {}
     for rule, _ in requirements:
@@ -164,6 +164,7 @@ async def kyc_requirements(
                 groups.get(rule.requirement_group, 0), rule.min_required
             )
     return KycRequirementsResponse(
+        requires_delivery_sites=definition.requires_delivery_sites,
         customer_type=customer_type_code,
         minimum_documents=required_count + sum(groups.values()),
         documents=[

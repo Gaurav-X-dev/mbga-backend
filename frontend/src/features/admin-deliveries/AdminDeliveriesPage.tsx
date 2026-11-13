@@ -10,7 +10,7 @@ import { queryKeys } from "../../api/query-keys";
 import { useOptionalAuth } from "../../auth/auth-context";
 import { listDeliveryEligibleVehicles } from "../../api/vehicles.api";
 import { EligibleVehicleField } from "../admin-vehicles/EligibleVehicleField";
-import { Button } from "../../components/common/Button";
+import { ButtonLink, Button } from "../../components/common/Button";
 import { Badge } from "../../components/common/StatusBadge";
 import { Drawer, DrawerSection, Modal } from "../../components/feedback/Dialogs";
 import { Alert, EmptyState, ErrorState, InlineError, LoadingSkeleton, RefreshIndicator } from "../../components/feedback/Feedback";
@@ -213,6 +213,7 @@ export function AdminDeliveriesPage({
         meta={<RefreshIndicator active={query.isFetching && !query.isLoading} />}
         actions={
           <>
+            <ButtonLink variant="secondary" to={`${isMerchantPanel?"/merchant":"/admin"}/deliveries/trips?merchant=${encodeURIComponent(merchantId || "")}`}>Trips & routes</ButtonLink>
             {!isMerchantPanel ? (
               <Field label="Merchant" hideLabel>
                 <Select

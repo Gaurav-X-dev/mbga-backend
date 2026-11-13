@@ -4,8 +4,8 @@ Every query in this module is scoped to the actor's merchant before it runs, and
 belonging to another merchant is reported as **404** rather than 403, so customer ids cannot
 be probed across tenants.
 
-Permission names are the ones already seeded in `roles/seeds.py` — `customers.create`,
-`customers.view`, `orders.create`. No new permission is introduced by this slice.
+Permission names are seeded in `roles/seeds.py`. Permanent deletion requires the
+separately assignable `customers.delete` permission.
 """
 
 from typing import Annotated
@@ -27,6 +27,7 @@ from app.modules.customers.business_schemas import (
 )
 from app.modules.customers.constants import MOBILE_TO_ACCOUNT_STATUSES
 from app.modules.customers.dependencies import RegistrationDep
+from app.modules.customers.editing import CustomerEditRequest, edit_customer
 from app.modules.customers.mapping import CustomerViewLoader
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 from app.modules.merchants.models import Merchant
@@ -218,3 +219,20 @@ async def customer_eligibility(
         profile, sites, requires_delivery_sites=definition.requires_delivery_sites
     )
     return EligibilityResponse(eligible=outcome.eligible, reasons=outcome.reasons)
+
+
+
+@router.patch("/{customer_id}", response_model=CustomerResponse, dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, Depends(require_permission("customers.update"))])
+async def update_customer(customer_id: str, payload: CustomerEditRequest, session: SessionDep, actor: AdminMerchantActorDep, registration: RegistrationDep):
+    return await edit_customer(session, actor, customer_id, payload, registration=registration)
+
+
+@router.delete("/{customer_id}", status_code=204,
+    dependencies=[ADMIN_ONLY, MERCHANT_SCOPE, Depends(require_permission("customers.delete"))],
+    responses=error_responses(401, 403, 404, 409),
+    summary="Permanently delete a customer without business records")
+async def delete_customer(customer_id: str, actor: AdminMerchantActorDep, session: SessionDep) -> None:
+    from app.modules.customers.deletion import permanently_delete_customer
+
+    await permanently_delete_customer(session, actor, customer_id)
+    await session.commit()

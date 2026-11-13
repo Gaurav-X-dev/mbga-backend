@@ -30,6 +30,8 @@ SEED_ROLES: tuple[SeedRole, ...] = (
 )
 
 SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
+    SeedPermission("competitor_pricing.manage", "Manage competitor brands", "competitor_pricing", "manage"),
+    SeedPermission("competitor_pricing.record", "Record market surveys", "competitor_pricing", "record"),
     SeedPermission("authentication.view_sessions", "View auth sessions", "authentication", "view_sessions"),
     SeedPermission("authentication.revoke_sessions", "Revoke auth sessions", "authentication", "revoke_sessions"),
     SeedPermission("authentication.view_otp_logs", "View OTP delivery logs", "authentication", "view_otp_logs"),
@@ -77,6 +79,7 @@ SEED_PERMISSIONS: tuple[SeedPermission, ...] = (
     SeedPermission("dashboard.view", "View admin dashboard", "dashboard", "view"),
     SeedPermission("customers.view", "View customers", "customers", "view"),
     SeedPermission("customers.create", "Create customers", "customers", "create"),
+    SeedPermission("customers.delete", "Permanently delete customers", "customers", "delete"),
     SeedPermission("customers.update", "Update customers", "customers", "update"),
     SeedPermission("customers.review", "Review customer applications", "customers", "review"),
     SeedPermission("customers.approve", "Approve customers", "customers", "approve"),

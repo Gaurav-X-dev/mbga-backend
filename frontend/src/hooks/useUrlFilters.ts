@@ -105,7 +105,8 @@ export function useUrlFilters<K extends string>(keys: readonly K[]) {
 
   /** Sets several filters in one navigation (an empty string removes one). */
   const setFilters = useCallback(
-    (changes: Partial<Record<K, string>>) =>
+    (changes: Partial<Record<K, string>>) => {
+      if (Object.prototype.hasOwnProperty.call(changes, "merchant")) rememberMerchant(changes["merchant" as K] ?? "");
       setParams(
         (previous) => {
           const next = new URLSearchParams(previous);
@@ -114,7 +115,8 @@ export function useUrlFilters<K extends string>(keys: readonly K[]) {
           return next;
         },
         { replace: true }
-      ),
+      );
+    },
     [setParams]
   );
 

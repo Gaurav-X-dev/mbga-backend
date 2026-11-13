@@ -1,4 +1,13 @@
+from app.modules.logistics.router import build_router as build_trip_router
 from fastapi import APIRouter
+from app.modules.finance.router import build_router as build_finance_router
+
+from app.modules.reminders.router import build_router as build_reminder_router
+
+from app.modules.competitor_pricing.router import (
+    admin_router as competitor_router,
+    admin_base_router as competitor_base_router,
+)
 
 from app.modules.business_catalogue.router import build_catalogue_router
 from app.modules.audit_logs.router import router as audit_logs_router
@@ -90,3 +99,20 @@ router.include_router(otp_logs_router)
 router.include_router(customer_kyc_router)
 
 router.include_router(legal_pages_router)
+
+router.include_router(competitor_router)
+router.include_router(competitor_base_router)
+
+
+router.include_router(build_reminder_router(LoginChannel.ADMIN))
+
+router.include_router(build_finance_router(LoginChannel.ADMIN))
+from app.modules.finance.router import settings_router as finance_settings_router
+router.include_router(finance_settings_router)
+
+router.include_router(build_trip_router(LoginChannel.ADMIN))
+from app.modules.logistics.router import settings_router as logistics_settings_router
+router.include_router(logistics_settings_router)
+
+from app.modules.customer_access.router import build_router as build_customer_access_router
+router.include_router(build_customer_access_router(LoginChannel.ADMIN))

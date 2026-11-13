@@ -89,6 +89,9 @@ class OrderAmender:
         The caller has already decided this order may change - that it is not delivered, not
         invoiced, and that whoever is asking is allowed to ask.
         """
+        from app.modules.logistics.service import assert_slip_editable
+        if order.delivery_slip_id:
+            await assert_slip_editable(self.session, order.delivery_slip_id)
         existing, priced = await self._project(order, lines)
 
         split = order_total([(unit, qty) for _k, qty, unit, _o in priced], order.gst_percent)

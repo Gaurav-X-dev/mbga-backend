@@ -6,19 +6,22 @@ each growing their own slightly different idea of what a `Customer` looks like โ
 the single place that has to be correct about never emitting an unmasked identifier.
 """
 
+import json
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.modules.customers.business_schemas import (
     Address,
     CustomerResponse,
     DeliverySiteResponse,
     KycApplicationResponse,
-    KycDocumentResponse,
     KycDocumentFileResponse,
+    KycDocumentResponse,
 )
-from app.modules.customers.document_files import load_document_files
 from app.modules.customers.constants import to_mobile_account_status, to_mobile_document_status
+from app.modules.customers.document_files import load_document_files
 from app.modules.customers.models import (
     CustomerDeliverySite,
     CustomerDocument,
@@ -78,10 +81,23 @@ def document_response(document: CustomerDocument, files=None) -> KycDocumentResp
         # The display name, not the storage key. `fileId` is the handle for ยง17.2.
         file_name=document.original_filename,
         file_id=document.file_id,
-        files=files if files is not None else ([KycDocumentFileResponse(
-            fileId=document.file_id,fileName=document.original_filename,fileSize=document.file_size,
-            contentType=document.mime_type,side="FRONT",source="FILE_PICKER",sortOrder=1
-        )] if document.file_id else []),
+        files=files
+        if files is not None
+        else (
+            [
+                KycDocumentFileResponse(
+                    fileId=document.file_id,
+                    fileName=document.original_filename,
+                    fileSize=document.file_size,
+                    contentType=document.mime_type,
+                    side="FRONT",
+                    source="FILE_PICKER",
+                    sortOrder=1,
+                )
+            ]
+            if document.file_id
+            else []
+        ),
         uploaded_at=document.submitted_at,
         status=to_mobile_document_status(document.status),
     )
@@ -100,6 +116,7 @@ def customer_response(
     credit_active: bool = False,
 ) -> CustomerResponse:
     return CustomerResponse(
+        priority_code=profile.priority_code,
         id=profile.id,
         code=profile.code,
         customer_type=profile.customer_type,
@@ -112,7 +129,10 @@ def customer_response(
         pricing_tier=profile.pricing_tier,
         delivery_address=address_of(profile),
         sites=[site_response(site) for site in _primary_first(sites)],
-        documents=[document_response(document, (document_files or {}).get(document.id)) for document in documents],
+        documents=[
+            document_response(document, (document_files or {}).get(document.id))
+            for document in documents
+        ],
         gstin=profile.gst_number,
         registered_at=profile.registered_at or profile.created_at,
         approved_at=profile.approved_at,
@@ -120,10 +140,13 @@ def customer_response(
         running_balance=running_balance,
         last_order_at=last_order_at,
         credit_enabled=profile.credit_enabled,
-        credit_limit=int(profile.credit_limit or 0),
+        configured_credit_limit=int(profile.credit_limit or 0),
+        credit_limit=int(profile.credit_limit or 0) if credit_active else 0,
         credit_days=profile.credit_days,
         used_credit=credit_used,
-        available_credit=max(int(profile.credit_limit or 0) - credit_used, 0),
+        available_credit=max(int(profile.credit_limit or 0) - credit_used, 0)
+        if credit_active
+        else 0,
         credit_active=credit_active,
         application_id=application.id if application else None,
     )
@@ -145,7 +168,10 @@ def application_response(
         owner_name=profile.owner_name,
         mobile=_national(profile.mobile_number) or "",
         email=profile.email,
-        documents=[document_response(document, (document_files or {}).get(document.id)) for document in documents],
+        documents=[
+            document_response(document, (document_files or {}).get(document.id))
+            for document in documents
+        ],
         delivery_address=address_of(profile),
         sites=[site_response(site) for site in _primary_first(sites)],
         status=application.status,
@@ -241,7 +267,9 @@ class CustomerViewLoader:
         )
         return {customer_id: int(total or 0) for customer_id, total in rows}
 
-    async def order_summaries_for(self, customer_ids: list[str]) -> tuple[dict[str, int], dict[str, object]]:
+    async def order_summaries_for(
+        self, customer_ids: list[str]
+    ) -> tuple[dict[str, int], dict[str, object]]:
         """Batch-load uninvoiced exposure and the real most-recent order timestamp."""
         if not customer_ids:
             return {}, {}
@@ -264,6 +292,53 @@ class CustomerViewLoader:
             {customer_id: created_at for customer_id, created_at in last_rows},
         )
 
+    async def ownership_for(self, customer_ids):
+        from app.modules.customer_access.models import CustomerBrand, CustomerOutlet
+        from app.modules.customer_access.service import PERMISSIONS
+
+        if not customer_ids:
+            return {}
+        owner = aliased(CustomerProfile)
+        rows = await self.session.execute(
+            select(
+                CustomerOutlet.customer_id,
+                CustomerBrand.owner_customer_id,
+                owner.name,
+                CustomerOutlet.permissions,
+            )
+            .join(CustomerBrand, CustomerBrand.id == CustomerOutlet.brand_id)
+            .outerjoin(owner, owner.id == CustomerBrand.owner_customer_id)
+            .where(CustomerOutlet.customer_id.in_(customer_ids))
+        )
+        owners = set(
+            await self.session.scalars(
+                select(CustomerBrand.owner_customer_id).where(
+                    CustomerBrand.owner_customer_id.in_(customer_ids)
+                )
+            )
+        )
+        result = {
+            id_: {
+                "accountKind": "OWNER" if id_ in owners else "STANDALONE",
+                "ownerCustomerId": None,
+                "ownerCustomerName": None,
+                "canCreateBranches": True,
+                "branchPermissions": None,
+            }
+            for id_ in customer_ids
+        }
+        for id_, owner_id, name, permissions in rows:
+            result[id_] = {
+                "accountKind": "BRANCH",
+                "ownerCustomerId": owner_id,
+                "ownerCustomerName": name,
+                "canCreateBranches": False,
+                "branchPermissions": json.loads(permissions)
+                if permissions is not None
+                else list(PERMISSIONS),
+            }
+        return result
+
     async def customer_view(self, profile: CustomerProfile) -> CustomerResponse:
         sites = await self.sites_for([profile.id])
         documents = await self.documents_for([profile.id])
@@ -271,7 +346,7 @@ class CustomerViewLoader:
         balances = await self.running_balances_for([profile.id])
         pending, last_orders = await self.order_summaries_for([profile.id])
         settings = await platform_settings.load(self.session)
-        return customer_response(
+        result = customer_response(
             profile,
             sites=sites.get(profile.id, []),
             documents=documents.get(profile.id, []),
@@ -280,7 +355,20 @@ class CustomerViewLoader:
             running_balance=balances.get(profile.id, 0),
             last_order_at=last_orders.get(profile.id),
             credit_used=balances.get(profile.id, 0) + pending.get(profile.id, 0),
-            credit_active=bool(settings.credit_limit_enabled and profile.credit_enabled and profile.credit_limit),
+            credit_active=bool(
+                settings.credit_limit_enabled and profile.credit_enabled and profile.credit_limit
+            ),
+        )
+
+        info = (await self.ownership_for([profile.id]))[profile.id]
+        return result.model_copy(
+            update={
+                "account_kind": info["accountKind"],
+                "owner_customer_id": info["ownerCustomerId"],
+                "owner_customer_name": info["ownerCustomerName"],
+                "can_create_branches": info["canCreateBranches"],
+                "branch_permissions": info["branchPermissions"],
+            }
         )
 
     async def customer_views(self, profiles: list[CustomerProfile]) -> list[CustomerResponse]:
@@ -291,7 +379,7 @@ class CustomerViewLoader:
         balances = await self.running_balances_for(ids)
         pending, last_orders = await self.order_summaries_for(ids)
         settings = await platform_settings.load(self.session)
-        return [
+        result = [
             customer_response(
                 profile,
                 sites=sites.get(profile.id, []),
@@ -301,9 +389,26 @@ class CustomerViewLoader:
                 running_balance=balances.get(profile.id, 0),
                 last_order_at=last_orders.get(profile.id),
                 credit_used=balances.get(profile.id, 0) + pending.get(profile.id, 0),
-                credit_active=bool(settings.credit_limit_enabled and profile.credit_enabled and profile.credit_limit),
+                credit_active=bool(
+                    settings.credit_limit_enabled
+                    and profile.credit_enabled
+                    and profile.credit_limit
+                ),
             )
             for profile in profiles
+        ]
+        ownership = await self.ownership_for(ids)
+        return [
+            row.model_copy(
+                update={
+                    "account_kind": ownership[row.id]["accountKind"],
+                    "owner_customer_id": ownership[row.id]["ownerCustomerId"],
+                    "owner_customer_name": ownership[row.id]["ownerCustomerName"],
+                    "can_create_branches": ownership[row.id]["canCreateBranches"],
+                    "branch_permissions": ownership[row.id]["branchPermissions"],
+                }
+            )
+            for row in result
         ]
 
     async def application_views(

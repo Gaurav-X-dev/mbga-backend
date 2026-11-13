@@ -27,6 +27,7 @@ class Category(StrEnum):
 
 
 class ReferenceType(StrEnum):
+    REMINDER = "REMINDER"
     """§2 `ReferenceType`. What tapping the notification opens."""
 
     ORDER = "ORDER"
@@ -85,6 +86,7 @@ ENTITY_CATEGORIES: dict[str, Category] = {
 # What the row deep-links to. Absent means the app shows it without a tap target rather
 # than opening a screen that cannot resolve the id.
 ENTITY_REFERENCES: dict[str, ReferenceType] = {
+    "reminder": ReferenceType.REMINDER,
     "order": ReferenceType.ORDER,
     "kyc_application": ReferenceType.KYC,
     "customer": ReferenceType.CUSTOMER,

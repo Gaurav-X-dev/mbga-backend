@@ -29,6 +29,12 @@ export type DeliverySite = {
 };
 
 export type Customer = {
+  accountKind?: "OWNER" | "BRANCH" | "STANDALONE";
+  ownerCustomerId?: string | null;
+  ownerCustomerName?: string | null;
+  canCreateBranches?: boolean;
+  branchPermissions?: string[] | null;
+  priorityCode?: string | null;
   id: string;
   code?: string | null;
   customerType?: CustomerType | string | null;
@@ -101,8 +107,10 @@ export type CustomerPaymentSummary = {
   lastPaymentAt?: string | null;
 };
 
-const scoped = (merchantId: string) => ({ params: { merchantId } });
-const customer = (customerId: string) => `/admin/customers/${encodeURIComponent(customerId)}`;
+const channelRoot = () => tokenStorage.get()?.channel === "merchant" ? "/merchant" : "/admin";
+const scoped = (merchantId: string) => channelRoot() === "/admin" ? { params: { merchantId } } : {};
+const customersRoot = () => `${channelRoot()}/customers`;
+const customer = (customerId: string) => `${customersRoot()}/${encodeURIComponent(customerId)}`;
 
 export async function listCustomers(params: CustomerListParams, signal?: AbortSignal) {
   const { data } = await apiClient.get<CustomerListResponse>(`/${tokenStorage.get()?.channel === "merchant" ? "merchant" : "admin"}/customers`, { params: cleanParams(params), signal });
@@ -115,7 +123,7 @@ export async function getCustomer(merchantId: string, customerId: string, signal
 }
 
 export async function createCustomer(merchantId: string, input: CustomerCreateInput) {
-  const { data } = await apiClient.post<Customer>("/admin/customers", input, scoped(merchantId));
+  const { data } = await apiClient.post<Customer>(customersRoot(), input, scoped(merchantId));
   return data;
 }
 
@@ -175,7 +183,7 @@ export async function uploadDocument(merchantId: string, file: File, type: KycDo
   body.append("file", file);
   body.append("type", type);
   const { data } = await apiClient.post<{ fileId: string; fileName: string; contentType: string; size: number }>(
-    "/admin/documents",
+    `${channelRoot()}/documents`,
     body,
     { ...scoped(merchantId), timeout: 60_000 }
   );
@@ -186,18 +194,10 @@ import { serverOrigin } from "./openapi.api";
 
 /** A short-lived link to view a document; it expires in minutes, so fetch it on click. */
 export async function getDocumentUrl(merchantId: string, fileId: string) {
-  try {
-    const origin = serverOrigin();
-    const url = origin ? `${origin.replace(/\/+$/, "")}/api/v2/merchant/documents/${encodeURIComponent(fileId)}/url` : `/api/v2/merchant/documents/${encodeURIComponent(fileId)}/url`;
-    const { data } = await apiClient.get<{ url: string; expiresInSeconds: number }>(url, scoped(merchantId));
-    return data;
-  } catch {
-    const { data } = await apiClient.get<{ url: string; expiresInSeconds: number }>(
-      `/admin/documents/${encodeURIComponent(fileId)}/url`,
-      scoped(merchantId)
-    );
-    return data;
-  }
+  const { data } = await apiClient.get<{ url: string; expiresInSeconds: number }>(
+    `${channelRoot()}/documents/${encodeURIComponent(fileId)}/url`, scoped(merchantId)
+  );
+  return data;
 }
 
 /** URL builder for GET /api/v2/merchant/documents/{file_id}/content?token=... */
@@ -211,4 +211,44 @@ export async function listCustomerEmployees(merchantId: string, signal?: AbortSi
     params: { merchantId }, signal
   });
   return data;
+}
+
+export async function updateCustomer(merchantId: string, customerId: string, body: { documents?: CustomerCreateInput["documents"]; sites?: CustomerCreateInput["sites"]; customerType?: CustomerType; priorityCode?: string | null; businessName: string; ownerName?: string | null; email?: string | null; deliveryAddress?: Address; reason: string }) {
+ const channel = tokenStorage.get()?.channel === "merchant" ? "merchant" : "admin";
+ return (await apiClient.patch<Customer>(`/${channel}/customers/${encodeURIComponent(customerId)}`, body, channel === "admin" ? scoped(merchantId) : undefined)).data;
+}
+
+export async function deleteCustomer(merchantId: string, customerId: string) {
+  const channel = tokenStorage.get()?.channel === "merchant" ? "merchant" : "admin";
+  await apiClient.delete(`/${channel}/customers/${encodeURIComponent(customerId)}`, scoped(merchantId));
+}
+
+export async function createCustomerBranch(merchantId: string, ownerId: string, input: CustomerCreateInput) {
+  return (await apiClient.post<Customer>(`${channelRoot()}/customer-access/customers/${encodeURIComponent(ownerId)}/branches`, input, scoped(merchantId))).data;
+}
+
+export const CUSTOMER_PERMISSION_LABELS: Record<string, string> = {
+  "profile.view": "View profile",
+  "orders.view": "View orders",
+  "orders.create": "Place orders",
+  "orders.cancel": "Cancel orders",
+  "accounts.view": "View invoices, balance and advances",
+  "accounts.pay": "Make payments and request advance deposits",
+  "inventory.view": "View inventory and movements",
+  "notifications.view": "View notifications and mark read"
+};
+export const BRANCH_PERMISSIONS = ["profile.view", "orders.view", "orders.create", "orders.cancel", "accounts.view", "accounts.pay", "inventory.view", "notifications.view"] as const;
+export async function updateCustomerBranch(merchantId: string, ownerId: string, branchId: string, body: unknown) {
+  return (await apiClient.patch<Customer>(`${channelRoot()}/customer-access/customers/${encodeURIComponent(ownerId)}/branches/${encodeURIComponent(branchId)}`, body, scoped(merchantId))).data;
+}
+export async function deleteCustomerBranch(merchantId: string, ownerId: string, branchId: string) {
+  await apiClient.delete(`${channelRoot()}/customer-access/customers/${encodeURIComponent(ownerId)}/branches/${encodeURIComponent(branchId)}`, scoped(merchantId));
+}
+
+export type CustomerKycRequirements = {
+  customerType: string; minimumDocuments: number; requiresDeliverySites: boolean;
+  documents: Array<{type: string; label: string; required: boolean; requiredGroup?: string | null; numberFormat: string}>;
+};
+export async function getCustomerKycRequirements(customerType: string, signal?: AbortSignal) {
+  return (await apiClient.get<CustomerKycRequirements>("/customer/registration/kyc-requirements", {params:{customerType}, signal})).data;
 }

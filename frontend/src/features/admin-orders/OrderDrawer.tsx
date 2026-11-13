@@ -1,3 +1,5 @@
+import { EditOrderDialog } from "./EditOrderDialog";
+import { useOptionalAuth } from "../../auth/auth-context";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -48,6 +50,8 @@ export function OrderDrawer({
   onConfirm,
   onCancel,
 }: Props) {
+  const auth = useOptionalAuth();
+  const [editing,setEditing]=useState(false);
   const toast = useToast();
   const queryClient = useQueryClient();
   const pdf = useInvoicePdf(merchantId);
@@ -122,6 +126,7 @@ export function OrderDrawer({
 
   return (
     <>
+      {editing && order ? <EditOrderDialog order={order} merchantId={merchantId} onClose={() => setEditing(false)} onSaved={() => { void queryClient.invalidateQueries({ queryKey: queryKeys.orders.all }); void queryClient.invalidateQueries({ queryKey: queryKeys.deliveries.all }); void queryClient.invalidateQueries({ queryKey: ["finance"] }); void queryClient.invalidateQueries({ queryKey: ["logistics"] }); }} /> : null}
       <Drawer
         open
         size="lg"
@@ -140,6 +145,7 @@ export function OrderDrawer({
                 ) : null}
               </div>
               <div className="row" style={{ gap: 8 }}>
+                {order.canEdit && auth?.can("orders.update") ? <Button variant="secondary" onClick={() => setEditing(true)}>Edit / reschedule</Button> : null}
                 {canReorder ? (
                   <Button variant="secondary" icon="refresh" onClick={handleOpenReorder}>
                     Reorder

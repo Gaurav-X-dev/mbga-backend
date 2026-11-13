@@ -1,6 +1,9 @@
+import { LogisticsSettings } from "../logistics/LogisticsSettings";
+import { FinanceSettings } from "../finance/FinanceSettings";
+import { AutomationSettings } from "../reminders/AutomationSettings";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { getAppSettings, settingsPath, updateAppSettings } from "../../api/app-settings.api";
 import { listMerchants } from "../../api/merchants.api";
 import { normalizeError } from "../../api/errors";
@@ -84,20 +87,24 @@ function CutoffCard({ canManage }: { canManage: boolean }) {
 export function AppSettingsPage() {
   const auth = useAuth();
   const merchant = auth.channel === "merchant";
-  const [merchantId, setMerchantId] = useState("");
+  const [scopeParams] = useSearchParams();
+  const [merchantId, setMerchantId] = useState(() => scopeParams.get("merchant") || "");
   const canManage = auth.can(merchant ? PERMISSIONS.deliveryConfirm : PERMISSIONS.platformSettingsManage);
   const agencies = useQuery({ queryKey: [...KEY, "agencies"], queryFn: ({ signal }) => listMerchants({ limit: 100, offset: 0 }, signal),
     enabled: !merchant && auth.can(PERMISSIONS.merchantsView) });
   return <div className="page stack">
-    <PageHeader title="App Settings" documentTitle="App Settings" description="Manage delivery arrival rules and existing app operating settings." />
-    {!merchant && auth.can(PERMISSIONS.merchantsView) ? <Card title="Delivery settings scope">
-      <Field label="Apply delivery settings to">
+    <PageHeader title="App Settings" documentTitle="App Settings" description="Manage delivery rules, automated reminders and app operating settings." />
+    {!merchant && auth.can(PERMISSIONS.merchantsView) ? <Card title="App settings scope">
+      <Field label="Apply settings to">
         <Select value={merchantId} onChange={(event) => setMerchantId(event.target.value)} options={[
           { value: "", label: "Platform default" }, ...(agencies.data?.items ?? []).map((agency) => ({ value: agency.id, label: agency.business_name }))
         ]} />
       </Field>
       {agencies.error ? <InlineError error={agencies.error} onRetry={() => void agencies.refetch()} /> : null}
     </Card> : null}
+    <AutomationSettings key={`automation-${merchantId}`} merchant={merchant} merchantId={merchantId || undefined} />
+    {!merchant ? <LogisticsSettings key={`logistics-${merchantId}`} merchantId={merchantId || undefined} /> : null}
+    {!merchant ? <FinanceSettings key={`finance-${merchantId}`} merchantId={merchantId || undefined} /> : null}
     <RadiusCard key={merchantId} merchant={merchant} merchantId={merchantId || undefined} canManage={canManage} />
     {!merchant ? <>
       <CutoffCard canManage={canManage} />

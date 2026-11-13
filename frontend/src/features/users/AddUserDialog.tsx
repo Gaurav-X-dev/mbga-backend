@@ -19,23 +19,8 @@ import { mobileSchema, optionalEmailSchema, requiredText } from "../../schemas/c
 import { emptyToUndefined } from "../../utils/format";
 import { normalizeMobileNumber } from "../../utils/mobile";
 
-/** A platform user belongs to no agency, so a platform role takes no merchant. */
-const PLATFORM_ROLE = "super_admin";
-
-/** Every active role, and the ones that sign in on the admin channel. */
+/** Scope comes from the selected role's configured login channels, never its name. */
 const ALL_ROLES = { is_active: true, page: 1, page_size: 100 } as const;
-const PLATFORM_ROLES = { is_active: true, login_channel: "ADMIN", page: 1, page_size: 100 } as const;
-
-/**
- * Which role codes are platform roles.
- *
- * The list used to be five hardcoded entries, so a role created in Roles & Access never
- * appeared here and could not be given to a new user. It is read from the API now, and this
- * set exists because the schema below is built once at module scope and cannot reach a query
- * result. It is seeded with `super_admin` so the form still judges correctly in the moment
- * before the roles have loaded.
- */
-const knownPlatformRoles = new Set<string>([PLATFORM_ROLE]);
 
 const schema = z
   .object({
@@ -45,8 +30,7 @@ const schema = z
     role: z.string().min(1, "Choose a role."),
     merchantId: z.string(),
     staffType: z.string().max(60).optional()
-  })
-  .refine((v) => knownPlatformRoles.has(v.role) || v.merchantId, { path: ["merchantId"], message: "Choose the merchant this user works for." });
+  });
 type Values = z.infer<typeof schema>;
 
 const DUPLICATE_MOBILE = "A user with this mobile number already exists.";
@@ -62,30 +46,45 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
   });
   const role = watch("role");
   const rolesQuery = useQuery({
-    queryKey: queryKeys.roles.list(ALL_ROLES),
-    queryFn: ({ signal }) => listRoles(ALL_ROLES, signal),
+    queryKey: [...queryKeys.roles.all, "add-user-options"],
+    queryFn: async ({ signal }) => {
+      const first = await listRoles(ALL_ROLES, signal);
+      const items = [...first.items];
+      for (let page = 2; page <= first.total_pages; page++) {
+        const next = await listRoles({...ALL_ROLES,page},signal);
+        items.push(...next.items);
+        if (!next.items.length) break;
+      }
+      return {...first,items};
+    },
+    staleTime: 0,
     enabled: open
   });
-  const platformRolesQuery = useQuery({
-    queryKey: queryKeys.roles.list(PLATFORM_ROLES),
-    queryFn: ({ signal }) => listRoles(PLATFORM_ROLES, signal),
-    enabled: open
-  });
-  const roleOptions = (rolesQuery.data?.items ?? []).map((item) => ({ value: item.code, label: item.name }));
-  for (const item of platformRolesQuery.data?.items ?? []) knownPlatformRoles.add(item.code);
-  const isPlatform = knownPlatformRoles.has(role);
+  const selectedRole = rolesQuery.data?.items.find(item=>item.code===role);
+  const requiresMerchant = Boolean(selectedRole?.requires_merchant || selectedRole?.login_channels?.includes("MERCHANT"));
+  const scopeReady = Boolean(selectedRole && Array.isArray(selectedRole.login_channels) && selectedRole.login_channels.some(channel=>channel==="ADMIN" || channel==="MERCHANT"));
+  const roleOptions = (rolesQuery.data?.items ?? []).filter(item=>item.login_channels?.some(channel=>channel==="ADMIN" || channel==="MERCHANT")).map(item=>({value:item.code,label:item.name}));
   const merchantParams = { limit: 100, offset: 0 };
   const merchants = useQuery({
-    queryKey: queryKeys.merchants.list(merchantParams),
-    queryFn: ({ signal }) => listMerchants(merchantParams, signal),
+    queryKey: [...queryKeys.merchants.all, "add-user-options"],
+    queryFn: async ({ signal }) => {
+      const first = await listMerchants(merchantParams, signal);
+      const items = [...first.items];
+      for (let offset=merchantParams.limit; offset<first.total; offset+=merchantParams.limit) {
+        const next=await listMerchants({...merchantParams,offset},signal);
+        items.push(...next.items);
+        if (!next.items.length) break;
+      }
+      return {...first,items};
+    },
     enabled: open,
-    staleTime: 5 * 60_000
+    staleTime: 0
   });
 
   const mutation = useMutation({
     mutationFn: async (values: Values) => {
       const mobile = normalizeMobileNumber(values.mobile_number) ?? values.mobile_number;
-      // The backend does not reject duplicate mobile numbers for users, so check first.
+      // Give an early duplicate warning; the backend remains authoritative.
       const existing = await listUsers({ search: mobile, limit: 20, offset: 0 });
       if (existing.items.some((user) => user.mobile_number === mobile)) {
         throw new AppError({
@@ -102,8 +101,8 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
         email: emptyToUndefined(values.email)?.toLowerCase(),
         status: "ACTIVE",
         role: values.role,
-        merchantId: values.role === PLATFORM_ROLE ? undefined : values.merchantId,
-        staffType: values.role === PLATFORM_ROLE ? undefined : emptyToUndefined(values.staffType)?.trim()
+        merchantId: requiresMerchant ? values.merchantId : undefined,
+        staffType: requiresMerchant ? emptyToUndefined(values.staffType)?.trim() : undefined
       });
     },
     onSuccess: (user) => {
@@ -136,7 +135,7 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
           <Button variant="secondary" onClick={close} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="add-user-form" variant="primary" loading={mutation.isPending} loadingText="Adding…">
+          <Button type="submit" form="add-user-form" variant="primary" loading={mutation.isPending} loadingText="Adding…" disabled={!scopeReady || (requiresMerchant && (merchants.isPending || Boolean(merchants.error)))}>
             Add user
           </Button>
         </>
@@ -148,6 +147,8 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
         noValidate
         onSubmit={handleSubmit((values) => {
           setFormMessage(null);
+          if (!scopeReady) { setError("role",{message:"Choose a configured role before adding this user."}); return; }
+          if (requiresMerchant && !values.merchantId) { setError("merchantId",{message:"Choose the merchant this user works for."}); return; }
           mutation.mutate(values);
         })}
       >
@@ -166,10 +167,12 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
         <Field label="Email address" optional error={fieldError(formState.errors, "email")}>
           <Input type="email" autoComplete="email" {...register("email")} />
         </Field>
-        <Field label="Role" required error={fieldError(formState.errors, "role")}>
+        <Field label="Role" required hint="Active roles configured for the Admin or Merchant panel." error={fieldError(formState.errors, "role")}>
           <Select placeholder={rolesQuery.isPending ? "Loading roles…" : "Choose a role"} options={roleOptions} {...register("role")} />
         </Field>
-        {isPlatform ? null : (
+        {rolesQuery.isError ? <Alert tone="error">Roles could not be loaded.<Button variant="secondary" onClick={()=>void rolesQuery.refetch()}>Retry roles</Button></Alert> : null}
+        {selectedRole && !requiresMerchant ? <p className="meta">This role does not use the Merchant panel, so no merchant is needed.</p> : null}
+        {!role || requiresMerchant ? (
           <>
             <Field
               label="Merchant"
@@ -180,14 +183,16 @@ export function AddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
               <Select
                 placeholder={merchants.isLoading ? "Loading merchants…" : "Choose a merchant"}
                 options={(merchants.data?.items ?? []).map((m) => ({ value: m.id, label: `${m.business_name} (${m.merchant_code})` }))}
+                disabled={merchants.isPending || Boolean(merchants.error)}
                 {...register("merchantId")}
               />
             </Field>
+            {merchants.isError ? <Button variant="secondary" onClick={()=>void merchants.refetch()}>Retry merchants</Button> : null}
             <Field label="Job title" optional error={fieldError(formState.errors, "staffType")} hint="Leave blank to use the role.">
               <Input {...register("staffType")} />
             </Field>
           </>
-        )}
+        ) : null}
       </form>
     </Modal>
   );

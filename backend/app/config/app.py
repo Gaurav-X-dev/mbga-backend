@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # hide_input_in_errors: a rejected value (for example a weak secret) is never printed in startup errors.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True)
 
+    logistics_routes_api_key: str | None = Field(default=None, repr=False)
     app_name: str = "MBGA Backend"
     app_version: str = "0.1.0"
     app_env: str = "local"

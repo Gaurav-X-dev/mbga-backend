@@ -1,3 +1,4 @@
+from app.modules.logistics.report import TripReportFilters, trip_report_filters
 """Platform-wide reports for the Admin/Super Admin dashboard."""
 
 from datetime import datetime
@@ -8,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.authentication.constants import LoginChannel
 from app.modules.merchants.models import Merchant
-from app.modules.reports.fuel import FuelFilters, fuel_filter_params, fuel_all_time_range
 from app.modules.reports.constants import FINANCIAL_REPORTS, ExportFormat, ReportType
 from app.modules.reports.export import export_response
+from app.modules.reports.fuel import FuelFilters, fuel_all_time_range, fuel_filter_params
+from app.modules.reports.receivables_router import router as receivables_router
 from app.modules.reports.schemas import ReportResponse
 from app.modules.reports.service import ReportScope, ReportService, report_range
 from app.shared.authorization.context import AuthContext
@@ -58,6 +60,7 @@ async def _build(
     permissions: EffectivePermissionService,
     fuel_filters: FuelFilters | None = None,
     all_time: bool = False,
+    trip_filters: TripReportFilters | None = None,
 ) -> ReportResponse:
     if godown_id:
         raise ApiError(
@@ -74,7 +77,7 @@ async def _build(
         start, end = await fuel_all_time_range(session, merchant_id)
     else:
         start, end = report_range(date_from, date_to)
-    return await ReportService(session, ReportScope.admin(merchant_id), fuel_filters).build(
+    return await ReportService(session, ReportScope.admin(merchant_id), fuel_filters, trip_filters).build(
         report_type,
         start,
         end,
@@ -94,6 +97,7 @@ async def get_admin_report(
     context: ContextDep,
     permissions: PermissionDep,
     fuel_filters: Annotated[FuelFilters, Depends(fuel_filter_params)],
+    trip_filters: Annotated[TripReportFilters, Depends(trip_report_filters)],
     report_type: Annotated[ReportType, Query(alias="type")],
     all_time: Annotated[bool, Query(alias="allTime")] = False,
     date_from: Annotated[datetime | None, Query(alias="from")] = None,
@@ -114,6 +118,7 @@ async def get_admin_report(
         permissions,
         fuel_filters=fuel_filters,
         all_time=all_time,
+        trip_filters=trip_filters,
     )
 
 
@@ -128,6 +133,7 @@ async def export_admin_report(
     context: ContextDep,
     permissions: PermissionDep,
     fuel_filters: Annotated[FuelFilters, Depends(fuel_filter_params)],
+    trip_filters: Annotated[TripReportFilters, Depends(trip_report_filters)],
     report_type: Annotated[ReportType, Query(alias="type")],
     export_format: Annotated[ExportFormat, Query(alias="format")],
     all_time: Annotated[bool, Query(alias="allTime")] = False,
@@ -149,5 +155,9 @@ async def export_admin_report(
         permissions,
         fuel_filters=fuel_filters,
         all_time=all_time,
+        trip_filters=trip_filters,
     )
     return export_response(report, export_format)
+
+
+router.include_router(receivables_router)

@@ -168,7 +168,7 @@ class PricingService:
                 PricingEntry.pricing_month_id == month.id,
                 PricingEntry.cylinder_type == payload.cylinder_type,
                 PricingEntry.tier == payload.tier.value,
-            )
+            ).with_for_update()
         )
         if entry is None:
             entry = PricingEntry(
@@ -370,7 +370,7 @@ class PricingService:
             pricing_events.customer_price_set(
                 customer_id=profile.id,
                 change_log_id=str(override_log.id),
-                cylinder_label=kind.label,
+                cylinder_label={"LPG_47_5KG_L": "47.5 kg (LOT)", "LPG_47_5KG_V": "47.5 kg (VOT)"}.get(kind.code, kind.label),
                 price=int(price),
                 set_by=self.actor.display_name,
                 reason=reason,
@@ -409,7 +409,7 @@ class PricingService:
             pricing_events.customer_price_removed(
                 customer_id=profile.id,
                 change_log_id=str(removal_log.id),
-                cylinder_label=kind.label,
+                cylinder_label={"LPG_47_5KG_L": "47.5 kg (LOT)", "LPG_47_5KG_V": "47.5 kg (VOT)"}.get(kind.code, kind.label),
                 standard_price=int(standard) if standard is not None else None,
                 removed_by=self.actor.display_name,
             )
@@ -541,7 +541,7 @@ def _item_view(
 ) -> CustomerPriceItem:
     return CustomerPriceItem(
         cylinder_type=kind.code,
-        cylinder_label=kind.label,
+        cylinder_label={"LPG_47_5KG_L": "47.5 kg (LOT)", "LPG_47_5KG_V": "47.5 kg (VOT)"}.get(kind.code, kind.label),
         tier_price=tier_price,
         override=(
             CustomerPriceOverrideResponse(

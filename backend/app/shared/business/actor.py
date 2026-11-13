@@ -38,6 +38,8 @@ class BusinessActor:
     staff_type: str | None = None
     # Set for customer-channel actors who have a profile.
     customer_id: str | None = None
+    delegated: bool = False
+    delegated_permissions: tuple[str, ...] = ()
 
     @property
     def is_merchant_staff(self) -> bool:

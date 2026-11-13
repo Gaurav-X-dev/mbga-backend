@@ -79,6 +79,7 @@ DESCRIPTIONS: dict[str, str] = {
     # --- Customers ------------------------------------------------------------------------
     "customers.view": "Open the Customers screen and read any customer.",
     "customers.create": "Register a new customer.",
+    "customers.delete": "Permanently delete customers without business records. Assign only to trusted staff.",
     "customers.update": "Change a customer's details, addresses or delivery sites.",
     "customers.review": "Open a pending customer application and work through it.",
     "customers.approve": "Approve a customer application so they can order.",

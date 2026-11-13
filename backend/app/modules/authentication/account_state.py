@@ -209,6 +209,13 @@ class AccountStateResolver:
             state.denial = ("ACCOUNT_BLOCKED", FORBIDDEN)
             state.onboarding_denial = ("ACCOUNT_BLOCKED", FORBIDDEN)
         if profile is None:
+            from app.modules.customer_access.team import has_team_access
+            if user.status in {"ACTIVE","PENDING"} and await has_team_access(self.session,user.id):
+                state.profile_completion_status = "COMPLETE"
+                state.approval_status = "APPROVED"
+                state.denial = None
+                state.next_action = NextAction.OPEN_CUSTOMER_HOME
+                return
             state.profile_completion_status = "NOT_STARTED"
             state.approval_status = "NOT_SUBMITTED"
             state.denial = state.denial or ("ACCOUNT_PENDING_APPROVAL", FORBIDDEN)

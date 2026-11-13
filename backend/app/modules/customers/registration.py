@@ -122,6 +122,7 @@ class CustomerRegistrationService:
         actor: BusinessActor,
         *,
         require_documents: bool = True,
+        existing_profile: CustomerProfile | None = None,
     ) -> ValidatedRegistration:
         """Validate a registration body for either actor.
 
@@ -137,7 +138,14 @@ class CustomerRegistrationService:
         owner_name = validate_name(request.owner_name, "ownerName", errors)
         email = validate_email(request.email, errors)
         address = validate_address(request.delivery_address, errors)
-        documents = await self._validate_documents(request.documents, customer_type, actor, errors, require=require_documents)
+        documents = await self._validate_documents(
+            request.documents,
+            customer_type,
+            actor,
+            errors,
+            require=require_documents,
+            existing_profile=existing_profile,
+        )
         sites = self._validate_sites(
             request.sites,
             requires_delivery_sites=customer_definition.requires_delivery_sites,
@@ -165,10 +173,15 @@ class CustomerRegistrationService:
         errors: FieldErrors,
         *,
         require: bool,
+        existing_profile: CustomerProfile | None = None,
     ) -> list[tuple[str, str, CustomerDocument]]:
         rules = await BusinessCatalogueService(self.session).active_kyc_requirements(customer_type)
         definitions = {definition.code: definition for _rule, definition in rules}
-        required = {rule.document_type_code for rule, _definition in rules if rule.requirement_mode == "REQUIRED"}
+        required = {
+            rule.document_type_code
+            for rule, _definition in rules
+            if rule.requirement_mode == "REQUIRED"
+        }
         groups: dict[str, tuple[int, set[str]]] = {}
         for rule, _definition in rules:
             if rule.requirement_mode == "ANY_OF":
@@ -178,6 +191,21 @@ class CustomerRegistrationService:
                 groups[group] = (max(minimum, rule.min_required or 1), codes)
         allowed = set(definitions)
         supplied = {submission.type: submission for submission in submissions}
+        retained = {}
+        if existing_profile is not None:
+            rows = await self.session.scalars(
+                select(CustomerDocument)
+                .where(
+                    CustomerDocument.customer_id == existing_profile.id,
+                    CustomerDocument.superseded_at.is_(None),
+                    CustomerDocument.status != DocumentStatus.REJECTED.value,
+                    CustomerDocument.finalized_at.is_not(None),
+                    CustomerDocument.number_encrypted.is_not(None),
+                )
+                .order_by(CustomerDocument.version, CustomerDocument.created_at)
+            )
+            retained = {row.document_type: row for row in rows if row.document_type in definitions}
+        available = set(supplied) | set(retained)
         for extra in set(supplied) - set(allowed):
             errors.add(
                 f"doc.{extra}",
@@ -186,20 +214,39 @@ class CustomerRegistrationService:
             )
         if require:
             for group, (minimum, codes) in groups.items():
-                if len(codes.intersection(supplied)) < minimum:
+                if len(codes.intersection(available)) < minimum:
                     choices = ", ".join(sorted(codes))
-                    errors.add("documents", "one_required", f"Upload at least {minimum} of: {choices}.")
+                    errors.add(
+                        "documents", "one_required", f"Upload at least {minimum} of: {choices}."
+                    )
         resolved: list[tuple[str, str, CustomerDocument]] = []
         for document_type, definition in definitions.items():
             submission = supplied.get(document_type)
             if submission is None:
+                if document_type in retained:
+                    document = retained[document_type]
+                    number = validate_dynamic_document_number(
+                        document_type,
+                        self.cipher.decrypt(document.number_encrypted),
+                        definition,
+                        errors,
+                    )
+                    if number is not None:
+                        resolved.append((document_type, number, document))
+                    continue
                 if require and document_type in required:
-                    errors.add(f"doc.{document_type}", "required", f"Upload the {document_type} document.")
+                    errors.add(
+                        f"doc.{document_type}", "required", f"Upload the {document_type} document."
+                    )
                 continue
-            number = validate_dynamic_document_number(document_type, submission.number, definition, errors)
+            number = validate_dynamic_document_number(
+                document_type, submission.number, definition, errors
+            )
             upload_id = submission.upload_id
             if not upload_id:
-                errors.add(f"doc.{document_type}.file", "required", "Upload the document file first.")
+                errors.add(
+                    f"doc.{document_type}.file", "required", "Upload the document file first."
+                )
                 continue
             try:
                 upload = await self.documents.attachable(actor, upload_id, document_type)
@@ -220,7 +267,9 @@ class CustomerRegistrationService:
     ) -> list[dict]:
         if not requires_delivery_sites:
             if submissions:
-                errors.add("sites", "not_applicable", "Retail customers do not have delivery sites.")
+                errors.add(
+                    "sites", "not_applicable", "Retail customers do not have delivery sites."
+                )
             return []
         if not submissions:
             errors.add("sites", "required", "Add at least one delivery site.")
@@ -237,10 +286,16 @@ class CustomerRegistrationService:
             site_address = validate_address(submission.address, errors, prefix=f"{prefix}.address")
             contact_mobile = None
             if submission.contact_mobile and str(submission.contact_mobile).strip():
-                contact_mobile = validate_mobile(submission.contact_mobile, errors, field=f"{prefix}.contactMobile")
+                contact_mobile = validate_mobile(
+                    submission.contact_mobile, errors, field=f"{prefix}.contactMobile"
+                )
             # Two sites with the same name at the same address are a duplicated row in the
             # form, not two real locations; accepting them would make dispatch ambiguous.
-            fingerprint = (name.casefold(), site_address["line1"].casefold(), site_address["pincode"])
+            fingerprint = (
+                name.casefold(),
+                site_address["line1"].casefold(),
+                site_address["pincode"],
+            )
             if fingerprint in seen:
                 errors.add(f"{prefix}.name", "duplicate", "This site is already in the list.")
                 continue
@@ -306,7 +361,9 @@ class CustomerRegistrationService:
         profile.updated_at = now
         await self._name_the_login(profile, data.owner_name, now)
 
-    async def _name_the_login(self, profile: CustomerProfile, owner_name: str, now: datetime) -> None:
+    async def _name_the_login(
+        self, profile: CustomerProfile, owner_name: str, now: datetime
+    ) -> None:
         """Give the customer's login their name, if it has none yet.
 
         Only fills a blank. A name already on the row was put there deliberately - by the
@@ -335,6 +392,8 @@ class CustomerRegistrationService:
         of what was submitted and when.
         """
         for document_type, number, upload in data.documents:
+            if upload.customer_id == profile.id and upload.finalized_at is not None:
+                continue  # Reuse only this customer's existing current document; never reattach it.
             await self._supersede_previous(profile, document_type, upload, now)
             upload.customer_id = profile.id
             upload.merchant_id = profile.merchant_id
@@ -349,7 +408,11 @@ class CustomerRegistrationService:
             upload.updated_at = now
 
     async def ensure_numbers_are_unique(
-        self, profile: CustomerProfile, data: ValidatedRegistration
+        self,
+        profile: CustomerProfile,
+        data: ValidatedRegistration,
+        *,
+        shared_customer_ids: tuple[str, ...] = (),
     ) -> None:
         """Refuse an identifier that already belongs to another of this merchant's customers.
 
@@ -379,7 +442,7 @@ class CustomerRegistrationService:
             select(CustomerDocument).where(
                 CustomerDocument.merchant_id == profile.merchant_id,
                 CustomerDocument.customer_id.is_not(None),
-                CustomerDocument.customer_id != profile.id,
+                CustomerDocument.customer_id.not_in((profile.id, *shared_customer_ids)),
                 CustomerDocument.superseded_at.is_(None),
                 CustomerDocument.number_lookup_hash.in_(list(by_hash)),
             )
@@ -428,7 +491,9 @@ class CustomerRegistrationService:
         if highest:
             replacement.version = highest + 1
 
-    async def replace_sites(self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime) -> None:
+    async def replace_sites(
+        self, profile: CustomerProfile, data: ValidatedRegistration, now: datetime
+    ) -> None:
         """Set the customer's delivery sites to exactly what was submitted."""
         existing = await self.session.scalars(
             select(CustomerDeliverySite).where(CustomerDeliverySite.customer_id == profile.id)
@@ -462,7 +527,9 @@ class CustomerRegistrationService:
                 )
             )
 
-    async def open_application(self, profile: CustomerProfile, submitted_by: str, now: datetime) -> KycApplication:
+    async def open_application(
+        self, profile: CustomerProfile, submitted_by: str, now: datetime
+    ) -> KycApplication:
         """Return the customer's pending application, creating one only if none is open.
 
         This is what makes submit idempotent: a retried request finds the existing pending
@@ -509,10 +576,14 @@ class CustomerRegistrationService:
     def queue_submission_events(
         self, profile: CustomerProfile, application: KycApplication, *, added_by: str | None = None
     ) -> None:
-        self.notifications.queue(application_received(profile.id, profile.name or "your business", application.id))
+        self.notifications.queue(
+            application_received(profile.id, profile.name or "your business", application.id)
+        )
         if profile.merchant_id:
             self.notifications.queue(
-                new_kyc_application(profile.merchant_id, application.id, profile.name or "A customer", added_by)
+                new_kyc_application(
+                    profile.merchant_id, application.id, profile.name or "A customer", added_by
+                )
             )
 
     # --- command: customer self-registration ---------------------------------------------
@@ -628,8 +699,14 @@ class CustomerRegistrationService:
                     )
                 )
             }
-            rules = await BusinessCatalogueService(self.session).active_kyc_requirements(profile.customer_type)
-            required = {rule.document_type_code for rule, _definition in rules if rule.requirement_mode == "REQUIRED"}
+            rules = await BusinessCatalogueService(self.session).active_kyc_requirements(
+                profile.customer_type
+            )
+            required = {
+                rule.document_type_code
+                for rule, _definition in rules
+                if rule.requirement_mode == "REQUIRED"
+            }
             missing_documents = sorted(required - linked)
             groups: dict[str, tuple[int, set[str]]] = {}
             for rule, _definition in rules:
@@ -638,7 +715,7 @@ class CustomerRegistrationService:
                     minimum, codes = groups.get(group, (rule.min_required or 1, set()))
                     codes.add(rule.document_type_code)
                     groups[group] = (max(minimum, rule.min_required or 1), codes)
-            for _group, (minimum, codes) in groups.items():
+            for minimum, codes in groups.values():
                 if len(codes.intersection(linked)) < minimum:
                     missing_documents.append("ANY_OF:" + "|".join(sorted(codes)))
         return missing_fields, missing_documents
@@ -655,16 +732,28 @@ class CustomerRegistrationService:
     async def _require_submittable(self, profile: CustomerProfile) -> None:
         missing_fields, missing_documents = await self.missing_for_submit(profile)
         fields = [
-            {"field": name, "code": "missing", "message": "This field is required before submitting."}
+            {
+                "field": name,
+                "code": "missing",
+                "message": "This field is required before submitting.",
+            }
             for name in missing_fields
         ]
         fields += [
-            {"field": f"doc.{kind}", "code": "missing", "message": f"Upload the {kind} document before submitting."}
+            {
+                "field": f"doc.{kind}",
+                "code": "missing",
+                "message": f"Upload the {kind} document before submitting.",
+            }
             for kind in missing_documents
         ]
         if fields:
-            raise ApiError("REGISTRATION_INCOMPLETE", status.HTTP_422_UNPROCESSABLE_CONTENT, fields=fields)
-        definition = await BusinessCatalogueService(self.session).require_active_customer_type(profile.customer_type)
+            raise ApiError(
+                "REGISTRATION_INCOMPLETE", status.HTTP_422_UNPROCESSABLE_CONTENT, fields=fields
+            )
+        definition = await BusinessCatalogueService(self.session).require_active_customer_type(
+            profile.customer_type
+        )
         if definition.requires_delivery_sites and self._on_kyc_contract(profile):
             primaries = list(
                 await self.session.scalars(
@@ -679,7 +768,13 @@ class CustomerRegistrationService:
                 raise ApiError(
                     "REGISTRATION_INCOMPLETE",
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    fields=[{"field": "sites", "code": "primary_required", "message": "Add exactly one primary delivery site."}],
+                    fields=[
+                        {
+                            "field": "sites",
+                            "code": "primary_required",
+                            "message": "Add exactly one primary delivery site.",
+                        }
+                    ],
                 )
 
     @staticmethod
@@ -703,6 +798,8 @@ class CustomerRegistrationService:
         request: CustomerRegistrationRequest,
         actor: BusinessActor,
         merchant: Merchant,
+        *,
+        shared_customer_ids: tuple[str, ...] = (),
     ) -> tuple[CustomerProfile, KycApplication]:
         """Create a customer, its login identity and a pending application, in one go.
 
@@ -753,7 +850,7 @@ class CustomerRegistrationService:
             raise self._duplicate_mobile() from exc
 
         await self.ensure_code(profile, data.customer_type)
-        await self.ensure_numbers_are_unique(profile, data)
+        await self.ensure_numbers_are_unique(profile, data, shared_customer_ids=shared_customer_ids)
         await self.link_documents(profile, data, now)
         await self.replace_sites(profile, data, now)
         self.move_to_review(profile, now)
@@ -777,15 +874,25 @@ class CustomerRegistrationService:
             "REGISTRATION_PROFILE_EXISTS",
             status.HTTP_409_CONFLICT,
             "A customer with this mobile already exists.",
-            fields=[{"field": "mobile", "code": "duplicate", "message": "A customer with this mobile already exists."}],
+            fields=[
+                {
+                    "field": "mobile",
+                    "code": "duplicate",
+                    "message": "A customer with this mobile already exists.",
+                }
+            ],
         )
 
     async def _reject_existing_customer(self, mobile: str) -> None:
-        existing = await self.session.scalar(select(CustomerProfile.id).where(CustomerProfile.mobile_number == mobile))
+        existing = await self.session.scalar(
+            select(CustomerProfile.id).where(CustomerProfile.mobile_number == mobile)
+        )
         if existing is not None:
             raise self._duplicate_mobile()
 
-    async def _link_or_create_customer_user(self, mobile: str, owner_name: str, now: datetime) -> User:
+    async def _link_or_create_customer_user(
+        self, mobile: str, owner_name: str, now: datetime
+    ) -> User:
         """Reuse the customer's existing login if there is one, otherwise create it.
 
         A customer who once started a registration already has a user row; creating a second

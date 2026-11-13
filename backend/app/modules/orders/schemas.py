@@ -113,6 +113,9 @@ class OrderQuoteRequest(BaseModel):
 
 
 class OrderQuoteResponse(BaseModel):
+    advance_available: int = Field(default=0, alias="advanceAvailable")
+    advance_applied: int = Field(default=0, alias="advanceApplied")
+    remaining_payable: int = Field(default=0, alias="remainingPayable")
     """Spec §6.3. GST is broken **out of** the total, never added on top."""
 
     items: list[OrderItemResponse] = Field(default_factory=list)
@@ -152,6 +155,12 @@ class OrderStatusEntry(BaseModel):
 
 
 class OrderResponse(BaseModel):
+    priority_code: str | None = Field(default=None, alias="priorityCode")
+    edit_version: str | None = Field(default=None, alias="editVersion")
+    can_edit: bool = Field(default=False, alias="canEdit")
+    advance_reserved: int = Field(default=0, alias="advanceReserved")
+    advance_applied: int = Field(default=0, alias="advanceApplied")
+    remaining_payable: int = Field(default=0, alias="remainingPayable")
     """Spec §3.10."""
 
     id: str
@@ -440,3 +449,12 @@ class RepeatOrderRequest(BaseModel):
     delivery_site_id: str | None = Field(default=None, alias="deliverySiteId")
 
     model_config = _CAMEL
+
+
+class OrderEditRequest(BaseModel):
+    priority_code: str | None = Field(default=None, alias="priorityCode", max_length=30)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", str_strip_whitespace=True)
+    items: list[OrderLineRequest] | None = Field(default=None, min_length=1, max_length=50)
+    delivery_date: date | None = Field(default=None, alias="deliveryDate")
+    reason: str = Field(min_length=3, max_length=255)
+    expected_version: str = Field(alias="expectedVersion", min_length=64, max_length=64)

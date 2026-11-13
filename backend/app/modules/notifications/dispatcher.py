@@ -36,7 +36,12 @@ DEFAULT_BATCH = 100
 #: forever. It stays in the table, visible, with its last error.
 MAX_ATTEMPTS = 5
 #: Back-off between attempts, indexed by attempt count.
-RETRY_DELAYS = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=30), timedelta(hours=2))
+RETRY_DELAYS = (
+    timedelta(minutes=1),
+    timedelta(minutes=5),
+    timedelta(minutes=30),
+    timedelta(hours=2),
+)
 
 
 @dataclass
@@ -75,7 +80,13 @@ class NotificationDispatcher:
         self.projects = projects
         self.recipients = RecipientResolver(session)
 
-    async def run(self, *, limit: int = DEFAULT_BATCH, now: datetime | None = None) -> DispatchReport:
+    async def run(
+        self,
+        *,
+        limit: int = DEFAULT_BATCH,
+        now: datetime | None = None,
+        entity_type: str | None = None,
+    ) -> DispatchReport:
         """Deliver everything that is due. The caller commits nothing; this commits per row.
 
         Committing per row rather than per batch is deliberate: a failure on row 40 must not
@@ -83,12 +94,19 @@ class NotificationDispatcher:
         """
         moment = now or datetime.now(UTC)
         report = DispatchReport()
-        for row in await self._due(limit, moment):
+        rows = (
+            await self._due(limit, moment)
+            if entity_type is None
+            else await self._due(limit, moment, entity_type)
+        )
+        for row in rows:
             report.considered += 1
             await self._deliver(row, report, moment)
         return report
 
-    async def _due(self, limit: int, moment: datetime) -> list[NotificationOutbox]:
+    async def _due(
+        self, limit: int, moment: datetime, entity_type: str | None = None
+    ) -> list[NotificationOutbox]:
         """Undelivered rows whose back-off has elapsed, oldest first."""
         naive = moment.replace(tzinfo=None)
         return list(
@@ -96,6 +114,7 @@ class NotificationDispatcher:
                 select(NotificationOutbox)
                 .where(
                     NotificationOutbox.delivered_at.is_(None),
+                    *([NotificationOutbox.entity_type == entity_type] if entity_type else []),
                     NotificationOutbox.attempts < MAX_ATTEMPTS,
                     (NotificationOutbox.next_attempt_at.is_(None))
                     | (NotificationOutbox.next_attempt_at <= naive),
@@ -105,7 +124,36 @@ class NotificationDispatcher:
             )
         )
 
-    async def _deliver(self, row: NotificationOutbox, report: DispatchReport, moment: datetime) -> None:
+    async def _deliver(
+        self, row: NotificationOutbox, report: DispatchReport, moment: datetime
+    ) -> None:
+        if row.entity_type == "reminder":
+            row = await self.session.scalar(
+                select(NotificationOutbox)
+                .where(NotificationOutbox.id == row.id, NotificationOutbox.delivered_at.is_(None))
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if row is None:
+                return
+            from app.modules.reminders.delivery import ReminderDispatchGuard
+
+            if not hasattr(self, "_reminder_guard"):
+                self._reminder_guard = ReminderDispatchGuard(self.session)
+            decision = await self._reminder_guard.check(row, moment)
+            if self.projects is None:
+                return
+            if decision == "WAIT":
+                row.next_attempt_at = (moment + timedelta(minutes=1)).replace(tzinfo=None)
+                await self.session.commit()
+                return
+            if decision in {"SKIP", "IN_APP"}:
+                row.delivered_at = moment.replace(tzinfo=None)
+                row.last_error = (
+                    "reminder no longer applicable" if decision == "SKIP" else "in-app only"
+                )
+                await self.session.commit()
+                return
         devices = await self.recipients.devices_for(
             row.recipient_kind, row.recipient_id, row.recipient_channel
         )
@@ -200,7 +248,10 @@ class NotificationDispatcher:
             # rather than silently marked done, which is what an operator needs to see.
             row.next_attempt_at = None
             logger.warning(
-                "Notification %s abandoned after %s attempts: %s", row.id, row.attempts, row.last_error
+                "Notification %s abandoned after %s attempts: %s",
+                row.id,
+                row.attempts,
+                row.last_error,
             )
             return
         delay = RETRY_DELAYS[min(row.attempts - 1, len(RETRY_DELAYS) - 1)]
