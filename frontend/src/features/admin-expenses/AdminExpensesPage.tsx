@@ -448,7 +448,7 @@ function ExpenseDialog({
 }) {
   const open = expense !== null;
   const existing = expense && expense !== "new" ? expense : null;
-  const emptyFuel = {destination: "", vehicleId: "", driverId: "", fuelType: "", kmReading: "", distance: "", liters: ""};
+  const emptyFuel = {destination: "", vehicleId: "", driverId: "", fuelType: "", startOdometer: "", endOdometer: "", liters: ""};
   const [form, setForm] = useState({ categoryId: "", amount: "", date: "", note: "", ...emptyFuel });
   const [fuelEnabled, setFuelEnabled] = useState(true);
   const [receipt, setReceipt] = useState<File | null>(null);
@@ -468,7 +468,7 @@ function ExpenseDialog({
     setSavedExpenseId(null);
     setForm(
       existing
-        ? { categoryId: existing.category.id, amount: String(existing.amount), date: existing.date, note: existing.note ?? "", destination: existing.destination ?? "", vehicleId: existing.vehicleId ?? "", driverId: existing.driverId ?? "", fuelType: existing.fuelType ?? "", kmReading: existing.kmReading == null ? "" : String(existing.kmReading), distance: existing.distance == null ? "" : String(existing.distance), liters: existing.liters == null ? "" : String(existing.liters) }
+        ? { categoryId: existing.category.id, amount: String(existing.amount), date: existing.date, note: existing.note ?? "", destination: existing.destination ?? "", vehicleId: existing.vehicleId ?? "", driverId: existing.driverId ?? "", fuelType: existing.fuelType ?? "", startOdometer: existing.startOdometer == null ? "" : String(existing.startOdometer), endOdometer: existing.endOdometer == null ? "" : String(existing.endOdometer), liters: existing.liters == null ? "" : String(existing.liters) }
         : { categoryId: "", amount: "", date: expenseToday(), note: "", ...emptyFuel }
     );
   }, [open, existing]);
@@ -495,7 +495,7 @@ function ExpenseDialog({
   const errors = {
     categoryId: form.categoryId ? undefined : "Choose a category.",
     amount: amount > 0 ? undefined : "Enter an amount greater than 0.",
-    fuel: isFuel && fuelEnabled && (!form.vehicleId || !form.driverId || !form.fuelType || !form.kmReading || !Number.isFinite(Number(form.kmReading)) || Number(form.kmReading) < 0 || !fuelMileage(form.distance, form.liters)) ? "Choose a vehicle and driver, and enter valid KM reading, distance and liters." : undefined,
+    fuel: isFuel && fuelEnabled && (!form.vehicleId || !form.driverId || !form.fuelType || form.startOdometer === "" || form.endOdometer === "" || Number(form.endOdometer) < Number(form.startOdometer) || (form.liters !== "" && Number(form.liters) <= 0)) ? "Choose a vehicle and driver, and enter valid starting and ending odometer readings." : undefined,
     receipt: receipt && (receipt.size > 5 * 1024 * 1024 || !["image/jpeg", "image/png", "application/pdf"].includes(receipt.type)) ? "Choose a JPG, PNG or PDF up to 5 MB." : undefined,
     date: !form.date ? "Choose a date." : form.date > expenseToday() ? "An expense cannot be dated in the future." : undefined
   };
@@ -507,7 +507,7 @@ function ExpenseDialog({
     // An emptied note is sent as "" so the server clears it on edit.
     mutation.mutate({ categoryId: form.categoryId, amount, date: form.date, note: existing ? form.note.trim() : form.note.trim() || undefined,
       ...(isFuel ? {destination: form.destination.trim()} : {}),
-      ...(isFuel && fuelEnabled ? {vehicleId:form.vehicleId, driverId:form.driverId, fuelType:form.fuelType, kmReading:Number(form.kmReading), distance:Number(form.distance), liters:Number(form.liters)} : {})
+      ...(isFuel && fuelEnabled ? {vehicleId:form.vehicleId, driverId:form.driverId, fuelType:form.fuelType, startOdometer:Number(form.startOdometer), endOdometer:Number(form.endOdometer), liters:form.liters === "" ? null : Number(form.liters)} : {})
     });
   }
 
@@ -569,12 +569,14 @@ function ExpenseDialog({
               ...(fuelOptions.data?.drivers ?? []), ...(existing?.driverId && !fuelOptions.data?.drivers.some((d) => d.value === existing.driverId) ? [{value:existing.driverId,label:existing.driverName || "Recorded driver"}] : [])
             ]} /></Field>
             <Field label="Fuel type" required><Select value={form.fuelType} onChange={set("fuelType")} placeholder="Choose fuel type" options={[...(fuelOptions.data?.fuelTypes ?? []), ...(existing?.fuelType && !fuelOptions.data?.fuelTypes.some((item) => item.value === existing.fuelType) ? [{value:existing.fuelType,label:existing.fuelType}] : [])]} /></Field>
-            <Field label="KM reading" required><Input type="number" min="0" step="0.01" value={form.kmReading} onChange={set("kmReading")} /></Field>
-            <Field label="Distance (km)" required><Input type="number" min="0.01" step="0.01" value={form.distance} onChange={set("distance")} /></Field>
-            <Field label="Liters" required><Input type="number" min="0.001" step="0.001" value={form.liters} onChange={set("liters")} /></Field>
+            <Field label="Starting odometer" required><Input type="number" min="0" step="0.01" value={form.startOdometer} onChange={set("startOdometer")} /></Field>
+            <Field label="Ending odometer" required><Input type="number" min="0" step="0.01" value={form.endOdometer} onChange={set("endOdometer")} /></Field>
+            <Field label="Fuel consumed (liters)" optional hint="Leave blank when consumption is not yet known."><Input type="number" min="0.001" step="0.001" value={form.liters} onChange={set("liters")} /></Field>
           </div>
           <Field label="Destination" optional><Input value={form.destination} onChange={set("destination")} maxLength={160} placeholder="Route or destination" /></Field>
-          <div className="card" style={{padding:12}} aria-live="polite">Avg: {fuelMileage(form.distance,form.liters)?.toFixed(2) ?? "—"} km/L</div>
+          <div className="card" style={{padding:12}} aria-live="polite">
+            Distance: {form.startOdometer !== "" && form.endOdometer !== "" ? Math.max(Number(form.endOdometer) - Number(form.startOdometer), 0).toFixed(2) : "—"} km · Mileage: {fuelMileage(String(Number(form.endOdometer) - Number(form.startOdometer)), form.liters)?.toFixed(2) ?? "—"} km/L
+          </div>
           {submitted && errors.fuel ? <Alert tone="error">{errors.fuel}</Alert> : null}
           {fuelOptions.error ? <InlineError error={fuelOptions.error} title="Vehicles and drivers could not be loaded" onRetry={() => void fuelOptions.refetch()} /> : null}
         </fieldset> : null}

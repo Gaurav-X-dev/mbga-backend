@@ -277,6 +277,13 @@ export type CreateOrderInput = {
   items: OrderLine[];
   orderMode?: "NEW" | "REPEAT";
   deliverySiteId?: string | null;
+  sameAsBillTo?: boolean;
+  shipTo?: {
+    name: string;
+    address: { line1: string; line2?: string; city: string; state: string; pincode: string; deliveryInstructions?: string };
+    contactName?: string;
+    contactNumber?: string;
+  } | null;
 };
 
 export async function listOrderCylinderTypes(merchantId: string, customerId: string, signal?: AbortSignal) {

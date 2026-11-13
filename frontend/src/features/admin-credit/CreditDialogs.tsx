@@ -52,17 +52,25 @@ export function ConfigureCreditDialog({
 
   const limit = Number(form.limit);
   const days = form.days ? Number(form.days) : null;
+  const industrial = customer?.customerType === "INDUSTRIAL";
   const errors = {
-    limit: !Number.isInteger(limit) || limit < 0 ? "Whole rupees, 0 or more." : undefined,
-    days: days !== null && (!Number.isInteger(days) || days < 1 || days > 365) ? "1–365 days." : undefined,
+    limit: !industrial && (!Number.isInteger(limit) || limit < 0) ? "Whole rupees, 0 or more." : undefined,
+    days: industrial && form.enabled && days === null
+      ? "Credit days are required for an industrial customer."
+      : days !== null && (!Number.isInteger(days) || days < 1 || days > 365) ? "1–365 days." : undefined,
     reason: form.reason.trim().length < 5 ? "At least 5 characters - it is recorded in the audit trail." : undefined
   };
   const valid = !Object.values(errors).some(Boolean);
-  const belowUsed = customer && form.enabled && limit < customer.usedCredit;
+  const belowUsed = customer && !industrial && form.enabled && limit < customer.usedCredit;
 
   const mutation = useMutation({
     mutationFn: () =>
-      updateCustomerCredit(customer!.customerId, { creditEnabled: form.enabled, creditLimit: limit, creditDays: days, reason: form.reason.trim() }),
+      updateCustomerCredit(customer!.customerId, {
+        creditEnabled: form.enabled,
+        creditLimit: industrial ? 0 : limit,
+        creditDays: industrial ? days : null,
+        reason: form.reason.trim()
+      }),
     onSuccess: () => {
       onSaved();
       onClose();
@@ -104,14 +112,18 @@ export function ConfigureCreditDialog({
           onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
         />
         <div className="grid-2">
+          {!industrial ? (
           <Field label="Credit limit (₹)" required error={errors.limit}>
             <Input type="number" min={0} step={1} inputMode="numeric" value={form.limit} onChange={(e) => setForm({ ...form, limit: e.target.value })} disabled={!form.enabled} />
           </Field>
-          <Field label="Credit days" optional error={errors.days} hint="Days to pay each invoice.">
+          ) : null}
+          {industrial ? (
+          <Field label="Credit days" required error={errors.days} hint="Starts when the merchant confirms each order.">
             <Input type="number" min={1} max={365} inputMode="numeric" value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} disabled={!form.enabled} />
           </Field>
+          ) : null}
         </div>
-        {form.enabled && limit === 0 ? (
+        {form.enabled && !industrial && limit === 0 ? (
           <Alert tone="info">With a ₹0 limit this customer's orders are not checked at all. Set a limit above ₹0 to enforce one.</Alert>
         ) : null}
         {belowUsed ? (

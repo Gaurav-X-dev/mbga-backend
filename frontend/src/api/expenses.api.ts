@@ -26,6 +26,8 @@ export type FuelFields = {
   driverName?: string | null;
   fuelType?: string | null;
   kmReading?: number | null;
+  startOdometer?: number | null;
+  endOdometer?: number | null;
   distance?: number | null;
   liters?: number | null;
   mileage?: number | null;

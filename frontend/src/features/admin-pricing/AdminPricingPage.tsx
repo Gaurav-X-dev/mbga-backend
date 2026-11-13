@@ -88,9 +88,9 @@ export function AdminPricingPage({
 
   const entryColumns: Column<PriceEntry>[] = [
     { key: "type", header: "Cylinder", primary: true, render: (e) => <strong className="nowrap">{cylinderLabel(e.cylinderType)}</strong> },
-    { key: "base", header: "BPCL base rate", align: "right", render: (e) => money(e.bpclBaseRate) },
-    { key: "markup", header: "Tier markup", align: "right", render: (e) => money(e.tierMarkup) },
-    { key: "price", header: "Customer price", align: "right", render: (e) => <strong>{money(e.customerPrice)}</strong> }
+    { key: "base", header: "Plant EX-MI", align: "right", render: (e) => money(e.plantExMiPrice) },
+    { key: "rsp", header: "RSP", align: "right", render: (e) => money(e.rspPrice) },
+    { key: "profit", header: "Gross difference", align: "right", render: (e) => <strong>{money(e.rspPrice - e.plantExMiPrice)}</strong> }
   ];
 
   const logColumns: Column<PricingChangeLog>[] = [
@@ -197,7 +197,7 @@ export function AdminPricingPage({
 
           <Card
             title="Standard rates"
-            subtitle={month ? `${month.label} · customer price = base rate + markup, GST-inclusive` : undefined}
+            subtitle={month ? `${month.label} · RSP is the GST-inclusive customer selling price` : undefined}
             actions={
               monthList.length ? (
                 <span className="row" style={{ gap: 8 }}>
@@ -304,7 +304,7 @@ function PriceDialog({
     if (!entry) return;
     setSubmitted(false);
     const start = today() < month.effectiveFrom ? month.effectiveFrom : today() > month.effectiveTo ? month.effectiveTo : today();
-    setForm({ base: String(entry.bpclBaseRate), markup: String(entry.tierMarkup), effectiveFrom: start, reason: "" });
+    setForm({ base: String(entry.plantExMiPrice), markup: String(entry.rspPrice), effectiveFrom: start, reason: "" });
   }, [entry, month]);
 
   const mutation = useMutation({
@@ -312,8 +312,8 @@ function PriceDialog({
       updatePriceEntry(merchantId, month.id, {
         cylinderType: entry!.cylinderType,
         tier: entry!.tier,
-        bpclBaseRate: Number(form.base),
-        tierMarkup: Number(form.markup),
+        plantExMiPrice: Number(form.base),
+        rspPrice: Number(form.markup),
         effectiveFrom: form.effectiveFrom || null,
         reason: form.reason.trim() || null
       }),
@@ -325,14 +325,15 @@ function PriceDialog({
 
   const base = Number(form.base);
   const markup = Number(form.markup);
-  const baseError = form.base === "" || !Number.isFinite(base) || base <= 0 ? "Enter the BPCL base rate." : undefined;
-  const markupError = form.markup === "" || !Number.isFinite(markup) || markup < 0 ? "Enter the markup (0 or more)." : undefined;
+  const baseError = form.base === "" || !Number.isFinite(base) || base <= 0 ? "Enter the Plant EX-MI price." : undefined;
+  const markupError = form.markup === "" || !Number.isFinite(markup) || markup <= 0 ? "Enter the RSP price." : undefined;
   const dateError =
     form.effectiveFrom && (form.effectiveFrom < month.effectiveFrom || form.effectiveFrom > month.effectiveTo)
       ? `Must fall within ${month.label} (${formatDate(month.effectiveFrom)} – ${formatDate(month.effectiveTo)}).`
       : undefined;
-  const changed = entry ? base !== entry.bpclBaseRate || markup !== entry.tierMarkup : false;
-  const preview = !baseError && !markupError ? base + markup : null;
+  const changed = entry ? base !== entry.plantExMiPrice || markup !== entry.rspPrice : false;
+  const preview = !baseError && !markupError ? markup - base : null;
+  const profitPercent = preview !== null && base > 0 ? (preview / base) * 100 : null;
   const error = mutation.error ? normalizeError(mutation.error) : null;
 
   function submit() {
@@ -369,16 +370,17 @@ function PriceDialog({
         }}
       >
         <div className="form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="BPCL base rate (₹)" required error={submitted ? baseError : undefined}>
+          <Field label="Plant EX-MI Price (₹)" required error={submitted ? baseError : undefined}>
             <Input type="number" inputMode="decimal" min={0} step="0.01" value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value })} autoFocus />
           </Field>
-          <Field label="Tier markup (₹)" required error={submitted ? markupError : undefined}>
+          <Field label="RSP Price (₹)" required error={submitted ? markupError : undefined}>
             <Input type="number" inputMode="decimal" min={0} step="0.01" value={form.markup} onChange={(e) => setForm({ ...form, markup: e.target.value })} />
           </Field>
         </div>
         <Alert tone="info">
-          Customer price: <strong>{preview === null ? "—" : formatCurrency(preview)}</strong>
-          {entry ? <span className="text-muted"> (now {formatCurrency(entry.customerPrice)})</span> : null}. The server computes the final figure.
+          Gross price difference: <strong>{preview === null ? "—" : formatCurrency(preview)}</strong>
+          {profitPercent !== null ? <span className="text-muted"> ({profitPercent.toFixed(2)}%)</span> : null}.
+          This is before transport, tax and operating expenses.
         </Alert>
         <Field label="Effective from" optional error={dateError}>
           <Input type="date" min={month.effectiveFrom} max={month.effectiveTo} value={form.effectiveFrom} onChange={(e) => setForm({ ...form, effectiveFrom: e.target.value })} />

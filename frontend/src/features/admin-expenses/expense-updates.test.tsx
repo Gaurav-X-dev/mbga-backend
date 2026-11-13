@@ -50,20 +50,20 @@ describe("expense form and dashboard", () => {
     await user.selectOptions(screen.getByLabelText(/^Vehicle/),"v1");
     await user.selectOptions(screen.getByLabelText(/^Driver/),"d1");
     await user.selectOptions(screen.getByLabelText(/^Fuel type/),"DIESEL");
-    await user.type(screen.getByLabelText(/KM reading/),"15000");
-    await user.type(screen.getByLabelText(/Distance/),"150");
-    await user.type(screen.getByLabelText(/^Liters/),"10");
-    expect(screen.getByText("Avg: 15.00 km/L")).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Starting odometer/),"14850");
+    await user.type(screen.getByLabelText(/Ending odometer/),"15000");
+    await user.type(screen.getByLabelText(/Fuel consumed/),"10");
+    expect(screen.getByText(/Distance: 150.00 km · Mileage: 15.00 km\/L/)).toBeInTheDocument();
     await user.upload(screen.getByLabelText(/^Receipt/),new File(["image"],"bill.png",{type:"image/png"}));
     await user.click(screen.getAllByRole("button",{name:"Add expense"}).slice(-1)[0]);
     await waitFor(() => expect(api.uploadExpenseReceipt).toHaveBeenCalledWith("m1","e1",expect.any(File)));
-    expect(api.createExpense).toHaveBeenCalledWith("m1",expect.objectContaining({vehicleId:"v1",driverId:"d1",distance:150,liters:10,kmReading:15000,fuelType:"DIESEL"}));
+    expect(api.createExpense).toHaveBeenCalledWith("m1",expect.objectContaining({vehicleId:"v1",driverId:"d1",startOdometer:14850,endOdometer:15000,liters:10,fuelType:"DIESEL"}));
   });
   it("keeps non-fuel expense payloads unchanged",async () => {
     const user=userEvent.setup();renderWithProviders(<AdminExpensesPage merchantId="m1" />,"/admin/expenses");
     await openNew(user);
     await user.selectOptions(screen.getAllByLabelText(/^Category/).slice(-1)[0],"rent");
-    expect(screen.queryByLabelText(/^Liters/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Fuel consumed/)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText(/Amount/),"2000");
     await user.click(screen.getAllByRole("button",{name:"Add expense"}).slice(-1)[0]);
     await waitFor(() => expect(api.createExpense).toHaveBeenCalledWith("m1",{categoryId:"rent",amount:2000,date:expenseToday(),note:undefined}));
@@ -73,7 +73,7 @@ describe("expense form and dashboard", () => {
     const user=userEvent.setup();renderWithProviders(<AdminExpensesPage merchantId="m1" />,"/admin/expenses");
     await screen.findAllByRole("button",{name:"Fuel"});
     await user.click(screen.getAllByRole("button",{name:"Fuel"})[0]);
-    expect(screen.queryByLabelText(/^Liters/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Fuel consumed/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button",{name:"Save changes"}));
     await waitFor(() => expect(api.updateExpense).toHaveBeenCalledWith("m1","e1",expect.not.objectContaining({vehicleId:expect.anything()})));
   });

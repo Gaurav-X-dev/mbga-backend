@@ -47,6 +47,8 @@ export function CreateOrderDialog({ open, merchantId, onClose, onCreated }: Prop
   const [search, setSearch] = useState("");
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [siteId, setSiteId] = useState("");
+  const [customShip, setCustomShip] = useState(false);
+  const [ship, setShip] = useState({ name: "", line1: "", line2: "", city: "", state: "", pincode: "", contactName: "", contactNumber: "", instructions: "" });
   const [orderMode, setOrderMode] = useState<"NEW" | "REPEAT">("NEW");
   const [idempotencyKey, setIdempotencyKey] = useState(newKey);
   const [repeatBanner, setRepeatBanner] = useState<{ tone: "warning" | "danger" | "info"; message: string } | null>(null);
@@ -61,6 +63,8 @@ export function CreateOrderDialog({ open, merchantId, onClose, onCreated }: Prop
     setSearch("");
     setQuantities({});
     setSiteId("");
+    setCustomShip(false);
+    setShip({ name: "", line1: "", line2: "", city: "", state: "", pincode: "", contactName: "", contactNumber: "", instructions: "" });
     setOrderMode("NEW");
     setRepeatBanner(null);
     setOrderBlockError(null);
@@ -240,6 +244,13 @@ export function CreateOrderDialog({ open, merchantId, onClose, onCreated }: Prop
           items: lines,
           orderMode,
           deliverySiteId: isIndustrial ? siteId || null : siteId || undefined,
+          sameAsBillTo: !customShip,
+          shipTo: customShip ? {
+            name: ship.name,
+            address: { line1: ship.line1, line2: ship.line2 || undefined, city: ship.city, state: ship.state, pincode: ship.pincode, deliveryInstructions: ship.instructions || undefined },
+            contactName: ship.contactName || undefined,
+            contactNumber: ship.contactNumber || undefined,
+          } : null,
         },
         idempotencyKey
       ),
@@ -278,7 +289,7 @@ export function CreateOrderDialog({ open, merchantId, onClose, onCreated }: Prop
     Boolean(customer) &&
     eligible &&
     basketValid &&
-    (!isIndustrial || Boolean(siteId)) &&
+    (!customShip ? (!isIndustrial || Boolean(siteId)) : Boolean(ship.name && ship.line1 && ship.city && ship.state && /^\d{6}$/.test(ship.pincode))) &&
     Boolean(quote.data) &&
     !quote.isFetching;
 
@@ -736,7 +747,25 @@ export function CreateOrderDialog({ open, merchantId, onClose, onCreated }: Prop
               </div>
 
               {/* STEP 4: DELIVERY SITE */}
-              {isIndustrial ? (
+              <label className="row">
+                <input type="checkbox" checked={customShip} onChange={(e) => setCustomShip(e.target.checked)} />
+                Ship to a different address for this order
+              </label>
+              {customShip ? (
+                <div className="stack">
+                  <div className="grid-2">
+                    <Field label="Delivery name" required><Input value={ship.name} onChange={(e) => setShip({...ship,name:e.target.value})} /></Field>
+                    <Field label="Contact person" optional><Input value={ship.contactName} onChange={(e) => setShip({...ship,contactName:e.target.value})} /></Field>
+                    <Field label="Address line 1" required><Input value={ship.line1} onChange={(e) => setShip({...ship,line1:e.target.value})} /></Field>
+                    <Field label="Address line 2" optional><Input value={ship.line2} onChange={(e) => setShip({...ship,line2:e.target.value})} /></Field>
+                    <Field label="City" required><Input value={ship.city} onChange={(e) => setShip({...ship,city:e.target.value})} /></Field>
+                    <Field label="State" required><Input value={ship.state} onChange={(e) => setShip({...ship,state:e.target.value})} /></Field>
+                    <Field label="Pincode" required error={ship.pincode && !/^\d{6}$/.test(ship.pincode) ? "Enter a 6-digit pincode." : undefined}><Input inputMode="numeric" maxLength={6} value={ship.pincode} onChange={(e) => setShip({...ship,pincode:e.target.value.replace(/\D/g,"")})} /></Field>
+                    <Field label="Contact number" optional><Input inputMode="tel" value={ship.contactNumber} onChange={(e) => setShip({...ship,contactNumber:e.target.value})} /></Field>
+                  </div>
+                  <Field label="Delivery instructions" optional><Input value={ship.instructions} onChange={(e) => setShip({...ship,instructions:e.target.value})} /></Field>
+                </div>
+              ) : isIndustrial ? (
                 <Field
                   label="Delivery Site"
                   required

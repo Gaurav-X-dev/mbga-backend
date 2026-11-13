@@ -3,13 +3,13 @@ import { cleanParams } from "./params";
 
 /**
  * Admin channel: /admin/pricing. Merchant-scoped - `merchantId` on every call.
- * `customerPrice` is computed by the backend (base rate + tier markup) and never sent.
+ * RSP is the customer selling price; profit is derived from RSP minus Plant EX-MI.
  */
 export type PriceEntry = {
   cylinderType: string;
   tier: string;
-  bpclBaseRate: number;
-  tierMarkup: number;
+  plantExMiPrice: number;
+  rspPrice: number;
   customerPrice: number;
 };
 
@@ -29,8 +29,8 @@ export type PricingMonth = {
 export type PriceEntryInput = {
   cylinderType: string;
   tier?: string;
-  bpclBaseRate: number;
-  tierMarkup: number;
+  plantExMiPrice: number;
+  rspPrice: number;
   effectiveFrom?: string | null;
   reason?: string | null;
 };

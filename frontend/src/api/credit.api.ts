@@ -22,6 +22,7 @@ export type CreditSettings = {
 export type CustomerCredit = {
   customerId: string;
   customerName: string;
+  customerType?: "RETAIL" | "INDUSTRIAL" | string;
   /** Human-readable code (e.g. CUS-0042), when the backend sends it. */
   customerCode?: string | null;
   merchantId: string;
