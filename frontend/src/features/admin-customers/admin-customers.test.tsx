@@ -11,6 +11,7 @@ vi.mock("../../api/customers.api", async (importOriginal) => {
   const actual = await importOriginal<typeof customersApi>();
   return {
     ...actual,
+    getCustomerKycRequirements: vi.fn(),
     createCustomer: vi.fn(),
     uploadDocument: vi.fn()
   };
@@ -36,6 +37,7 @@ describe("AddCustomerDialog (3-Step Registration Wizard)", () => {
       }
     });
 
+    vi.mocked(customersApi.getCustomerKycRequirements).mockImplementation(async type=>({customerType:type,minimumDocuments:type==="INDUSTRIAL"?2:1,requiresDeliverySites:type==="INDUSTRIAL",documents:(type==="INDUSTRIAL"?["GST","PAN"]:["AADHAAR"]).map(code=>({type:code,label:code,required:true,numberFormat:"Valid registration number"}))}));
     vi.mocked(locationsApi.lookupPincode).mockResolvedValue({
       pincode: "122018",
       serviceable: true,
@@ -147,7 +149,7 @@ describe("AddCustomerDialog (3-Step Registration Wizard)", () => {
 
     // Wait for pincode lookup
     await waitFor(() => {
-      expect(locationsApi.lookupPincode).toHaveBeenCalledWith("122018", "merch-1", expect.anything());
+      expect(locationsApi.lookupPincode).toHaveBeenCalledWith("122018", "merch-1", expect.anything(), "admin");
     });
 
     await user.type(screen.getByLabelText(/delivery address line 1/i), "Shop 12, Main Market");
@@ -252,8 +254,8 @@ describe("AddCustomerDialog (3-Step Registration Wizard)", () => {
     // Move to Step 2
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
-    // Verify Industrial KYC defaults to FSSAI & GST
-    expect(screen.getByText("FSSAI Licence")).toBeInTheDocument();
+    // Verify Industrial KYC follows the returned GST/PAN requirements
+    expect(screen.getByText("PAN Card")).toBeInTheDocument();
     expect(screen.getByText("GST Certificate")).toBeInTheDocument();
   });
 });

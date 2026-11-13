@@ -29,8 +29,8 @@ CYLINDER_LABELS: dict[CylinderType, str] = {
     CylinderType.LPG_5KG: "5 KG Cylinder",
     CylinderType.LPG_10KG: "10 KG Cylinder",
     CylinderType.LPG_19KG: "19 KG Cylinder",
-    CylinderType.LPG_47_5KG_L: "47.5 KG Cylinder (Liquid)",
-    CylinderType.LPG_47_5KG_V: "47.5 KG Cylinder (Vapour)",
+    CylinderType.LPG_47_5KG_L: "47.5 KG Cylinder (LOT)",
+    CylinderType.LPG_47_5KG_V: "47.5 KG Cylinder (VOT)",
     CylinderType.LPG_422KG_HIPPO: "422 KG Hippo",
 }
 

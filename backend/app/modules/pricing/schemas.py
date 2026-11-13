@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, computed_field, field_validator
 
 from app.modules.pricing.constants import PricingMonthStatus, PricingTier
 
@@ -58,7 +58,15 @@ class CylinderCodeModel(BaseModel):
         return code
 
 
-class PriceEntryResponse(CylinderCodeModel):
+class PricingCylinderLabel(BaseModel):
+    @computed_field(alias="cylinderLabel")
+    @property
+    def cylinder_label(self) -> str:
+        code = self.cylinder_type
+        return {"LPG_47_5KG_L": "47.5 kg (LOT)", "LPG_47_5KG_V": "47.5 kg (VOT)"}.get(code, code)
+
+
+class PriceEntryResponse(CylinderCodeModel, PricingCylinderLabel):
     """One rate in a month. `customerPrice` is server-computed and read-only."""
 
     cylinder_type: str = Field(alias="cylinderType")
@@ -108,7 +116,7 @@ class ChangedBy(BaseModel):
     role: str
 
 
-class PricingChangeLogItem(BaseModel):
+class PricingChangeLogItem(PricingCylinderLabel):
     id: str
     pricing_month_id: str = Field(alias="pricingMonthId")
     cylinder_type: str = Field(alias="cylinderType")

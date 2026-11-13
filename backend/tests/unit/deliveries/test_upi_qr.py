@@ -17,7 +17,7 @@ def test_dynamic_upi_fields_and_order_reference_are_encoded() -> None:
         upi_id="merchant@bank",
         payee_name="MBGA Indore & Sons",
         amount="3200.50",
-        order_id="order-1042",
+        order_number="ORD-2610-1042",
         notes="Order #1042 / Gate 2",
     )
 
@@ -42,10 +42,12 @@ def test_without_a_note_the_order_is_still_referenced() -> None:
         upi_id="merchant@bank",
         payee_name="MBGA",
         amount="100.00",
-        order_id="order-7",
+        order_number="ORD-2610-0007",
     )
 
-    assert parse_qs(urlparse(link).query)["tn"] == ["Order order-7"]
+    # With no note of its own, the order number is the note - the thing both the driver
+    # and the customer can read off their screens and match.
+    assert parse_qs(urlparse(link).query)["tn"] == ["ORD-2610-0007"]
 
 
 def test_a_long_note_is_cut_to_what_upi_accepts() -> None:
@@ -54,7 +56,7 @@ def test_a_long_note_is_cut_to_what_upi_accepts() -> None:
         upi_id="merchant@bank",
         payee_name="MBGA",
         amount="100.00",
-        order_id="order-7",
+        order_number="ORD-2610-0007",
         notes="x" * 200,
     )
 
@@ -67,7 +69,7 @@ def test_base64_is_a_real_300_pixel_png() -> None:
             upi_id="merchant@bank",
             payee_name="MBGA",
             amount="100.00",
-            order_id="order-1",
+            order_number="ORD-2610-0001",
         )
     )
 

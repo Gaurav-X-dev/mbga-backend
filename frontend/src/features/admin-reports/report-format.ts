@@ -28,7 +28,7 @@ export function cylinderLabel(code: string) {
   if (!match) return humanize(code);
   const [, whole, fraction, suffix] = match;
   const weight = fraction ? `${whole}.${fraction}` : whole;
-  const tag = suffix ? ` ${suffix === "L" ? "(L)" : suffix === "V" ? "(V)" : humanize(suffix)}` : "";
+  const tag = suffix ? ` ${suffix === "L" ? "(LOT)" : suffix === "V" ? "(VOT)" : humanize(suffix)}` : "";
   return `${weight} kg${tag}`;
 }
 

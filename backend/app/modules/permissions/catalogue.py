@@ -79,6 +79,7 @@ DESCRIPTIONS: dict[str, str] = {
     # --- Customers ------------------------------------------------------------------------
     "customers.view": "Open the Customers screen and read any customer.",
     "customers.create": "Register a new customer.",
+    "customers.delete": "Permanently delete customers without business records. Assign only to trusted staff.",
     "customers.update": "Change a customer's details, addresses or delivery sites.",
     "customers.review": "Open a pending customer application and work through it.",
     "customers.approve": "Approve a customer application so they can order.",
@@ -128,6 +129,9 @@ DESCRIPTIONS: dict[str, str] = {
     "credit.view": "See a customer's credit limit and what they owe.",
     "credit.manage": "Set a customer's credit limit and terms.",
     "credit.override": "Let an order through even though it breaks the credit limit.",
+    # --- Competitor pricing -----------------------------------------------------------------
+    "competitor_pricing.manage": "Add and retire the rival agencies whose prices are tracked.",
+    "competitor_pricing.record": "Enter what a rival is charging this month, from a market survey.",
     # --- Business catalogue -----------------------------------------------------------------
     "catalogue.view": "See the cylinder types, customer types and KYC document types in use.",
     "catalogue.manage": "Add and retire cylinder types, customer types and KYC document types, and set what each customer type may order.",

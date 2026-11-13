@@ -49,6 +49,7 @@ class FifoAllocationResponse(BaseModel):
 
 
 class CreditAfterPaymentResponse(BaseModel):
+    credit_active: bool = Field(default=False, alias="creditActive")
     credit_limit: int = Field(alias="creditLimit")
     used_credit: int = Field(alias="usedCredit")
     available_credit: int = Field(alias="availableCredit")

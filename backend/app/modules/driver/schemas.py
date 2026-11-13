@@ -553,6 +553,7 @@ class OutForDeliveryBulkRequest(BaseModel):
 
 
 class PaymentSummaryResponseData(BaseModel):
+    advance_reserved: int = Field(default=0, alias="advanceReserved")
     """What the payment screen needs, in one call.
 
     Three figures that have to agree on one screen - this delivery, what was owed before, and

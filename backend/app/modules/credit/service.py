@@ -75,7 +75,7 @@ class CreditLimitService:
                 False,
                 int(customer.credit_limit or 0),
                 0,
-                int(customer.credit_limit or 0),
+                0,
                 proposed_amount,
             )
 
@@ -88,19 +88,22 @@ class CreditLimitService:
             .with_for_update()
         )
         invoiced = sum(int(balance or 0) for balance in invoice_balances)
-        pending_query = select(Order.total_amount).where(
+        pending_query = select(Order.id, Order.total_amount).where(
             Order.customer_id == customer.id,
             Order.invoice_id.is_(None),
             Order.status.not_in((OrderStatus.CANCELLED.value, OrderStatus.DELIVERED.value)),
         )
         if replacing_order_id:
             pending_query = pending_query.where(Order.id != replacing_order_id)
-        pending_amounts = await self.session.scalars(pending_query.with_for_update())
-        pending = sum(int(amount or 0) for amount in pending_amounts)
-        used = invoiced + pending
+        pending_orders = (await self.session.execute(pending_query.with_for_update())).all()
+        pending = sum(int(amount or 0) for _, amount in pending_orders)
+        from app.modules.finance.advances import credit_adjustment
+        held, usable = await credit_adjustment(self.session, customer, [oid for oid, _ in pending_orders], proposed_amount)
+        used = invoiced + max(pending-held,0)
+        proposed_amount = max(proposed_amount-usable,0)
         limit = int(customer.credit_limit or 0)
         return CreditSnapshot(
-            customer.id, enabled, limit, used, max(limit - used, 0), int(proposed_amount)
+            customer.id, enabled, limit, used, max(limit - used, 0) if enabled else 0, int(proposed_amount)
         )
 
     async def enforce(

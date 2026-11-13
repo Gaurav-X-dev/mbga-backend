@@ -79,7 +79,11 @@ reference_router = APIRouter(tags=["Delivery Reference"])
     dependencies=_read_guards,
     responses=error_responses(401, 403),
 )
-async def todays_deliveries(service: ServiceDep) -> list[DriverDeliveryResponse]:
+async def todays_deliveries(
+    service: ServiceDep,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DriverDeliveryResponse]:
     """Today's round, whatever state each stop is in.
 
     Completed and failed stops stay on the list: a driver reads it to see how far through the
@@ -87,7 +91,7 @@ async def todays_deliveries(service: ServiceDep) -> list[DriverDeliveryResponse]
     which is which - `COMPLETED`, `FAILED`, `ON_LOCATION`, `PENDING` - and a stop the office
     cancelled under him reads `FAILED`, beside the notification that told him so.
     """
-    return await service.list_deliveries(DeliveryFilters(scheduled_on=business_today()))
+    return await service.list_deliveries(DeliveryFilters(scheduled_on=business_today(), include_overdue=True, limit=limit, offset=offset))
 
 
 @deliveries_router.get(
@@ -279,18 +283,18 @@ async def delivery_completed_detail(
 )
 async def delivery_history(
     service: ServiceDep,
-    period: str = Query("today"),
+    period: str = Query("all"),
     page: int = Query(1, ge=1),
     limit: Annotated[int, Query(ge=1, le=200)] = 20,
     status: str = Query(
         "ALL",
         description=(
-            "completed, failed, or ALL for both - the same words each row carries. "
-            "Anything else means both."
+            "ALL, active, pending, out_for_delivery, on_location, completed, failed or settled. "
+            "Stored status aliases ASSIGNED, SCHEDULED, DISPATCHED, DELIVERED and CANCELLED are accepted."
         ),
     ),
 ) -> HistoryDeliveriesResponseData:
-    """Settled rounds, newest first.
+    """Assigned deliveries across all states, newest first.
 
     `total` is how many match the filter, not how many are on this page - a screen counting
     the rows it was handed is counting one page.

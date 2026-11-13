@@ -4,6 +4,9 @@ import { cleanParams } from "./params";
 
 /** Admin channel: /admin/reports. `merchantId` is optional here - omit it for all merchants. */
 export type ReportType =
+  | "VEHICLE_DISPATCH_RETURN"
+  | "OUTSTANDING_DUES"
+  | "CUSTOMER_COLLECTION"
   | "DAILY_DELIVERY"
   | "PAYMENT_COLLECTION"
   | "PENDING_PICKUP"
@@ -29,6 +32,7 @@ export type Report = {
 };
 
 export type ReportParams = {
+  tripVehicle?:string; tripDriver?:string; tripId?:string; tripStatus?:string; tripDateBasis?:string; tripDiscrepanciesOnly?:boolean;
   allTime?: boolean;
   type: ReportType;
   /** ISO date-times. */

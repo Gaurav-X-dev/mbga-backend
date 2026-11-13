@@ -1,3 +1,5 @@
+import { useSearchParams } from "react-router-dom";
+import { ReceivablesReportsPage } from "./ReceivablesReportsPage";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
@@ -26,9 +28,12 @@ import { FuelReportFilters, FUEL_FILTER_KEYS } from "./FuelReportFilters";
 import { StockRegister } from "./StockRegister";
 
 const PAGE_SIZE = 25;
-const FILTERS = ["type", "merchant", "customer", "range", "from", "to", "q", "view", ...FUEL_FILTER_KEYS] as const;
+const FILTERS = ["type", "merchant", "customer", "range", "from", "to", "q", "view", ...FUEL_FILTER_KEYS, "tripVehicle", "tripDriver", "tripId", "tripStatus", "tripDateBasis", "tripDiscrepanciesOnly"] as const;
 
 const REPORTS: Array<{ type: ReportType; label: string; description: string; icon: IconName }> = [
+  {type:"VEHICLE_DISPATCH_RETURN",label:"Vehicle dispatch & returns",description:"Trip loading, deliveries and verified stock returns",icon:"truck"},
+  { type: "OUTSTANDING_DUES", label: "Outstanding dues", description: "Customer and group-wise dues", icon: "wallet" },
+  { type: "CUSTOMER_COLLECTION", label: "Customer collections", description: "Customer and group-wise collections", icon: "chart" },
   { type: "DAILY_DELIVERY", label: "Daily deliveries", description: "Cylinders delivered, day by day", icon: "truck" },
   { type: "PAYMENT_COLLECTION", label: "Payment collection", description: "Money collected, by mode", icon: "wallet" },
   { type: "PENDING_PICKUP", label: "Pending pickups", description: "Empties still with customers", icon: "refresh" },
@@ -110,7 +115,7 @@ function formatCell(column: ReportColumn, value: unknown) {
   return String(value);
 }
 
-export function AdminReportsPage({
+function StandardReportsPage({
   merchantId: propMerchantId,
   isMerchantPanel = false,
   title = isMerchantPanel ? "Business Reports" : "Reports"
@@ -143,6 +148,7 @@ export function AdminReportsPage({
   // Whole days in IST, which is where the business runs. No dates = all time.
   const params: ReportParams = {
     type,
+    ...(type === "VEHICLE_DISPATCH_RETURN" ? {tripVehicle:values.tripVehicle || undefined,tripDriver:values.tripDriver || undefined,tripId:values.tripId || undefined,tripStatus:values.tripStatus || undefined,tripDateBasis:values.tripDateBasis || "dispatch",tripDiscrepanciesOnly:values.tripDiscrepanciesOnly === "true"} : {}),
     ...(type === "FUEL" ? {...Object.fromEntries(FUEL_FILTER_KEYS.map((key) => [key, values[key] || undefined])), search: values.q || undefined} : {}),
     allTime: type === "FUEL" && range === "all" ? true : undefined,
     from: type === "FUEL" && range === "all" ? undefined : dates ? `${dates.from}T00:00:00+05:30` : undefined,
@@ -164,7 +170,7 @@ export function AdminReportsPage({
     onError: (error) => toast.error(normalizeError(error).userMessage)
   });
 
-  const data = type === "FUEL" && report.data?.type !== "FUEL" ? undefined : report.data;
+  const data = report.data?.type === type ? report.data : undefined;
   const rows = useMemo(() => {
     const all = data?.rows ?? [];
     const q = values.q.trim().toLowerCase();
@@ -343,7 +349,7 @@ export function AdminReportsPage({
         aria-label="Report type"
         style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: "var(--space-3)" }}
       >
-        {REPORTS.map((item) => {
+        {REPORTS.filter(item => !isMerchantPanel || !["OUTSTANDING_DUES", "CUSTOMER_COLLECTION"].includes(item.type)).map((item) => {
           const active = item.type === type;
           return (
             <button
@@ -409,6 +415,7 @@ export function AdminReportsPage({
         </div>
       </Card>
 
+      {type === "VEHICLE_DISPATCH_RETURN" ? <Card title="Vehicle return report filters"><div className="form-grid"><Field label="Vehicle number"><Input value={values.tripVehicle} maxLength={50} onChange={e=>setFilter("tripVehicle",e.target.value)}/></Field><Field label="Driver name or user ID"><Input value={values.tripDriver} maxLength={160} onChange={e=>setFilter("tripDriver",e.target.value)}/></Field><Field label="Recorded discrepancies"><Select value={values.tripDiscrepanciesOnly || "false"} options={[{value:"false",label:"All trips"},{value:"true",label:"Trips with recorded discrepancies"}]} onChange={e=>setFilter("tripDiscrepanciesOnly",e.target.value)}/></Field><Field label="Trip ID"><Input value={values.tripId} maxLength={36} onChange={e=>setFilter("tripId",e.target.value)}/></Field><Field label="Date basis"><Select value={values.tripDateBasis || "dispatch"} options={[{value:"dispatch",label:"Dispatch date"},{value:"return",label:"Return date"},{value:"scheduled",label:"Scheduled date (includes drafts)"}]} onChange={e=>setFilter("tripDateBasis",e.target.value)}/></Field><Field label="Trip status"><Select placeholder="All statuses" value={values.tripStatus} options={["DRAFT","READY","IN_PROGRESS","RETURNED","DISCREPANCY","RECONCILED","CANCELLED"].map(value=>({value,label:value.replace(/_/g," ")}))} onChange={e=>setFilter("tripStatus",e.target.value)}/></Field></div><p className="meta">Blank received counts mean returns are not verified. Customer empty collection and depot receipt are separate. CSV exports cylinder rows; Excel includes trip, stop and discrepancy sheets.</p></Card> : null}
       {type === "FUEL" ? <FuelReportFilters values={values}
         metadata={data?.metadata} onChange={(key, value) => setFilter(key as typeof FILTERS[number], value)}
         onReset={() => setFilters(Object.fromEntries([...FUEL_FILTER_KEYS, "q"].map((key) => [key, ""])))} /> : null}
@@ -531,6 +538,15 @@ export function AdminReportsPage({
       {openDetails ? <ReportRowDrawer details={openDetails} onClose={() => setOpenDetails(null)} /> : null}
     </div>
   );
+}
+
+export function AdminReportsPage(props: Parameters<typeof StandardReportsPage>[0] = {}) {
+  const [params] = useSearchParams();
+  const type = params.get("type");
+  if (!props.isMerchantPanel && (type === "OUTSTANDING_DUES" || type === "CUSTOMER_COLLECTION")) {
+    return <ReceivablesReportsPage key={type} type={type} merchantId={props.merchantId} />;
+  }
+  return <StandardReportsPage {...props} />;
 }
 
 export default AdminReportsPage;

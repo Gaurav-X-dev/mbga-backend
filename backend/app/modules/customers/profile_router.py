@@ -39,4 +39,24 @@ async def my_profile(actor: CustomerActorDep, session: SessionDep) -> CustomerRe
     profile = await session.get(CustomerProfile, actor.customer_id)
     if profile is None:
         raise ApiError("REGISTRATION_PROFILE_NOT_FOUND", status.HTTP_404_NOT_FOUND)
-    return await CustomerViewLoader(session).customer_view(profile)
+    result = await CustomerViewLoader(session).customer_view(profile)
+    if actor.delegated:
+        from fastapi.responses import JSONResponse
+
+        data = result.model_dump(mode="json", by_alias=True)
+        data.pop("documents", None)
+        data["financialAccess"] = "accounts.view" in actor.delegated_permissions
+        if not data["financialAccess"]:
+            for key in [
+                "runningBalance",
+                "configuredCreditLimit",
+                "creditEnabled",
+                "creditLimit",
+                "creditDays",
+                "usedCredit",
+                "availableCredit",
+                "creditActive",
+            ]:
+                data.pop(key, None)
+        return JSONResponse(data)
+    return result

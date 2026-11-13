@@ -258,12 +258,15 @@ class DeliveryService:
         already on the road are carrying. Without that subtraction `filled` would stay whole while
         a van was out, and a second van could be loaded from the same cylinders.
         """
+        from app.modules.logistics.service import assert_dispatchable
+        await assert_dispatchable(self.session, slip_id)
         slip = await self._owned(slip_id)
         # The order is read **before** the slip's own status, so a driver whose phone still
         # shows a cancelled round is told that the order was cancelled rather than that his
         # slip is settled. Cancelling an order fails its slip, so the slip's state is the
         # consequence; the order's is the reason, and the reason is what the app branches on.
         order = await self._order_of(slip, lock=True)
+        await assert_dispatchable(self.session, slip_id)
         transitions.check_can_move(order, OrderStatus.OUT_FOR_DELIVERY)
         self._require_status(slip, DeliveryStatus.DISPATCHED, ready=DeliveryStatus.SCHEDULED)
         now = datetime.now(UTC)
@@ -478,6 +481,7 @@ class DeliveryService:
         # books. Before this moment they were on a van and still the merchant's - and anything
         # the driver brings back is still on it, so only what he handed over is booked.
         ledger = StockLedger(self.session, self.merchant_id)
+        await ledger._locked_items({code: 0 for code in set(lines) | set(empty_counts)}, now)
         # What the godown screen prints beside the movement. `reference_id` is free text and is
         # meant to be read - a challan number on a refill, a vehicle number on a transfer - and
         # a slip's uuid there put 36 characters of database key in front of the order number on
@@ -485,6 +489,7 @@ class DeliveryService:
         # it is unique per merchant, so nothing that could be looked up before is lost.
         trace = f"{slip.order_number} · {slip.customer_name}"[:255]
         if lines:
+            await ledger.check_available(lines,committed=await self._committed(exclude_slip_id=slip.id),now=now)
             await ledger.deliver(
                 lines,
                 reference_id=slip.slip_number,
@@ -502,6 +507,8 @@ class DeliveryService:
                 recorded_by_name=self.actor.display_name,
                 now=now,
             )
+        from app.modules.logistics.service import record_handover
+        await record_handover(self.session,slip.id,lines,empty_counts)
         transitions.advance(
             self.session,
             order,
@@ -552,7 +559,7 @@ class DeliveryService:
         return await self._view(slip)
 
     async def reassign(
-        self, slip_id: str, payload: ReassignDeliveryRequest
+        self, slip_id: str, payload: ReassignDeliveryRequest, *, commit: bool = True
     ) -> DeliverySlipResponse:
         """Change a slip's van, crew or day without losing the order.
 
@@ -571,6 +578,10 @@ class DeliveryService:
         the list and not already out with somebody else. The slip is locked for the duration,
         so two people moving the same round take it in turns.
         """
+        from app.modules.logistics.service import assert_slip_editable
+        await assert_slip_editable(self.session, slip_id)
+        initial = await self._owned(slip_id)
+        await self._order_of(initial, lock=True)
         slip = await self._owned(slip_id, lock=True)
         self._require_status(slip, DeliveryStatus.SCHEDULED, ready=(DeliveryStatus.SCHEDULED,))
 
@@ -641,7 +652,11 @@ class DeliveryService:
             source=self.actor.source,
             now=now,
         )
-        await self.session.commit()
+        order.scheduled_delivery_date = scheduled_date
+        if commit:
+            await self.session.commit()
+        else:
+            await self.session.flush()
         return await self._view(slip)
 
     # --- Failure ----------------------------------------------------------------------------
@@ -693,6 +708,8 @@ class DeliveryService:
             note=f"Delivery failed: {payload.reason.strip()}",
             now=now,
         )
+        from app.modules.finance.advances import release
+        await release(self.session, order.id)
         self.notifications.queue(
             delivery_events.delivery_failed(
                 self.merchant_id, slip.order_id, slip.order_number, reason=payload.reason.strip()
@@ -846,7 +863,7 @@ class DeliveryService:
             Order.id == slip.order_id, Order.merchant_id == self.merchant_id
         )
         if lock:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         order = await self.session.scalar(statement)
         if order is None:
             # The slip's own foreign key guarantees the row; if it is gone the data is broken and
@@ -1100,21 +1117,30 @@ class DeliveryService:
         The slip being dispatched is excluded, so a retry of its own dispatch does not count
         against itself.
         """
+        from app.modules.logistics.models import TripStop
+        from app.modules.logistics.service import custody
         statement = (
             select(DeliverySlipItem.cylinder_type, func.sum(DeliverySlipItem.quantity))
             .join(DeliverySlip, DeliverySlip.id == DeliverySlipItem.slip_id)
             .where(
                 DeliverySlip.merchant_id == self.merchant_id,
                 DeliverySlip.status.in_(IN_TRANSIT_STATUSES),
+                ~DeliverySlip.id.in_(select(TripStop.delivery_id)),
             )
             .group_by(DeliverySlipItem.cylinder_type)
         )
         if exclude_slip_id:
             statement = statement.where(DeliverySlip.id != exclude_slip_id)
-        return {
+        legacy = {
             str(cylinder_type).strip().upper(): int(total or 0)
             for cylinder_type, total in await self.session.execute(statement)
         }
+
+        own_trip = await self.session.scalar(select(TripStop.trip_id).where(TripStop.delivery_id == exclude_slip_id)) if exclude_slip_id else None
+        vehicle_custody, _ = await custody(self.session, self.merchant_id, own_trip)
+        for code, count in vehicle_custody.items():
+            legacy[code] = legacy.get(code, 0) + count
+        return legacy
 
     async def _lines(self, slip_id: str) -> dict[str, int]:
         """The slip's cylinders as allocated, which is what the van is answerable for."""

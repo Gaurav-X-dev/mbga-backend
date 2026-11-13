@@ -21,7 +21,7 @@ def build_upi_link(
     upi_id: str,
     payee_name: str,
     amount: str,
-    order_id: str,
+    order_number: str,
     notes: str | None = None,
 ) -> str:
     """Build the URI understood by Google Pay, PhonePe, Paytm, BHIM and bank UPI apps.
@@ -41,7 +41,7 @@ def build_upi_link(
         ("am", amount),
         ("cu", "INR"),
     ]
-    note = notes or f"Order {order_id}"
+    note = notes or order_number
     params.append(("tn", note[:NOTE_LIMIT]))
     return "upi://pay?" + urlencode(params, quote_via=quote, safe="@")
 

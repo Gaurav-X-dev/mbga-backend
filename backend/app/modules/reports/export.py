@@ -26,7 +26,13 @@ def export_response(report: ReportResponse, export_format: ExportFormat) -> Stre
     if export_format is ExportFormat.CSV:
         payload, media, extension = _csv(labels, columns, rows), "text/csv; charset=utf-8", "csv"
     elif export_format in {ExportFormat.EXCEL, ExportFormat.XLSX}:
-        payload, media, extension = _xlsx(labels, columns, rows), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+        extra=report.metadata.get("exportSheets") if report.type.value=="VEHICLE_DISPATCH_RETURN" else None
+        sheets=[]
+        if extra:
+            for sheet in extra:
+                keys=sheet.get("columns") or list(dict.fromkeys(key for row in sheet["rows"] for key in row if key not in ("detail","id")))
+                sheets.append((sheet["name"],sheet.get("labels",keys),keys,sheet["rows"]))
+        payload, media, extension = (xlsx_workbook(sheets) if sheets else _xlsx(labels, columns, rows)), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
     elif export_format in {ExportFormat.XML, ExportFormat.XAML}:
         payload, media = _xml(report, columns, rows), "application/xml; charset=utf-8"
         extension = "xaml" if export_format is ExportFormat.XAML else "xml"
@@ -114,3 +120,21 @@ def _column_name(index: int) -> str:
 
 def _xml_escape(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def xlsx_workbook(sheets: list[tuple[str, list[str], list[str], list[dict[str, Any]]]]) -> bytes:
+    """Reuse the single-sheet encoder for a workbook with named, independent tables."""
+    output = io.BytesIO()
+    overrides, names, relations = [], [], []
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+        for index, (name, labels, columns, rows) in enumerate(sheets, 1):
+            with zipfile.ZipFile(io.BytesIO(_xlsx(labels, columns, rows))) as single:
+                archive.writestr(f"xl/worksheets/sheet{index}.xml", single.read("xl/worksheets/sheet1.xml"))
+            overrides.append(f'<Override PartName="/xl/worksheets/sheet{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>')
+            names.append(f'<sheet name="{_xml_escape(name)}" sheetId="{index}" r:id="rId{index}"/>')
+            relations.append(f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{index}.xml"/>')
+        archive.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + ''.join(overrides) + '</Types>')
+        archive.writestr("xl/workbook.xml", '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + ''.join(names) + '</sheets></workbook>')
+        archive.writestr("xl/_rels/workbook.xml.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + ''.join(relations) + '</Relationships>')
+    return output.getvalue()

@@ -112,7 +112,7 @@ class CustomerV2PaymentService:
             upi_id=merchant.upi_id,
             payee_name=merchant.upi_payee_name,
             amount=str(payload.amount),
-            order_id=intent_id,
+            order_number="",  # Account-wide invoice payment supplies its own note below.
             notes=f"Invoice payment {intent_id[:8]}",
         )
         row = PaymentCollection(
@@ -289,7 +289,9 @@ class CustomerV2PaymentService:
         except IntegrityError as exc:
             await self.session.rollback()
             raise ApiError("UPI_REFERENCE_ALREADY_USED", 409) from exc
-        return self._submitted_response(collection, allocations, credit.limit)
+        response = self._submitted_response(collection, allocations, credit.limit if credit.enabled else 0)
+        response.credit.credit_active = credit.enabled
+        return response
 
     async def _total_due(self) -> int:
         total = await self.session.scalar(
@@ -394,10 +396,11 @@ class CustomerV2PaymentService:
             self.customer_id, include_disabled_usage=True
         )
         response = self._submitted_response(
-            collection, allocations, int(customer.credit_limit or 0) if customer else 0
+            collection, allocations, credit.limit if credit.enabled else 0
         )
         response.remaining_balance = await self._total_due()
         response.running_balance = response.remaining_balance
+        response.credit.credit_active = credit.enabled
         response.credit.used_credit = credit.used
         response.credit.available_credit = credit.available
         return response

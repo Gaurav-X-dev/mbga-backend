@@ -1,3 +1,4 @@
+from app.modules.logistics.router import build_router as build_trip_router
 """Everything the delivery app can reach.
 
 A driver is not merchant staff. They hold no role in the permission matrix, and they are
@@ -15,6 +16,9 @@ on the platform, and the app's own reference marks them "confirm scope before bu
 """
 
 from fastapi import APIRouter
+from app.modules.finance.router import build_router as build_finance_router
+
+from app.modules.reminders.router import build_router as build_reminder_router
 
 from app.modules.authentication.channel_router import build_channel_auth_router
 from app.modules.authentication.constants import LoginChannel
@@ -44,3 +48,10 @@ router.include_router(reference_router)
 
 # States and cities for the address forms, read from the table rather than a list in the code.
 router.include_router(locations_router)
+
+
+router.include_router(build_reminder_router(LoginChannel.DELIVERY))
+
+router.include_router(build_finance_router(LoginChannel.DELIVERY))
+
+router.include_router(build_trip_router(LoginChannel.DELIVERY))

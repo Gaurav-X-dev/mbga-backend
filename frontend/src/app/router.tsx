@@ -16,6 +16,9 @@ function page<K extends string>(loader: () => Promise<Record<K, ComponentType<an
   return lazy(async () => ({ default: (await loader())[name] }));
 }
 
+const AdminCompetitorPricingPage = page(() => import("../features/competitor-pricing/AdminCompetitorPricingPage"), "AdminCompetitorPricingPage");
+const CompetitorPricingPage = page(() => import("../features/competitor-pricing/CompetitorPricingPage"), "CompetitorPricingPage");
+
 const PrivacyPolicyAdminPage = page(() => import("../features/legal-pages/PrivacyPolicyAdminPage"), "PrivacyPolicyAdminPage");
 
 const DashboardPage = page(() => import("../features/dashboard/DashboardPage"), "DashboardPage");
@@ -69,6 +72,8 @@ const AdminPricingPage = page(() => import("../features/admin-pricing/AdminPrici
 const AdminVehiclesPage = page(() => import("../features/admin-vehicles/AdminVehiclesPage"), "AdminVehiclesPage");
 const AdminCreditPage = page(() => import("../features/admin-credit/AdminCreditPage"), "AdminCreditPage");
 const AdminPaymentsPage = page(() => import("../features/admin-payments/AdminPaymentsPage"), "AdminPaymentsPage");
+const TripsPage = page(() => import("../features/logistics/TripsPage"), "TripsPage");
+const FinancePage = page(() => import("../features/finance/FinancePage"), "FinancePage");
 const AdminReportsPage = page(() => import("../features/admin-reports/AdminReportsPage"), "AdminReportsPage");
 
 const DeliveryMemberDetailPage = page(
@@ -106,12 +111,17 @@ export const routes: RouteObject[] = [
           { path: "merchants/:merchantId", element: guarded(PERMISSIONS.merchantsView, <MerchantDetailPage />) },
           { path: "orders", element: guarded(PERMISSIONS.ordersView, <AdminOrdersPage />) },
           { path: "inventory", element: guarded(PERMISSIONS.inventoryView, <AdminInventoryPage />) },
+          { path: "deliveries/trips", element: guarded(PERMISSIONS.deliveryView, <TripsPage />) },
           { path: "deliveries", element: <AdminDeliveriesPage /> },
           { path: "delivery-users", element: guarded(PERMISSIONS.deliveryUsersView, <AdminDeliveryUsersPage />) },
           { path: "live-location", element: guarded([PERMISSIONS.merchantsView, PERMISSIONS.deliveryUsersView], <LiveLocationPage />) },
           { path: "vehicles", element: <AdminVehiclesPage /> },
           { path: "pricing", element: <AdminPricingPage /> },
+          { path: "competitor-pricing", element: guarded([PERMISSIONS.merchantsView, PERMISSIONS.pricingView], <AdminCompetitorPricingPage />) },
           { path: "payments", element: guarded(PERMISSIONS.paymentsView, <AdminPaymentsPage />) },
+          { path: "finance", element: guarded(PERMISSIONS.paymentsView, <FinancePage />) },
+          { path: "finance/advances", element: guarded(PERMISSIONS.paymentsView, <FinancePage view="advance" />) },
+          { path: "finance/cash-handovers", element: guarded(PERMISSIONS.paymentsView, <FinancePage view="cash" />) },
           { path: "credit", element: guarded(PERMISSIONS.creditView, <AdminCreditPage />) },
           { path: "expenses", element: <AdminExpensesPage /> },
           { path: "tasks", element: <AdminTasksPage /> },
@@ -163,11 +173,16 @@ export const routes: RouteObject[] = [
           { path: "customers", element: <MerchantCustomersPage /> },
           { path: "customers/:customerId", element: <AdminCustomerDetailPage /> },
           { path: "orders", element: <MerchantOrdersPage /> },
+          { path: "deliveries/trips", element: guarded(PERMISSIONS.deliveryView, <TripsPage />) },
           { path: "deliveries", element: <AdminDeliveriesPage isMerchantPanel /> },
           { path: "vehicles", element: <AdminVehiclesPage isMerchantPanel /> },
           { path: "inventory", element: <MerchantInventoryPage /> },
           { path: "pricing", element: <AdminPricingPage isMerchantPanel /> },
+          { path: "competitor-pricing", element: guarded(PERMISSIONS.pricingView, <CompetitorPricingPage />) },
           { path: "payments", element: <MerchantPaymentsPage /> },
+          { path: "finance", element: guarded(PERMISSIONS.paymentsView, <FinancePage />) },
+          { path: "finance/advances", element: guarded(PERMISSIONS.paymentsView, <FinancePage view="advance" />) },
+          { path: "finance/cash-handovers", element: guarded(PERMISSIONS.paymentsView, <FinancePage view="cash" />) },
           { path: "credit", element: <AdminCreditPage isMerchantPanel /> },
           { path: "expenses", element: <AdminExpensesPage isMerchantPanel /> },
           { path: "tasks", element: <AdminTasksPage isMerchantPanel /> },

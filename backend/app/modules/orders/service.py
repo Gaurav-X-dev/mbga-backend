@@ -118,6 +118,7 @@ class OrderFilters:
     customer_id: str | None = None
     status: str | None = None
     search: str | None = None
+    priority_code: str | None = None
 
 
 class OrderService:
@@ -196,7 +197,14 @@ class OrderService:
             eligibility=await self._cylinder_eligibility(customer.customer_type),
         )
         priced = await self._engine().price(customer.id, lines)
+        from app.modules.finance.advances import summary
+        advance = await summary(self.session, customer.id, self.merchant_id)
+        usable = min(advance['available'], priced.total_amount) if advance['enabled'] and advance['autoUseAdvance'] else 0
+        from app.modules.finance.settings import policy
+        if not (await policy(self.session, self.merchant_id)).allowPartialAdvance and usable < priced.total_amount:
+            usable = 0
         return OrderQuoteResponse(
+            advance_available=advance['available'], advance_applied=usable, remaining_payable=priced.total_amount-usable,
             items=[_line_view(line) for line in priced.lines],
             total_cylinders=priced.total_cylinders,
             total_amount=priced.total_amount,
@@ -293,6 +301,8 @@ class OrderService:
             customer, site, priced, moment, source, payload.order_mode, number, now,
             customer_type=customer_type,
         )
+        from app.modules.logistics.policy import priority_code
+        order.priority_code = await priority_code(self.session, self.merchant_id, customer.priority_code)
         self.session.add(order)
         await self.session.flush()
 
@@ -333,6 +343,8 @@ class OrderService:
 
         # Spec §6.4 side effect: the customer's last-order marker moves.
         customer.updated_at = now
+        from app.modules.finance.advances import reserve
+        await reserve(self.session, order, self.actor.user_id)
         await self.session.commit()
         return await self._view(order)
 
@@ -394,8 +406,8 @@ class OrderService:
             cutoff_message=moment.message,
             # Only a staff placement names an actor; a customer ordering for themselves
             # leaves it null, and the app shows no "created by" line.
-            created_by=self.actor.display_name if staff_placed else None,
-            created_by_user_id=self.actor.user_id if staff_placed else None,
+            created_by=self.actor.display_name if staff_placed or self.actor.delegated else None,
+            created_by_user_id=self.actor.user_id if staff_placed or self.actor.delegated else None,
             created_at=now,
             updated_at=now,
         )
@@ -628,6 +640,10 @@ class OrderService:
         # and a uuid tiebreaker would order them at random - the list would reshuffle on
         # every refresh. The order number is monotonic per merchant and its YYMM prefix
         # keeps it lexically ordered across months too.
+        if filters.priority_code:
+            from app.modules.logistics.policy import priority_code
+            await priority_code(self.session, self.merchant_id, filters.priority_code)
+            statement = statement.where(Order.priority_code == filters.priority_code)
         orders = list(
             await self.session.scalars(
                 statement.order_by(Order.placed_at.desc(), Order.order_number.desc())
@@ -969,6 +985,8 @@ class OrderService:
         # Both sides hear it. Staff need it as much as the customer does: without it the
         # godown keeps a cancelled order on the loading list and the cylinders go out.
         outbox = NotificationOutboxWriter(self.session)
+        from app.modules.finance.advances import release
+        await release(self.session, order.id)
         outbox.queue(order_cancelled_customer(order.customer_id, order.id, order.order_number))
         outbox.queue(
             order_cancelled_merchant(
@@ -1003,7 +1021,7 @@ class OrderService:
         """
         statement = self._scope(select(Order)).where(Order.id == order_id)
         if lock:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(populate_existing=True)
         order = await self.session.scalar(statement)
         if order is None:
             raise _not_found()
@@ -1203,7 +1221,11 @@ class OrderService:
                 row.code: row.short_label or row.label for row in definitions
             }
 
-        return [
+        from app.modules.finance.models import AdvanceReservation
+        from app.modules.payments.models import Invoice
+        reservations = {r.order_id: r for r in (await self.session.scalars(select(AdvanceReservation).where(AdvanceReservation.order_id.in_(ids)))).all()}
+        invoices = {r.order_id: r for r in (await self.session.scalars(select(Invoice).where(Invoice.order_id.in_(ids)))).all()}
+        responses = [
             _order_view(
                 order,
                 items[order.id],
@@ -1214,6 +1236,12 @@ class OrderService:
             )
             for order in orders
         ]
+        for order, response in zip(orders, responses):
+            hold = reservations.get(order.id)
+            response.advance_reserved = hold.amount if hold and hold.status == 'HELD' else 0
+            response.advance_applied = hold.applied_amount if hold and hold.status == 'APPLIED' else 0
+            response.remaining_payable = invoices[order.id].balance if order.id in invoices else max(order.total_amount-response.advance_reserved,0)
+        return responses
 
 
 # --- View builders ----------------------------------------------------------------------------
@@ -1285,7 +1313,11 @@ def _order_view(
 ) -> OrderResponse:
     cylinder_labels = cylinder_labels or {}
 
+    from app.modules.orders.amendments import edit_version
     return OrderResponse(
+        priority_code=order.priority_code,
+        can_edit=by_staff and order.status in {"PLACED", "CONFIRMED"} and not order.invoice_id,
+        edit_version=edit_version(order, items),
         id=order.id,
         order_number=order.order_number,
         customer_id=order.customer_id,

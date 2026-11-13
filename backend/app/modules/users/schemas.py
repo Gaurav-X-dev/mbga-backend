@@ -21,7 +21,7 @@ class UserCreate(BaseModel):
     full_name: str | None = Field(default=None, max_length=160)
     mobile_number: str | None = Field(default=None, max_length=15)
     country_code: str | None = Field(default="+91", max_length=5)
-    role: str = "admin_user"
+    role: str = Field(min_length=1, max_length=80)
     status: str = "ACTIVE"
     #: The agency this person works for. **Required for a merchant's staff**, because a role on
     #: its own does not make somebody part of an agency: the team list, the task picker and

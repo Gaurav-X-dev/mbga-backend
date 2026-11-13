@@ -42,6 +42,8 @@ export const PERMISSIONS = {
   deliveryConfirm: "delivery.confirm",
   pricingView: "pricing.view",
   pricingManage: "pricing.manage",
+  competitorPricingRecord: "competitor_pricing.record",
+  competitorPricingManage: "competitor_pricing.manage",
   expensesView: "expenses.view",
   expensesManage: "expenses.manage",
   tasksView: "tasks.view",

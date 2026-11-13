@@ -1,8 +1,10 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  getCustomerKycRequirements,
   createCustomer,
+  createCustomerBranch,
   uploadDocument,
   type Customer,
   type CustomerCreateInput,
@@ -27,8 +29,6 @@ import {
   formatMobile,
   isDocumentNumberValid,
   maskIdentifier,
-  MIN_REQUIRED_DOCS,
-  REQUIRED_DOCUMENTS,
   validateAddress,
   validateBusinessName,
   validateDocumentNumber,
@@ -59,8 +59,10 @@ export function AddCustomerDialog({
   open,
   merchantId,
   onClose,
-  onCreated
+  onCreated,
+  branchOwnerId
 }: {
+  branchOwnerId?: string;
   open: boolean;
   merchantId: string;
   onClose: () => void;
@@ -79,6 +81,14 @@ export function AddCustomerDialog({
     MSME: { type: "MSME", number: "", file: null }
   });
   const [sites, setSites] = useState<SiteState[]>([]);
+  const requirements = useQuery({queryKey:["customer-registration-requirements",customerType],queryFn:({signal})=>getCustomerKycRequirements(customerType,signal),enabled:open,retry:false});
+  const requiredDocuments = (requirements.data?.documents.filter(rule=>rule.required).map(rule=>rule.type) || []) as KycDocumentType[];
+  useEffect(()=>{
+    if (!requirements.data) return;
+    const required = requirements.data.documents.filter(rule=>rule.required).map(rule=>rule.type) as KycDocumentType[];
+    setSelectedDocTypes(previous=>required.length ? required : previous.filter(code=>requirements.data!.documents.some(rule=>rule.type===code)));
+  },[requirements.data]);
+
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -161,13 +171,14 @@ export function AddCustomerDialog({
   // Validation for Step 2 (KYC documents)
   const validateStep2 = (): boolean => {
     const errs: Record<string, string | undefined> = {};
-    const minDocs = MIN_REQUIRED_DOCS[customerType];
-    const reqDocs = REQUIRED_DOCUMENTS[customerType];
+    if (!requirements.data) { setErrors({_general:"Required documents could not be loaded. Please retry."}); return false; }
+    const minDocs = requirements.data.minimumDocuments;
+    const reqDocs = requiredDocuments;
     let validCount = 0;
 
     selectedDocTypes.forEach((docType) => {
       const doc = docs[docType];
-      const isReq = reqDocs.includes(docType) || (customerType === "INDUSTRIAL" && selectedDocTypes.length <= 2);
+      const isReq = reqDocs.includes(docType);
       const hasNumber = Boolean(doc?.number?.trim());
       const hasFile = Boolean(doc?.file);
 
@@ -211,7 +222,8 @@ export function AddCustomerDialog({
       }
 
       setProgress("Registering customer…");
-      return createCustomer(merchantId, {
+      const create = branchOwnerId ? (merchant: string, input: CustomerCreateInput) => createCustomerBranch(merchant, branchOwnerId, input) : createCustomer;
+      return create(merchantId, {
         customerType,
         businessName: form.businessName.trim(),
         ownerName: form.ownerName.trim(),
@@ -303,7 +315,7 @@ export function AddCustomerDialog({
     clearError(`doc.${type}.file`);
   };
 
-  const availableToAdd = ALL_DOC_TYPES.filter((type) => !selectedDocTypes.includes(type));
+  const availableToAdd = ALL_DOC_TYPES.filter((type) => !selectedDocTypes.includes(type) && requirements.data?.documents.some(rule=>rule.type===type));
 
   const handleAddSite = () => {
     const errs: Record<string, string | undefined> = {};
@@ -324,7 +336,7 @@ export function AddCustomerDialog({
   };
 
   const attachedCount = selectedDocTypes.filter((t) => Boolean(docs[t]?.number?.trim() && docs[t]?.file)).length;
-  const minRequiredDocs = MIN_REQUIRED_DOCS[customerType];
+  const minRequiredDocs = requirements.data?.minimumDocuments || 0;
 
   return (
     <>
@@ -682,7 +694,7 @@ export function AddCustomerDialog({
                   <div style={{ fontWeight: 600, fontSize: "0.95rem", color: attachedCount >= minRequiredDocs ? "var(--success-700, #15803d)" : "var(--blue-700, #1e40af)" }}>
                     {customerType === "RETAIL"
                       ? `${attachedCount} of ${ALL_DOC_TYPES.length} documents uploaded (at least ${minRequiredDocs} required)`
-                      : `${attachedCount} of ${selectedDocTypes.length} documents uploaded (at least ${minRequiredDocs} required: FSSAI & GST)`}
+                      : `${attachedCount} of ${selectedDocTypes.length} documents uploaded (at least ${minRequiredDocs} required: ${requiredDocuments.map(type=>DOC_META[type]?.title || type).join(" & ")})`}
                   </div>
                   <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: 2 }}>
                     PDF, JPG or PNG up to 5 MB each. Encrypted and verified during KYC review.
@@ -690,6 +702,7 @@ export function AddCustomerDialog({
                 </div>
               </div>
 
+              {requirements.isError ? <Alert tone="error">Could not load required documents.<Button variant="secondary" onClick={()=>void requirements.refetch()}>Retry requirements</Button></Alert> : null}
               {errors._general && <Alert tone="error">{errors._general}</Alert>}
 
               {/* Active Document Cards */}
@@ -697,7 +710,7 @@ export function AddCustomerDialog({
                 {selectedDocTypes.map((docType) => {
                   const meta = DOC_META[docType];
                   const doc = docs[docType] || { type: docType, number: "", file: null };
-                  const isRequired = REQUIRED_DOCUMENTS[customerType].includes(docType) || (customerType === "INDUSTRIAL" && selectedDocTypes.length <= 2);
+                  const isRequired = requiredDocuments.includes(docType);
                   const pattern = DOC_PATTERNS[docType];
                   const isNumberValid = isDocumentNumberValid(docType, doc.number);
 

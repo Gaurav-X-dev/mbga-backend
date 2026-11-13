@@ -126,3 +126,17 @@ describe("normalizeError", () => {
     expect(error.userMessage).toMatch(/business account is blocked/);
   });
 });
+
+
+describe("customer deletion conflicts", () => {
+  it.each([
+    ["CUSTOMER_DELETE_OWNER_LINKED", "owns a branch group"],
+    ["CUSTOMER_DELETE_OUTLET_LINKED", "Unlink it"],
+    ["CUSTOMER_DELETE_BLOCKED", "business records that prevent permanent deletion"],
+  ])("explains %s instead of showing a duplicate-data error", (code, message) => {
+    const error = normalizeError(httpError(409, { detail: { code, message: "Internal detail" } }));
+    expect(error.userMessage).toContain(message);
+    expect(error.userMessage).not.toBe(MESSAGES.conflict);
+    expect(error.status).toBe(409);
+  });
+});

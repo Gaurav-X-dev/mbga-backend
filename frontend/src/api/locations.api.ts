@@ -18,9 +18,9 @@ export type PincodeDetails = {
 };
 
 /** 404 when India Post has no such pincode. */
-export async function lookupPincode(pincode: string, merchantId?: string, signal?: AbortSignal) {
-  const { data } = await apiClient.get<PincodeDetails>(`/admin/locations/pincodes/${encodeURIComponent(pincode)}`, {
-    params: merchantId ? { merchantId } : undefined,
+export async function lookupPincode(pincode: string, merchantId?: string, signal?: AbortSignal, channel: "admin" | "merchant" = "admin") {
+  const { data } = await apiClient.get<PincodeDetails>(`/${channel}/locations/pincodes/${encodeURIComponent(pincode)}`, {
+    params: channel === "admin" && merchantId ? { merchantId } : undefined,
     signal
   });
   return data;

@@ -29,6 +29,8 @@ export function useFocusTrap(
 
     function onKeyDown(event: KeyboardEvent) {
       if (!container) return;
+      const activeDialog = (document.activeElement as HTMLElement | null)?.closest('[aria-modal="true"]');
+      if (activeDialog && activeDialog !== container) return;
       if (event.key === "Escape" && onEscapeRef.current) {
         event.stopPropagation();
         onEscapeRef.current();

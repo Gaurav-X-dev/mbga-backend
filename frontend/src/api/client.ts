@@ -89,6 +89,14 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error: unknown) => {
     const config = axios.isAxiosError(error) ? (error.config as InternalAxiosRequestConfig | undefined) : undefined;
+    // Download requests receive JSON failures as blobs too. Decode them before
+    // the shared normalizer so permission/validation codes are not lost.
+    if (axios.isAxiosError(error) && config?.responseType === "blob" &&
+        String(error.response?.headers?.["content-type"] ?? "").includes("json") &&
+        typeof error.response?.data?.text === "function") {
+      try { error.response.data = JSON.parse(await error.response.data.text()); }
+      catch { /* Fall back to the safe status-based error message. */ }
+    }
     const isExpired = axios.isAxiosError(error) && error.response?.status === 401;
     const session = tokenStorage.get();
 

@@ -1,9 +1,14 @@
+import { CustomerAccessPanel } from "./CustomerAccessPanel";
+import { getLogisticsOptions } from "../../api/logistics.api";
+import { EditCustomerDialog } from "./EditCustomerDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
   approveCustomer,
+  deleteCustomer,
+  deleteCustomerBranch,
   getCustomer,
   getCustomerEligibility,
   getCustomerPaymentSummary,
@@ -42,9 +47,13 @@ export function AdminCustomerDetailPage() {
   const currentMerchantId = (auth.user?.merchant as any)?.id;
   const merchantId = searchParams.get("merchant") || currentMerchantId || "";
   const toast = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [deciding, setDeciding] = useState<"approve" | "reject" | null>(null);
   const [reason, setReason] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [editing, setEditing] = useState(false);
   const isMerchant = auth.channel === "merchant";
   const backHref = isMerchant
     ? "/merchant/customers"
@@ -61,15 +70,17 @@ export function AdminCustomerDetailPage() {
   const eligibility = useQuery({
     queryKey: queryKeys.customers.eligibility(merchantId, customerId),
     queryFn: ({ signal }) => getCustomerEligibility(merchantId, customerId, signal),
-    enabled,
+    enabled: enabled && auth.can("orders.create"),
     retry: false
   });
   const payments = useQuery({
     queryKey: queryKeys.customers.payments(merchantId, customerId),
     queryFn: ({ signal }) => getCustomerPaymentSummary(merchantId, customerId, signal),
-    enabled,
+    enabled: enabled && auth.can("payments.view"),
     retry: false
   });
+
+  const logistics = useQuery({ queryKey:["logistics","options",merchantId], queryFn:({signal})=>getLogisticsOptions({merchant:isMerchant,merchantId},signal), enabled, retry:false });
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.customers.all });
@@ -114,6 +125,7 @@ export function AdminCustomerDetailPage() {
         meta={
           <span className="row" style={{ gap: 8 }}>
             <StatusBadge status={customer.accountStatus} />
+            {logistics.data ? <Badge tone="info">Priority: {logistics.data.policy.priorities.find(p=>p.code===(customer.priorityCode || logistics.data!.policy.defaultPriority))?.label || customer.priorityCode}</Badge> : null}
             <Badge tone="neutral">KYC: {humanize(customer.kycStatus)}</Badge>
             {customer.customerType ? <Badge tone="info">{humanize(customer.customerType)}</Badge> : null}
             {customer.registeredAt ? <span className="meta">Registered {formatRelativeTime(customer.registeredAt)}</span> : null}
@@ -124,20 +136,24 @@ export function AdminCustomerDetailPage() {
             <ButtonLink to={backHref} variant="secondary" icon="arrowLeft">
               All customers
             </ButtonLink>
+            {auth.can("customers.update") ? <Button variant="secondary" onClick={() => setEditing(true)}>Edit customer</Button> : null}
+            {auth.can("customers.delete") ? <Button variant="danger" onClick={() => setDeleting(true)}>Permanently delete</Button> : null}
             {awaitingReview ? (
               <>
-                <Button variant="danger" icon="xCircle" onClick={() => setDeciding("reject")}>
+                {auth.can("customers.reject") ? <Button variant="danger" icon="xCircle" onClick={() => setDeciding("reject")}>
                   Reject
-                </Button>
-                <Button icon="checkCircle" onClick={() => setDeciding("approve")}>
+                </Button> : null}
+                {auth.can("customers.approve") ? <Button icon="checkCircle" onClick={() => setDeciding("approve")}>
                   Approve
-                </Button>
+                </Button> : null}
               </>
             ) : null}
           </>
         }
       />
 
+      {merchantId && <CustomerAccessPanel customerName={name} canCreate={auth.can("customers.create")} customerId={customerId!} merchantId={merchantId} merchant={isMerchant} canManage={auth.can("customers.update")} canDelete={auth.can("customers.delete")} />}
+      {editing ? <EditCustomerDialog customer={customer} branchOwnerId={customer.ownerCustomerId || undefined} merchantId={merchantId} onClose={() => setEditing(false)} onSaved={invalidate} /> : null}
       {customer.rejectionReason ? (
         <Alert tone="error" title="Registration rejected">
           {customer.rejectionReason}
@@ -171,7 +187,7 @@ export function AdminCustomerDetailPage() {
 
           <CustomerOrdersCard merchantId={merchantId} customerId={customerId} />
 
-          <PricingCard merchantId={merchantId} customerId={customerId} />
+          {auth.can("pricing.view") ? <PricingCard merchantId={merchantId} customerId={customerId} /> : null}
 
           {customer.sites?.length ? (
             <Card title="Delivery sites" subtitle="Where this customer takes delivery">
@@ -211,7 +227,7 @@ export function AdminCustomerDetailPage() {
                     { label: "Total paid", value: formatCurrency(payments.data.totalPaid) }
                   ]}
                 />
-                <ButtonLink to={`/admin/payments?merchant=${encodeURIComponent(merchantId)}&search=${encodeURIComponent(name)}`} variant="secondary" size="sm" icon="wallet">
+                <ButtonLink to={`${isMerchant ? "/merchant" : "/admin"}/payments?merchant=${encodeURIComponent(merchantId)}&search=${encodeURIComponent(name)}`} variant="secondary" size="sm" icon="wallet">
                   View payments
                 </ButtonLink>
               </div>
@@ -220,7 +236,7 @@ export function AdminCustomerDetailPage() {
             )}
           </Card>
 
-          <Card title="Can order?">
+          {auth.can("orders.create") ? <Card title="Can order?">
             {eligibility.isLoading ? (
               <LoadingSkeleton rows={1} label="Checking" />
             ) : eligibility.error ? (
@@ -240,13 +256,34 @@ export function AdminCustomerDetailPage() {
                 )}
               </Alert>
             )}
-          </Card>
+          </Card> : null}
 
           <CustomerKycDocumentsCard key={customer.id} merchantId={merchantId}
             applicationId={customer.applicationId} documents={customer.documents ?? []} />
         </div>
       </div>
 
+      <ConfirmationDialog
+        open={deleting}
+        title="Permanently delete this customer?"
+        description={`${name} will be permanently removed. This cannot be undone. Extra-user access and pending invitations will be revoked; an empty owner group will be removed automatically. Unlink any branches first. Customers with transaction history cannot be deleted. Uploaded evidence and login identity are retained.`}
+        confirmLabel="Permanently delete"
+        confirmVariant="danger"
+        confirmDisabled={deleteConfirmation !== "DELETE"}
+        onClose={() => { setDeleting(false); setDeleteConfirmation(""); }}
+        onConfirm={async () => {
+          if (customer.ownerCustomerId) await deleteCustomerBranch(merchantId, customer.ownerCustomerId, customerId);
+          else await deleteCustomer(merchantId, customerId);
+          queryClient.removeQueries({ queryKey: queryKeys.customers.detail(merchantId, customerId) });
+          invalidate();
+          toast.success("Customer permanently deleted.");
+          navigate(backHref, { replace: true });
+        }}
+      >
+        <Field label="Type DELETE to confirm" required>
+          <Input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" />
+        </Field>
+      </ConfirmationDialog>
       <ConfirmationDialog
         open={deciding === "approve"}
         title="Approve this customer?"
@@ -286,6 +323,7 @@ export function AdminCustomerDetailPage() {
 }
 
 function PricingCard({ merchantId, customerId }: { merchantId: string; customerId: string }) {
+  const auth = useAuth();
   const toast = useToast();
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -336,7 +374,7 @@ function PricingCard({ merchantId, customerId }: { merchantId: string; customerI
                   </td>
                   <td>
                     <span className="row" style={{ gap: 4, flexWrap: "nowrap", justifyContent: "flex-end" }}>
-                      <IconButton icon="edit" label={`Set price for ${item.cylinderLabel}`} onClick={() => setEditing(item)} />
+                      {auth.can("pricing.manage") ? <IconButton icon="edit" label={`Set price for ${item.cylinderLabel}`} onClick={() => setEditing(item)} /> : null}
                       {item.override ? <IconButton icon="trash" label={`Remove special price for ${item.cylinderLabel}`} onClick={() => setRemoving(item)} /> : null}
                     </span>
                   </td>

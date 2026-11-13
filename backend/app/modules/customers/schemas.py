@@ -50,6 +50,7 @@ class KycDocumentRequirement(BaseModel):
 
 
 class KycRequirementsResponse(BaseModel):
+    requires_delivery_sites: bool = Field(default=False, alias="requiresDeliverySites")
     customer_type: str = Field(alias="customerType")
     minimum_documents: int = Field(alias="minimumDocuments")
     documents: list[KycDocumentRequirement]

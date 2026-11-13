@@ -8,7 +8,7 @@ auth layer already produced and turn it into the business objects they need.
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.app import Settings, get_settings
@@ -81,11 +81,16 @@ def get_document_cipher(settings: SettingsDep) -> FieldCipher:
 
 
 async def get_business_actor(
+    request: Request,
     session: SessionDep,
     context: Annotated[AuthContext, Depends(require_authenticated_user)],
 ) -> BusinessActor:
     """The actor for a full app session (customer or merchant staff)."""
-    return await BusinessActorResolver(session).resolve(context)
+    actor = await BusinessActorResolver(session).resolve(context)
+    if context.login_channel == LoginChannel.CUSTOMER:
+        from app.modules.customer_access.service import delegated_actor
+        actor = await delegated_actor(session, actor, request)
+    return actor
 
 
 async def get_onboarding_actor(
@@ -203,6 +208,7 @@ async def require_customer_session(
 
 
 async def get_customer_actor(
+    request: Request,
     session: SessionDep,
     context: Annotated[AuthContext, Depends(require_customer_session)],
 ) -> BusinessActor:
@@ -214,8 +220,12 @@ async def get_customer_actor(
     route accepts, and only for the customer channel.
     """
     if context.token_type == SessionType.ONBOARDING.value:
+        if request.headers.get("X-Customer-Account-Id"):
+            raise ApiError("TOKEN_TYPE_NOT_ALLOWED",403,"Sign in before selecting an outlet.")
         return await get_onboarding_actor(session, context)
-    return await BusinessActorResolver(session).resolve(context)
+    actor = await BusinessActorResolver(session).resolve(context)
+    from app.modules.customer_access.service import delegated_actor
+    return await delegated_actor(session, actor, request)
 
 
 CustomerActorDep = Annotated[BusinessActor, Depends(get_customer_actor)]

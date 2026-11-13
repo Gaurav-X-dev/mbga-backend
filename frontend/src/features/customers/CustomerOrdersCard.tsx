@@ -39,7 +39,7 @@ export function CustomerOrdersCard({ merchantId, customerId }: { merchantId: str
   const orders = query.data ?? [];
   const live = orders.filter((order) => order.status !== "CANCELLED");
   const ordersHref = (order?: Order) =>
-    `/admin/orders?merchant=${encodeURIComponent(merchantId ?? "")}&status=ALL${order ? `&search=${encodeURIComponent(order.orderNumber)}` : ""}`;
+    `${auth.channel === "merchant" ? "/merchant" : "/admin"}/orders?merchant=${encodeURIComponent(merchantId ?? "")}&status=ALL${order ? `&search=${encodeURIComponent(order.orderNumber)}` : ""}`;
 
   return (
     <Card

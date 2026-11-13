@@ -37,6 +37,7 @@ from app.modules.orders.schemas import (
     OrderQuoteRequest,
     OrderQuoteResponse,
     OrderResponse,
+    OrderEditRequest,
     OrderStatusMetaResponse,
     ReorderPreviewResponse,
     ReorderRequest,
@@ -190,6 +191,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
                 description="Staff filter; ignored for a customer, who only ever sees their own.",
             ),
         ] = None,
+        priority_code: Annotated[str | None, Query(alias="priorityCode", max_length=30)] = None,
         order_status: Annotated[
             str | None,
             Query(
@@ -207,7 +209,7 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
     ) -> list[OrderResponse]:
         """Newest first. A customer sees only their own orders; staff see the merchant's."""
         return await service.list_orders(
-            OrderFilters(customer_id=customer_id, status=order_status, search=search)
+            OrderFilters(customer_id=customer_id, status=order_status, search=search, priority_code=priority_code)
         )
 
     @router.get(
@@ -277,6 +279,14 @@ def build_order_router(channel: LoginChannel) -> APIRouter:
     async def order_detail(service: ServiceDep, order_id: OrderIdPath) -> OrderResponse:
         """Someone else's order is reported as 404, never 403."""
         return await service.get(order_id)
+
+    if not is_customer:
+        @router.patch("/{orderId}", response_model=OrderResponse, dependencies=[*staff_guards, Depends(require_permission("orders.update"))])
+        async def edit_order(order_id: OrderIdPath, payload: OrderEditRequest, service: ServiceDep):
+            from app.modules.orders.amendments import amend
+            if payload.items is None and payload.delivery_date is None and payload.priority_code is None:
+                raise ApiError("EMPTY_UPDATE", 422, "Supply quantities or a delivery date.")
+            return await amend(service, order_id, payload)
 
     if not is_customer:
 

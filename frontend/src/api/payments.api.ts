@@ -3,7 +3,7 @@ import { cleanParams } from "./params";
 
 /** Admin channel: /admin/invoices and /admin/payments. Merchant-scoped - `merchantId` on every call. */
 export type InvoiceStatus = "UNPAID" | "PARTIAL" | "PAID";
-export type PaymentMode = "CASH" | "UPI" | "NEFT" | "SPLIT";
+export type PaymentMode = "ADVANCE" | "CASH" | "UPI" | "NEFT" | "SPLIT";
 export type ReconciliationStatus = "PENDING" | "RECONCILED" | "INVALID";
 
 export type Invoice = {

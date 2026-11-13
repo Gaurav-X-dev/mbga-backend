@@ -59,7 +59,7 @@ const INVOICE_META: Record<InvoiceStatus, { label: string; tone: Tone }> = {
   PAID: { label: "Paid", tone: "success" }
 };
 
-const MODE_LABEL: Record<PaymentMode, string> = { CASH: "Cash", UPI: "UPI", NEFT: "NEFT", SPLIT: "Cash + UPI" };
+const MODE_LABEL: Record<PaymentMode, string> = { ADVANCE: "Advance adjustment", CASH: "Cash", UPI: "UPI", NEFT: "NEFT", SPLIT: "Cash + UPI" };
 
 const RECON_TABS = [
   { value: "ALL", label: "All" },

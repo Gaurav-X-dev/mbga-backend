@@ -1,3 +1,4 @@
+import { tokenStorage } from "../auth/token-storage";
 import { apiClient } from "./client";
 import { cleanParams } from "./params";
 
@@ -48,6 +49,9 @@ export type Cutoff = {
 };
 
 export type Order = {
+  priorityCode?: string | null;
+  canEdit?: boolean;
+  editVersion?: string | null;
   id: string;
   orderNumber: string;
   customerId: string;
@@ -107,6 +111,7 @@ export type DeliveryAssignment = {
 };
 
 export type OrderListParams = {
+  priorityCode?: string;
   merchantId: string;
   /** A status code, `ALL`, or `ACTIVE` for every non-terminal status. */
   status?: string;
@@ -115,7 +120,7 @@ export type OrderListParams = {
 };
 
 export async function listOrders(params: OrderListParams, signal?: AbortSignal) {
-  const { data } = await apiClient.get<Order[]>("/admin/orders", { params: cleanParams(params), signal });
+  const { data } = await apiClient.get<Order[]>(`/${tokenStorage.get()?.channel === "merchant" ? "merchant" : "admin"}/orders`, { params: cleanParams(tokenStorage.get()?.channel === "merchant" ? { ...params, merchantId: undefined } : params), signal });
   return data;
 }
 
@@ -301,4 +306,8 @@ export async function createOrder(merchantId: string, input: CreateOrderInput, i
     headers: { "Idempotency-Key": idempotencyKey }
   });
   return data;
+}
+
+export async function editOrder(merchantId: string, orderId: string, body: { priorityCode?: string; items?: Array<{ cylinderType: string; quantity: number }>; deliveryDate?: string; reason: string; expectedVersion: string }) {
+ return (await apiClient.patch<Order>(`/${tokenStorage.get()?.channel === "merchant" ? "merchant" : "admin"}/orders/${encodeURIComponent(orderId)}`, body, {params: tokenStorage.get()?.channel === "merchant" ? {} : {merchantId}})).data;
 }

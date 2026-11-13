@@ -55,6 +55,7 @@ def seed_rows() -> list[SeedConstant]:
         PricingTier.STANDARD: "Standard",
         PricingTier.BULK: "Bulk",
         PricingTier.KEY_ACCOUNT: "Key Account",
+        PaymentMode.SPLIT: "Split payment",
         PaymentMode.CASH: "Cash",
         PaymentMode.UPI: "UPI",
         PaymentMode.NEFT: "Bank Transfer (NEFT)",
