@@ -58,3 +58,36 @@ def test_merchant_v2_review_routes_are_separate() -> None:
     upload = paths["/api/v2/merchant/documents"]["post"]
     upload_schema = upload["responses"]["201"]["content"]["application/json"]["schema"]
     assert upload_schema == {"$ref": "#/components/schemas/DocumentUploadResponseV2"}
+
+
+def test_delivery_v2_mixed_payment_routes_are_separate() -> None:
+    openapi = app.openapi()
+    paths = openapi["paths"]
+    prefix = "/api/v2/delivery/deliveries/{deliveryId}"
+    expected = {
+        f"{prefix}/generate-qr",
+        f"{prefix}/payment-proof",
+        f"{prefix}/confirm",
+        f"{prefix}/verify-customer-otp",
+        f"{prefix}/payment-summary",
+        f"{prefix}/completed-detail",
+    }
+    assert expected <= set(paths)
+    assert not any(path.startswith("/api/v2/delivery/auth/") for path in paths)
+    schema = paths[f"{prefix}/confirm"]["post"]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    assert schema == {"$ref": "#/components/schemas/ConfirmDeliveryRequestV2"}
+    assert openapi["components"]["schemas"]["PaymentMethodV2"]["enum"] == [
+        "CASH",
+        "UPI",
+        "MIXED",
+    ]
+
+
+def test_delivery_v1_confirm_contract_does_not_change() -> None:
+    operation = app.openapi()["paths"][
+        "/api/v1/delivery/deliveries/{deliveryId}/confirm"
+    ]["post"]
+    schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert schema == {"$ref": "#/components/schemas/ConfirmDeliveryRequest"}
