@@ -71,8 +71,8 @@ class PriceEntryResponse(CylinderCodeModel, PricingCylinderLabel):
 
     cylinder_type: str = Field(alias="cylinderType")
     tier: PricingTier
-    bpcl_base_rate: Money = Field(alias="bpclBaseRate")
-    tier_markup: Money = Field(alias="tierMarkup")
+    plant_ex_mi_price: Money = Field(alias="plantExMiPrice")
+    rsp_price: Money = Field(alias="rspPrice")
     customer_price: Money = Field(alias="customerPrice")
 
     model_config = _CAMEL
@@ -99,8 +99,8 @@ class UpdatePriceEntryRequest(CylinderCodeModel):
     cylinder_type: str = Field(alias="cylinderType")
     # Only STANDARD is populated today, so an omitted tier means the tab the app is on.
     tier: PricingTier = Field(default=PricingTier.STANDARD)
-    bpcl_base_rate: Money = Field(alias="bpclBaseRate")
-    tier_markup: Money = Field(alias="tierMarkup")
+    plant_ex_mi_price: Money = Field(alias="plantExMiPrice")
+    rsp_price: Money = Field(alias="rspPrice")
     # Defaults to the server's business date when omitted.
     effective_from: date | None = Field(default=None, alias="effectiveFrom")
     reason: str | None = Field(default=None, max_length=500)

@@ -94,6 +94,8 @@ class Expense(Base):
     driver_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     fuel_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     km_reading: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    start_odometer: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    end_odometer: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     distance: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     liters: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
     receipt_storage_key: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -24,7 +24,6 @@ from app.modules.einvoice.constants import (
     SUPPLY_TYPE_B2B,
     TRANSPORT_MODE_ROAD,
     VEHICLE_TYPE_REGULAR,
-    state_code,
     state_code_from_gstin,
 )
 
@@ -151,11 +150,10 @@ def build_generate_payload(
     seller_line1, seller_line2 = _address_parts(merchant.get("address"))
     buyer_line1, buyer_line2 = _address_parts(customer.get("address"))
 
-    # Place of supply: where the goods were consumed, which is what decides IGST against
-    # CGST+SGST. A delivery site in another state is exactly the case an e-Way Bill is for,
-    # so it is read from the address and only falls back to the buyer's registration when
-    # that address names no state we recognise.
-    place_of_supply = state_code(customer.get("state")) or buyer_state
+    # The portal validates tax treatment against the GSTIN state prefix. A registered buyer's
+    # delivery address can be in another state; letting that address win made the government
+    # record disagree with the frozen invoice.
+    place_of_supply = buyer_state
 
     # Which tax applies was settled when the document was frozen; it is not re-derived here,
     # or the printed invoice and the government record could disagree about the split.

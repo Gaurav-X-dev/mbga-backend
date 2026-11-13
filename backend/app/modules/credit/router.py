@@ -128,7 +128,21 @@ async def update_customer_credit(
     )
     if customer is None:
         raise ApiError("CUSTOMER_NOT_FOUND", status.HTTP_404_NOT_FOUND)
+    if customer.customer_type == "INDUSTRIAL" and payload.credit_enabled and payload.credit_days is None:
+        raise ApiError(
+            "CREDIT_DAYS_REQUIRED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Credit days are required for an industrial customer.",
+        )
+    if customer.customer_type == "RETAIL" and payload.credit_days is not None:
+        raise ApiError(
+            "CREDIT_DAYS_NOT_ALLOWED",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Retail credit is amount-based and does not use credit days.",
+        )
     now = datetime.now(UTC)
+    new_limit = payload.credit_limit if customer.customer_type == "RETAIL" else 0
+    new_days = payload.credit_days if customer.customer_type == "INDUSTRIAL" else None
     session.add(
         CreditSettingsAudit(
             id=str(uuid4()),
@@ -137,9 +151,9 @@ async def update_customer_credit(
             old_enabled=customer.credit_enabled,
             new_enabled=payload.credit_enabled,
             old_limit=customer.credit_limit,
-            new_limit=payload.credit_limit,
+            new_limit=new_limit,
             old_days=customer.credit_days,
-            new_days=payload.credit_days,
+            new_days=new_days,
             changed_by_user_id=actor.user_id,
             changed_by_name=actor.display_name,
             reason=payload.reason.strip(),
@@ -148,8 +162,8 @@ async def update_customer_credit(
     )
     customer.credit_enabled, customer.credit_limit, customer.credit_days = (
         payload.credit_enabled,
-        payload.credit_limit,
-        payload.credit_days,
+        new_limit,
+        new_days,
     )
     customer.updated_at = now
     await session.commit()
@@ -226,6 +240,7 @@ async def credit_report(
             {
                 "customerId": customer.id,
                 "customerName": customer.name or customer.owner_name,
+                "customerType": customer.customer_type,
                 "merchantId": customer.merchant_id,
                 "creditEnabled": customer.credit_enabled,
                 "creditLimit": snapshot.limit,

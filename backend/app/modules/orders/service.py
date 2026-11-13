@@ -25,11 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.app import Settings
 from app.modules.authentication.account_state import CUSTOMER_APPROVED
 from app.modules.authentication.constants import LoginChannel
+from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.credit.service import CreditLimitService
 from app.modules.customers import eligibility as eligibility_policy
 from app.modules.customers.business_schemas import Address
 from app.modules.customers.constants import KycStatus
-from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.customers.models import CustomerDeliverySite, CustomerProfile
 from app.modules.deliveries.constants import (
     IN_TRANSIT_STATUSES,
@@ -82,6 +82,7 @@ from app.modules.orders.schemas import (
     GroupedBulkConfirmRequest,
     OrderCylinderTypeResponse,
     OrderItemResponse,
+    OrderPartyAddress,
     OrderQuoteRequest,
     OrderQuoteResponse,
     OrderResponse,
@@ -93,7 +94,6 @@ from app.modules.orders.schemas import (
     UnavailableLine,
 )
 from app.modules.platform_settings import service as platform_settings
-from app.modules.business_catalogue.service import BusinessCatalogueService
 from app.modules.vehicles.coverage import available_for_pincode
 from app.shared.business.actor import BusinessActor
 from app.shared.crypto.field_cipher import FieldCipher
@@ -276,7 +276,13 @@ class OrderService:
             payload.items,
             eligibility=await self._cylinder_eligibility(customer.customer_type),
         )
-        site = await self._delivery_site(customer, payload.delivery_site_id)
+        if not payload.same_as_bill_to and payload.ship_to is None:
+            raise validation.invalid("shipTo", "required", "Enter the delivery address.")
+        site = (
+            None
+            if payload.ship_to is not None and not payload.same_as_bill_to
+            else await self._delivery_site(customer, payload.delivery_site_id)
+        )
         source = self._resolve_source(payload.source)
 
         priced = await self._engine().price(customer.id, lines)
@@ -299,6 +305,7 @@ class OrderService:
             ).code
         order = self._build(
             customer, site, priced, moment, source, payload.order_mode, number, now,
+            ship_to=payload.ship_to if not payload.same_as_bill_to else None,
             customer_type=customer_type,
         )
         from app.modules.logistics.policy import priority_code
@@ -368,9 +375,11 @@ class OrderService:
         number: str,
         now: datetime,
         *,
+        ship_to,
         customer_type: str,
     ) -> Order:
-        address = _site_address(site) if site else _customer_address(customer)
+        address = ship_to.address if ship_to else (_site_address(site) if site else _customer_address(customer))
+        ship_name = ship_to.name if ship_to else (site.name if site else REGISTERED_ADDRESS_LABEL)
         staff_placed = source is OrderSource.MERCHANT_APP
         return Order(
             id=str(uuid4()),
@@ -379,10 +388,18 @@ class OrderService:
             customer_id=customer.id,
             customer_name=customer.name or customer.owner_name or "Customer",
             customer_type=customer_type,
+            billing_name=customer.name or customer.owner_name or "Customer",
+            billing_gstin=customer.gst_number,
+            billing_contact=customer.mobile_number,
+            billing_address_line1=customer.address_line1,
+            billing_address_line2=customer.address_line2,
+            billing_city=customer.address_city,
+            billing_state=customer.address_state,
+            billing_pincode=customer.address_pincode,
             order_mode=order_mode.value,
             source=source.value,
             delivery_site_id=site.id if site else None,
-            delivery_site_name=site.name if site else REGISTERED_ADDRESS_LABEL,
+            delivery_site_name=ship_name,
             address_line1=address.line1 or None,
             address_line2=address.line2,
             address_city=address.city or None,
@@ -391,6 +408,8 @@ class OrderService:
             delivery_latitude=address.latitude,
             delivery_longitude=address.longitude,
             delivery_instructions=address.delivery_instructions,
+            ship_to_contact_name=ship_to.contact_name if ship_to else (site.contact_name if site else customer.owner_name),
+            ship_to_contact_mobile=ship_to.contact_number if ship_to else (site.contact_mobile if site else customer.mobile_number),
             total_cylinders=priced.total_cylinders,
             items_summary=priced.items_summary[:255],
             total_amount=priced.total_amount,
@@ -667,6 +686,9 @@ class OrderService:
         have the stock and will deliver it.
         """
         order = await self._owned(order_id, lock=True)
+        from app.modules.orders.stock import ensure_confirmation_stock
+
+        await ensure_confirmation_stock(self.session, self.merchant_id, [order])
         moved = transitions.advance(
             self.session,
             order,
@@ -692,6 +714,7 @@ class OrderService:
         # Inside the same transaction as the confirmation: an order that is accepted but whose
         # van could not be assigned must not be left confirmed with nobody on it.
         await self._assign(order, payload.delivery)
+        await self._raise_industrial_invoice(order)
         await self.session.commit()
         return await self._view(order)
 
@@ -705,7 +728,11 @@ class OrderService:
         """
         orders = []
         for order_id in dict.fromkeys(payload.order_ids):
-            order = await self._owned(order_id, lock=True)
+            orders.append(await self._owned(order_id, lock=True))
+        from app.modules.orders.stock import ensure_confirmation_stock
+
+        await ensure_confirmation_stock(self.session, self.merchant_id, orders)
+        for order in orders:
             moved = transitions.advance(
                 self.session,
                 order,
@@ -726,7 +753,7 @@ class OrderService:
                     )
                 )
             await self._assign(order, payload.delivery)
-            orders.append(order)
+            await self._raise_industrial_invoice(order)
         await self.session.commit()
         return BulkConfirmResponse(
             confirmed=len(orders), orders=[await self._view(order) for order in orders]
@@ -828,6 +855,7 @@ class OrderService:
             )
 
         confirmed: list[Order] = []
+        grouped_rows: list[tuple[object, list[Order]]] = []
         for group in payload.groups:
             rows = [await self._owned(order_id, lock=True) for order_id in group.order_ids]
             pincodes = {row.address_pincode for row in rows}
@@ -843,6 +871,16 @@ class OrderService:
                     status.HTTP_409_CONFLICT,
                     "Each bulk assignment group must contain orders from one pincode only.",
                 )
+            grouped_rows.append((group, rows))
+
+        from app.modules.orders.stock import ensure_confirmation_stock
+
+        await ensure_confirmation_stock(
+            self.session,
+            self.merchant_id,
+            [order for _group, rows in grouped_rows for order in rows],
+        )
+        for group, rows in grouped_rows:
             for order in rows:
                 moved = transitions.advance(
                     self.session,
@@ -866,12 +904,35 @@ class OrderService:
                 # DeliveryService revalidates the vehicle-to-pincode mapping here, so a stale
                 # or manually altered preview cannot bypass coverage rules.
                 await self._assign(order, group.delivery)
+                await self._raise_industrial_invoice(order)
                 confirmed.append(order)
         await self.session.commit()
         return BulkConfirmResponse(
             confirmed=len(confirmed),
             orders=[await self._view(order) for order in confirmed],
         )
+
+    async def _raise_industrial_invoice(self, order: Order) -> None:
+        """Issue industrial tax documents at acceptance; retail remains delivery-triggered.
+
+        The IRN is asked for here too, not at delivery. An industrial sale to a registered
+        buyer is a B2B supply, and the law wants the invoice reference before the goods move -
+        the number the customer is given at confirmation should be one the portal already
+        knows. Queuing it at delivery instead left a gap of hours in which an invoice existed
+        with no reference behind it, and left it unfiled entirely if the delivery never went.
+
+        `queue_for` decides for itself whether anything applies, so a customer without a GSTIN
+        passes through it untouched. Both calls are idempotent and run in the confirmation's
+        transaction, so a retried confirmation bills and files nothing twice.
+        """
+        if order.customer_type != "INDUSTRIAL":
+            return
+        from app.modules.einvoice import service as einvoice
+        from app.modules.payments.invoicing import InvoiceRaiser
+
+        invoice = await InvoiceRaiser(self.session, self.merchant_id).raise_for(order)
+        if invoice is not None:
+            await einvoice.queue_for(self.session, invoice)
 
     async def _assign(self, order: Order, assignment: DeliveryAssignment) -> None:
         """Put the order on a van, through the delivery module rather than beside it.
@@ -1348,6 +1409,33 @@ def _order_view(
             latitude=order.delivery_latitude,
             longitude=order.delivery_longitude,
             delivery_instructions=order.delivery_instructions,
+        ),
+        bill_to=OrderPartyAddress(
+            name=order.billing_name or order.customer_name,
+            gstin=order.billing_gstin,
+            contactNumber=order.billing_contact,
+            address=Address(
+                line1=order.billing_address_line1 or "",
+                line2=order.billing_address_line2,
+                city=order.billing_city or "",
+                state=order.billing_state or "",
+                pincode=order.billing_pincode or "",
+            ),
+        ),
+        ship_to=OrderPartyAddress(
+            name=order.delivery_site_name,
+            contactName=order.ship_to_contact_name,
+            contactNumber=order.ship_to_contact_mobile,
+            address=Address(
+                line1=order.address_line1 or "",
+                line2=order.address_line2,
+                city=order.address_city or "",
+                state=order.address_state or "",
+                pincode=order.address_pincode or "",
+                latitude=order.delivery_latitude,
+                longitude=order.delivery_longitude,
+                deliveryInstructions=order.delivery_instructions,
+            ),
         ),
         subtotal=order.subtotal,
         gst_percent=order.gst_percent,

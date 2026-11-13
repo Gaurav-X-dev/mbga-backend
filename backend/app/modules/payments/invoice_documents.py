@@ -6,13 +6,13 @@ same payload for print/share/WebView, so each app never has to reimplement a tax
 
 from __future__ import annotations
 
-import re
-
 import base64
 import html
 import io
 import json
+import re
 from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -20,9 +20,10 @@ import qrcode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.customers.models import CustomerProfile
 from app.modules.business_catalogue.models import CylinderTypeDefinition
+from app.modules.customers.models import CustomerProfile
 from app.modules.deliveries.models import DeliverySlip
+from app.modules.einvoice.constants import state_code, state_code_from_gstin
 from app.modules.merchants.models import Merchant
 from app.modules.orders.models import Order, OrderItem
 from app.modules.payments.models import Invoice
@@ -39,8 +40,9 @@ def _address(*parts: object | None) -> str:
     return ", ".join(part for part in (_clean(value) for value in parts) if part)
 
 
-def _money(value: int | None) -> str:
-    return f"₹{int(value or 0):,}"
+def _money(value: float | Decimal | None) -> str:
+    amount = Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"₹{amount:,.2f}"
 
 
 def _date(value: datetime | None) -> str | None:
@@ -106,7 +108,7 @@ def _state_key(value: str | None) -> str:
     document ("For Intra-state transaction, IGST amount is not applicable"), and the printed
     invoice disagrees with the government record until somebody notices.
     """
-    name = re.sub(r"[\s,(]*\bcode\s*:\s*\d{1,2}\s*\)?\s*$", "", value or "", flags=re.I)
+    name = re.sub(r"[\s,(]*\bcode\s*:\s*\d{1,2}\s*\)?\s*$", "", value or "", flags=re.IGNORECASE)
     return " ".join(name.upper().split())
 
 
@@ -162,13 +164,13 @@ async def build_issue_snapshot(
                 "hsnSac": (merchant.invoice_hsn_sac if merchant else None) or "271119",
                 "quantity": quantity,
                 "unit": "PCS",
-                "unitPrice": int(line.unit_price),
-                "lineAmount": int(line.unit_price) * quantity,
+                "unitPrice": float(line.unit_price),
+                "lineAmount": int((line.unit_price * quantity).quantize(Decimal(1), rounding=ROUND_HALF_UP)),
             }
         )
-    same_state = bool(
-        merchant and _state_key(merchant.state) and _state_key(merchant.state) == _state_key(order.address_state)
-    )
+    seller_state = state_code_from_gstin(merchant.gst_number if merchant else None) or state_code(merchant.state if merchant else None)
+    buyer_state = state_code_from_gstin(invoice.gstin) or state_code(order.billing_state)
+    same_state = bool(seller_state and buyer_state and seller_state == buyer_state)
     gst = int(invoice.gst_amount)
     half_gst = gst / 2 if gst % 2 else gst // 2
     tax = {
@@ -212,9 +214,24 @@ async def build_issue_snapshot(
             "email": customer.email if customer else None,
             "gstin": invoice.gstin,
             "customerType": order.customer_type,
+            "address": _address(order.billing_address_line1, order.billing_address_line2, order.billing_city, order.billing_state, order.billing_pincode),
+            "state": order.billing_state,
+            "deliverySiteName": order.delivery_site_name,
+        },
+        "billTo": {
+            "name": order.billing_name or invoice.customer_name,
+            "gstin": order.billing_gstin,
+            "contactNumber": order.billing_contact,
+            "address": _address(order.billing_address_line1, order.billing_address_line2, order.billing_city, order.billing_state, order.billing_pincode),
+            "state": order.billing_state,
+        },
+        "shipTo": {
+            "name": order.delivery_site_name,
+            "contactName": order.ship_to_contact_name,
+            "contactNumber": order.ship_to_contact_mobile,
             "address": _address(order.address_line1, order.address_line2, order.address_city, order.address_state, order.address_pincode),
             "state": order.address_state,
-            "deliverySiteName": order.delivery_site_name,
+            "deliveryInstructions": order.delivery_instructions,
         },
         "order": {"id": order.id, "orderNumber": order.order_number, "scheduledDeliveryDate": str(order.scheduled_delivery_date)},
         "dispatch": {

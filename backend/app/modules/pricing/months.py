@@ -23,8 +23,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.pricing import calendar as cal
 from app.modules.business_catalogue.models import CylinderTypeDefinition
+from app.modules.pricing import calendar as cal
 from app.modules.pricing.constants import (
     ACTIVE_TIER,
     DEFAULT_GST_PERCENT,
@@ -94,14 +94,14 @@ class PricingMonthProvisioner:
         # relationship, so the unit of work does not order the inserts for us and the
         # entries would hit the constraint before their month exists.
         await self.session.flush()
-        for cylinder_type, tier, base_rate, markup in await self._opening_rates(previous):
+        for cylinder_type, tier, base_rate, rsp_price in await self._opening_rates(previous):
             self.session.add(
                 PricingEntry(
                     pricing_month_id=month.id,
                     cylinder_type=cylinder_type,
                     tier=tier,
-                    bpcl_base_rate=base_rate,
-                    tier_markup=markup,
+                    plant_ex_mi_price=base_rate,
+                    rsp_price=rsp_price,
                 )
             )
         await self.session.flush()
@@ -127,7 +127,7 @@ class PricingMonthProvisioner:
             select(PricingEntry).where(PricingEntry.pricing_month_id == previous.id)
         )
         carried = [
-            (entry.cylinder_type, entry.tier, entry.bpcl_base_rate, entry.tier_markup) for entry in entries
+            (entry.cylinder_type, entry.tier, entry.plant_ex_mi_price, entry.rsp_price) for entry in entries
         ]
         # A month that somehow has no entries still opens with a usable card rather than an
         # empty tab the screen cannot price anything from.
@@ -150,6 +150,11 @@ class PricingMonthProvisioner:
             .order_by(CylinderTypeDefinition.sort_order, CylinderTypeDefinition.code)
         )
         return [
-            (row.code, ACTIVE_TIER.value, row.default_base_rate, row.default_markup)
+            (
+                row.code,
+                ACTIVE_TIER.value,
+                row.default_base_rate,
+                row.default_base_rate + row.default_markup,
+            )
             for row in definitions
         ]

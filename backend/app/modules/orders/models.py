@@ -15,6 +15,7 @@ the demo payload happens to show the same value in both fields.
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -25,6 +26,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -55,6 +57,14 @@ class Order(Base):
     # customer is renamed. `customer_name` is also what the search filter matches on.
     customer_name: Mapped[str] = mapped_column(String(160))
     customer_type: Mapped[str] = mapped_column(String(40))
+    billing_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    billing_gstin: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    billing_contact: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    billing_address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    billing_address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    billing_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    billing_state: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    billing_pincode: Mapped[str | None] = mapped_column(String(12), nullable=True)
 
     order_mode: Mapped[str] = mapped_column(String(10))
     source: Mapped[str] = mapped_column(String(20))
@@ -72,6 +82,8 @@ class Order(Base):
     delivery_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     delivery_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     delivery_instructions: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ship_to_contact_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    ship_to_contact_mobile: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     total_cylinders: Mapped[int] = mapped_column(Integer)
     # "6 × 47.5 L · 2 × 47.5 V". Display only, built at placement so the list needs no lines.
@@ -120,7 +132,7 @@ class OrderItem(Base):
     cylinder_type: Mapped[str] = mapped_column(String(40))
     quantity: Mapped[int] = mapped_column(Integer)
     # GST-inclusive, per cylinder, as resolved for this customer at placement.
-    unit_price: Mapped[int] = mapped_column(BigInteger)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     line_total: Mapped[int] = mapped_column(BigInteger)
     # True when a per-customer override was applied rather than the tier price. Recorded so
     # a disputed invoice can be explained without replaying the price history.

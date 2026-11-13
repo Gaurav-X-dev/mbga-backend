@@ -23,7 +23,6 @@ from app.modules.pricing.service import resolve_customer_price, tier_prices_for_
 from app.shared.exceptions.api_error import ApiError
 from app.shared.money.gst import order_total
 
-
 LEGACY_SUMMARY_LABELS = {
     "LPG_47_5KG_L": "47.5 L",
     "LPG_47_5KG_V": "47.5 V",
@@ -36,7 +35,7 @@ class QuotedLine:
     cylinder_type: str
     label: str
     quantity: int
-    unit_price: int
+    unit_price: Decimal
     line_total: int
     # True when the customer's own override set the price rather than the tier card.
     overridden: bool
@@ -92,7 +91,7 @@ class QuoteEngine:
             )
             if resolved is None:
                 raise _not_priced(cylinder_type)
-            unit_price = _whole_rupees(resolved)
+            unit_price = Decimal(resolved).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if unit_price <= 0:
                 raise _not_priced(cylinder_type)
             quoted.append(
@@ -105,13 +104,13 @@ class QuoteEngine:
                            or definition.label),
                     quantity=quantity,
                     unit_price=unit_price,
-                    line_total=unit_price * quantity,
+                    line_total=_whole_rupees(unit_price * quantity),
                     overridden=tier_price is None or resolved != tier_price,
                 )
             )
 
         gst_percent = int(month.gst_percent)
-        split = order_total([(line.unit_price, line.quantity) for line in quoted], gst_percent)
+        split = order_total([(line.line_total, 1) for line in quoted], gst_percent)
         return Quote(
             lines=quoted,
             total_cylinders=sum(line.quantity for line in quoted),

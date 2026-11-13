@@ -113,6 +113,16 @@ class CreditLimitService:
         *,
         replacing_order_id: str | None = None,
     ) -> CreditSnapshot:
+        customer = await self.session.scalar(
+            select(CustomerProfile)
+            .where(CustomerProfile.id == customer_id)
+            .with_for_update()
+        )
+        if customer is None:
+            raise ApiError("CUSTOMER_NOT_FOUND", status.HTTP_404_NOT_FOUND)
+        if customer.customer_type == "INDUSTRIAL":
+            return await self._enforce_industrial(customer, proposed_amount)
+
         snapshot = await self.snapshot(
             customer_id,
             proposed_amount=proposed_amount,
@@ -153,6 +163,35 @@ class CreditLimitService:
             "ORDER_NOT_ALLOWED",
             status.HTTP_409_CONFLICT,
             blocked_message(snapshot),
+        )
+
+    async def _enforce_industrial(
+        self, customer: CustomerProfile, proposed_amount: int
+    ) -> CreditSnapshot:
+        """Industrial credit is time-based and tracked by each issued order invoice."""
+        if not customer.credit_enabled:
+            return CreditSnapshot(customer.id, False, 0, 0, 0, proposed_amount)
+
+        now = datetime.now(UTC)
+        overdue_balances = list(
+            await self.session.scalars(
+                select(Invoice.balance)
+                .where(
+                    Invoice.customer_id == customer.id,
+                    Invoice.balance > 0,
+                    Invoice.due_at < now,
+                )
+                .with_for_update()
+            )
+        )
+        overdue = sum(int(balance or 0) for balance in overdue_balances)
+        if overdue <= 0:
+            return CreditSnapshot(customer.id, True, 0, 0, 0, proposed_amount)
+        raise ApiError(
+            "ORDER_NOT_ALLOWED",
+            status.HTTP_409_CONFLICT,
+            "Credit period expired. Clear the complete overdue balance of "
+            f"₹{overdue} across all overdue orders before placing a new order.",
         )
 
     async def enforce_fail_open(

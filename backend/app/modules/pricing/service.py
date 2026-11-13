@@ -151,8 +151,8 @@ class PricingService:
         mid-month change possible rather than a month-boundary-only edit.
         """
         today = cal.business_today()
-        base_rate = validation.money(payload.bpcl_base_rate, field="bpclBaseRate")
-        markup = validation.money(payload.tier_markup, field="tierMarkup", allow_zero=True)
+        base_rate = validation.money(payload.plant_ex_mi_price, field="plantExMiPrice")
+        rsp_price = validation.money(payload.rsp_price, field="rspPrice")
         effective_from = validation.effective_from(payload.effective_from, today=today)
         definition = await self._cylinder_definition(payload.cylinder_type)
 
@@ -175,16 +175,16 @@ class PricingService:
                 pricing_month_id=month.id,
                 cylinder_type=definition.code,
                 tier=payload.tier.value,
-                bpcl_base_rate=definition.default_base_rate,
-                tier_markup=definition.default_markup,
+                plant_ex_mi_price=definition.default_base_rate,
+                rsp_price=definition.default_base_rate + definition.default_markup,
             )
             self.session.add(entry)
             await self.session.flush()
 
         # Read the old values before the update - they are what the log row preserves.
-        old_base_rate, old_markup, old_price = entry.bpcl_base_rate, entry.tier_markup, entry.customer_price
-        entry.bpcl_base_rate = base_rate
-        entry.tier_markup = markup
+        old_base_rate, old_rsp, old_price = entry.plant_ex_mi_price, entry.rsp_price, entry.customer_price
+        entry.plant_ex_mi_price = base_rate
+        entry.rsp_price = rsp_price
         now = datetime.now(UTC)
         change_log = PricingChangeLog(
             merchant_id=self.merchant_id,
@@ -192,13 +192,13 @@ class PricingService:
             cylinder_type=entry.cylinder_type,
             tier=entry.tier,
             old_bpcl_base_rate=old_base_rate,
-            old_tier_markup=old_markup,
+            old_tier_markup=old_rsp,
             old_customer_price=old_price,
             new_bpcl_base_rate=base_rate,
-            new_tier_markup=markup,
+            new_tier_markup=rsp_price,
             # Mirrors the generated column. Stored rather than joined, so the log still
             # reads correctly once the entry it describes has moved on.
-            new_customer_price=base_rate + markup,
+            new_customer_price=rsp_price,
             effective_from=effective_from,
             reason=_clean(payload.reason),
             changed_by_user_id=self.actor.user_id,
@@ -221,7 +221,7 @@ class PricingService:
                 change_log_id=str(change_log.id),
                 cylinder_label=definition.label,
                 old_price=int(old_price) if old_price is not None else None,
-                new_price=int(base_rate + markup),
+                new_price=int(rsp_price),
                 changed_by=self.actor.display_name,
                 reason=_clean(payload.reason),
             )
@@ -263,8 +263,8 @@ class PricingService:
                 PriceEntryResponse(
                     cylinder_type=entry.cylinder_type,
                     tier=entry.tier,
-                    bpcl_base_rate=entry.bpcl_base_rate,
-                    tier_markup=entry.tier_markup,
+                    plant_ex_mi_price=entry.plant_ex_mi_price,
+                    rsp_price=entry.rsp_price,
                     customer_price=entry.customer_price,
                 )
                 for entry in entries

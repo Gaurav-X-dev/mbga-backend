@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_valida
 
 from app.modules.customers.business_schemas import Address
 from app.modules.orders.constants import OrderMode, OrderSource, OrderStatus, StatusTone
+from app.modules.pricing.schemas import Money
 
 _CAMEL = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
@@ -96,8 +97,18 @@ class OrderItemResponse(BaseModel):
     cylinder_type: str = Field(alias="cylinderType")
     cylinder_label: str = Field(alias="cylinderLabel")
     quantity: int
-    unit_price: int = Field(alias="unitPrice")
+    unit_price: Money = Field(alias="unitPrice")
     line_total: int = Field(alias="lineTotal")
+
+    model_config = _CAMEL
+
+
+class OrderPartyAddress(BaseModel):
+    name: str = Field(max_length=160)
+    address: Address
+    contact_name: str | None = Field(default=None, alias="contactName", max_length=160)
+    contact_number: str | None = Field(default=None, alias="contactNumber", max_length=20)
+    gstin: str | None = Field(default=None, max_length=30)
 
     model_config = _CAMEL
 
@@ -177,6 +188,8 @@ class OrderResponse(BaseModel):
     delivery_site_id: str | None = Field(default=None, alias="deliverySiteId")
     delivery_site_name: str = Field(alias="deliverySiteName")
     delivery_address: Address = Field(alias="deliveryAddress")
+    bill_to: OrderPartyAddress = Field(alias="billTo")
+    ship_to: OrderPartyAddress = Field(alias="shipTo")
     subtotal: int
     gst_percent: int = Field(alias="gstPercent")
     gst_amount: int = Field(alias="gstAmount")
@@ -213,6 +226,8 @@ class CreateOrderRequest(BaseModel):
     items: list[OrderLineRequest] = Field(default_factory=list)
     order_mode: OrderMode = Field(default=OrderMode.NEW, alias="orderMode")
     delivery_site_id: str | None = Field(default=None, alias="deliverySiteId")
+    same_as_bill_to: bool = Field(default=True, alias="sameAsBillTo")
+    ship_to: OrderPartyAddress | None = Field(default=None, alias="shipTo")
     source: OrderSource | None = None
 
     model_config = _CAMEL

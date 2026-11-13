@@ -19,9 +19,8 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.expenses import validation
-from app.modules.expenses.fuel import apply_fuel
-from app.shared.business.audit import BusinessAuditor
 from app.modules.expenses.categories import ExpenseCategoryProvisioner
+from app.modules.expenses.fuel import apply_fuel
 from app.modules.expenses.models import Expense, ExpenseCategory
 from app.modules.expenses.schemas import (
     CreateExpenseCategoryRequest,
@@ -38,6 +37,7 @@ from app.modules.expenses.schemas import (
     UpdateExpenseRequest,
 )
 from app.shared.business.actor import BusinessActor
+from app.shared.business.audit import BusinessAuditor
 from app.shared.business.filters import validate_date_range, validate_month
 from app.shared.date_time.business_calendar import business_today, month_key, month_key_label
 from app.shared.exceptions.api_error import ApiError
@@ -539,6 +539,7 @@ def _expense_view(expense: Expense, category: ExpenseCategory) -> ExpenseRespons
         vehicle_id=expense.vehicle_id, vehicle_number=expense.vehicle_number,
         driver_id=expense.driver_id, driver_name=expense.driver_name,
         fuel_type=expense.fuel_type, km_reading=expense.km_reading,
+        start_odometer=expense.start_odometer, end_odometer=expense.end_odometer,
         distance=expense.distance, liters=expense.liters,
         mileage=round(float(expense.distance / expense.liters), 2) if expense.distance is not None and expense.liters else None,
         has_receipt=bool(expense.receipt_storage_key),

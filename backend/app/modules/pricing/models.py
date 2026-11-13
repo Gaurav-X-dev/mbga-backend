@@ -69,14 +69,14 @@ class PricingEntry(Base):
     pricing_month_id: Mapped[str] = mapped_column(ForeignKey("pricing_months.id"), index=True)
     cylinder_type: Mapped[str] = mapped_column(String(40))
     tier: Mapped[str] = mapped_column(String(20), server_default="STANDARD")
-    bpcl_base_rate: Mapped[Decimal] = mapped_column(MONEY)
-    tier_markup: Mapped[Decimal] = mapped_column(MONEY)
+    plant_ex_mi_price: Mapped[Decimal] = mapped_column("bpcl_base_rate", MONEY)
+    rsp_price: Mapped[Decimal] = mapped_column("tier_markup", MONEY)
     # Server-computed, never written. Reload the row after an update to read it back.
     # Nullable in the DDL only because MariaDB will not take `NOT NULL` on a STORED
     # generated column; both of its inputs are NOT NULL, so a row can never carry a null
     # here. See the note in migration 20260923_0014.
     customer_price: Mapped[Decimal] = mapped_column(
-        MONEY, Computed("bpcl_base_rate + tier_markup", persisted=True), nullable=True
+        MONEY, Computed("tier_markup", persisted=True), nullable=True
     )
 
 

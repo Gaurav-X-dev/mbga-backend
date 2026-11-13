@@ -110,6 +110,8 @@ class ExpenseResponse(BaseModel):
     driver_id: str | None = Field(default=None, alias="driverId")
     fuel_type: str | None = Field(default=None, alias="fuelType")
     km_reading: Money | None = Field(default=None, alias="kmReading")
+    start_odometer: Money | None = Field(default=None, alias="startOdometer")
+    end_odometer: Money | None = Field(default=None, alias="endOdometer")
     distance: Money | None = None
     liters: Money | None = None
     vehicle_number: str | None = Field(default=None, alias="vehicleNumber")
@@ -170,6 +172,8 @@ class CreateExpenseRequest(BaseModel):
     driver_id: str | None = Field(default=None, alias="driverId")
     fuel_type: str | None = Field(default=None, alias="fuelType")
     km_reading: Decimal | None = Field(default=None, alias="kmReading")
+    start_odometer: Decimal | None = Field(default=None, alias="startOdometer")
+    end_odometer: Decimal | None = Field(default=None, alias="endOdometer")
     distance: Decimal | None = None
     liters: Decimal | None = None
 
@@ -191,6 +195,8 @@ class UpdateExpenseRequest(BaseModel):
     driver_id: str | None = Field(default=None, alias="driverId")
     fuel_type: str | None = Field(default=None, alias="fuelType")
     km_reading: Decimal | None = Field(default=None, alias="kmReading")
+    start_odometer: Decimal | None = Field(default=None, alias="startOdometer")
+    end_odometer: Decimal | None = Field(default=None, alias="endOdometer")
     distance: Decimal | None = None
     liters: Decimal | None = None
 

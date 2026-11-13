@@ -21,6 +21,7 @@ the stock ledger moves are the same count.
 
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -53,10 +54,11 @@ async def delivered_total(
     if delivered is None:
         return order.total_amount
     lines = await session.scalars(select(OrderItem).where(OrderItem.order_id == order.id))
-    return sum(
+    total = sum(
         line.unit_price * min(delivered.get(line.cylinder_type, 0), line.quantity)
         for line in lines
     )
+    return int(Decimal(total).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 class InvoiceRaiser:
@@ -109,6 +111,11 @@ class InvoiceRaiser:
         customer_type = await BusinessCatalogueService(self.session).require_active_customer_type(
             order.customer_type
         )
+        payment_days = (
+            int(customer.credit_days)
+            if customer and order.customer_type == "INDUSTRIAL" and customer.credit_days
+            else DEFAULT_PAYMENT_TERM_DAYS
+        )
         invoice = Invoice(
             id=str(uuid4()),
             invoice_number=number,
@@ -128,7 +135,9 @@ class InvoiceRaiser:
             balance=total_amount,
             status=InvoiceStatus.UNPAID.value,
             issued_at=moment,
-            due_at=moment + timedelta(days=DEFAULT_PAYMENT_TERM_DAYS),
+            # Industrial credit starts when the merchant confirms and issues the invoice.
+            # Retail does not use expiry for order eligibility, but retains a statement date.
+            due_at=moment + timedelta(days=payment_days),
             # An industrial buyer claims input credit, so their document is a tax invoice. The
             # GST split is on both; this decides which one is printed.
             is_gst_invoice=customer_type.requires_gst_invoice,
