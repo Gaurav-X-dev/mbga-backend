@@ -11,15 +11,21 @@ holds the result for the route that has no IRN to hang it off.
 the old rule, which only queued invoices that had a buyer GSTIN. They are all IRN jobs, and
 the default says so without a data migration.
 
-Revision ID: 20261030_0066
-Revises: 20261029_0065
+Renumbered from 20261030_0066: the deployment server had taken that same revision
+id for competitor pricing while this branch was away, and two migrations cannot
+share one id - alembic refuses every command when they do. This one carries no
+data, only two columns, so moving it to the end of the chain changes nothing
+about what it does.
+
+Revision ID: 20261113_0079
+Revises: 20261112_0078
 """
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "20261030_0066"
-down_revision = "20261029_0065"
+revision = "20261113_0079"
+down_revision = "20261112_0078"
 branch_labels = None
 depends_on = None
 
