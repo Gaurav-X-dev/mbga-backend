@@ -6,6 +6,8 @@ same payload for print/share/WebView, so each app never has to reimplement a tax
 
 from __future__ import annotations
 
+import re
+
 import base64
 import html
 import io
@@ -96,7 +98,16 @@ def _qr_data_uri(value: str) -> str:
 
 
 def _state_key(value: str | None) -> str:
-    return " ".join((value or "").upper().split())
+    """A state name that compares equal however it was typed or printed.
+
+    A merchant's state is free text, and the panel prints it with the GST code appended -
+    "Haryana, Code: 06". Comparing that against a customer's plain "Haryana" says the two are
+    different states, which puts IGST on an intra-state sale. The portal then rejects the
+    document ("For Intra-state transaction, IGST amount is not applicable"), and the printed
+    invoice disagrees with the government record until somebody notices.
+    """
+    name = re.sub(r"[\s,(]*\bcode\s*:\s*\d{1,2}\s*\)?\s*$", "", value or "", flags=re.I)
+    return " ".join(name.upper().split())
 
 
 def merchant_settings_view(merchant: Merchant) -> dict[str, Any]:
@@ -159,12 +170,15 @@ async def build_issue_snapshot(
         merchant and _state_key(merchant.state) and _state_key(merchant.state) == _state_key(order.address_state)
     )
     gst = int(invoice.gst_amount)
+    half_gst = gst / 2 if gst % 2 else gst // 2
     tax = {
         "taxableAmount": int(invoice.amount),
         "gstPercent": int(invoice.gst_percent),
         "gstAmount": gst,
-        "cgstAmount": gst // 2 if same_state else 0,
-        "sgstAmount": gst - (gst // 2) if same_state else 0,
+        # Split to the paisa, not to the rupee. An odd number of rupees handed out as
+        # 1857/1858 is refused by the portal, which requires the two halves to be identical.
+        "cgstAmount": half_gst if same_state else 0,
+        "sgstAmount": half_gst if same_state else 0,
         "igstAmount": gst if not same_state else 0,
         "totalAmount": int(invoice.total_amount),
         "taxType": "CGST_SGST" if same_state else "IGST",

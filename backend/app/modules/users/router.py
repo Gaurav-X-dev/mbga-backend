@@ -35,13 +35,19 @@ from app.modules.users.role_schemas import (
 )
 from app.modules.users.schemas import (
     EffectivePermissionsResponse,
+    MerchantAccessInput,
+    MerchantAccessResponse,
     UserCreate,
     UserListResponse,
     UserSummary,
     UserUpdate,
 )
 from app.shared.authorization.context import AuthContext
-from app.shared.authorization.dependencies import require_authenticated_user, require_permission
+from app.shared.authorization.dependencies import (
+    require_authenticated_user,
+    require_login_channel,
+    require_permission,
+)
 from app.shared.database.session import get_db_session
 
 router = APIRouter()
@@ -519,3 +525,96 @@ async def get_allowed_channels(
         .order_by(RoleLoginChannel.login_channel)
     )
     return AllowedChannelsResponse(user_id=user_id, channels=sorted(set(result.scalars().all())))
+
+
+@router.get(
+    "/users/{user_id}/merchant-access",
+    response_model=list[MerchantAccessResponse],
+    dependencies=[Depends(require_login_channel(LoginChannel.ADMIN)), Depends(require_permission(USER_VIEW))],
+)
+async def list_merchant_access(
+    user_id: str, session: Annotated[AsyncSession, Depends(get_db_session)]
+) -> list[MerchantAccessResponse]:
+    """Which agencies this head-office user can sign in to the Merchant app for."""
+    rows = (
+        await session.execute(
+            select(MerchantUser, Merchant)
+            .join(Merchant, Merchant.id == MerchantUser.merchant_id)
+            .where(MerchantUser.user_id == user_id)
+        )
+    ).all()
+    return [
+        MerchantAccessResponse(merchant_id=merchant.id, merchant_name=merchant.name, status=link.status)
+        for link, merchant in rows
+    ]
+
+
+@router.put(
+    "/users/{user_id}/merchant-access",
+    response_model=MerchantAccessResponse,
+    dependencies=[
+        Depends(require_login_channel(LoginChannel.ADMIN)),
+        Depends(require_permission("merchant_users.create")),
+    ],
+)
+async def grant_merchant_access(
+    user_id: str,
+    payload: MerchantAccessInput,
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    context: Annotated[AuthContext, Depends(require_authenticated_user)],
+) -> MerchantAccessResponse:
+    """Attach a head-office user to one agency so they can work in the Merchant app.
+
+    Refused rather than silently reshaped in three cases, because each would leave somebody
+    unable to explain what they are seeing: a merchant that is not trading, a user with no
+    role that reaches the Merchant app at all, and a user who already belongs somewhere else.
+    """
+    user = await session.scalar(select(User).where(User.id == user_id).with_for_update())
+    merchant = await session.get(Merchant, payload.merchant_id)
+    if user is None or merchant is None:
+        raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "User or merchant not found"})
+    if merchant.status != "ACTIVE" or merchant.approval_status != "APPROVED":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MERCHANT_NOT_ACTIVE", "message": "Choose an active, approved merchant"},
+        )
+    permissions = await UserRoleRepository(session).get_effective_permissions(
+        user_id=user_id, login_channel=LoginChannel.MERCHANT, now=datetime.now(UTC)
+    )
+    if not permissions:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "NO_MERCHANT_ROLE", "message": "Assign a role that allows Merchant app access first"},
+        )
+    links = (await session.scalars(select(MerchantUser).where(MerchantUser.user_id == user_id))).all()
+    if any(link.status == "ACTIVE" and link.merchant_id != merchant.id for link in links):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ALREADY_LINKED",
+                "message": "User already belongs to another active merchant; manage the existing membership first",
+            },
+        )
+    link = next((item for item in links if item.merchant_id == merchant.id), None)
+    if link is not None and link.status != "ACTIVE":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "MEMBERSHIP_INACTIVE", "message": "Reactivate the existing membership from the merchant page"},
+        )
+    if link is None:
+        now = datetime.now(UTC)
+        session.add(
+            MerchantUser(
+                id=str(uuid4()),
+                merchant_id=merchant.id,
+                user_id=user.id,
+                staff_type=user.role.upper(),
+                status="ACTIVE",
+                notes=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await _audit(session, "user.merchant_access_granted", context.user_id, user.id, f"Merchant membership granted: {merchant.id}")
+        await session.commit()
+    return MerchantAccessResponse(merchant_id=merchant.id, merchant_name=merchant.name, status="ACTIVE")

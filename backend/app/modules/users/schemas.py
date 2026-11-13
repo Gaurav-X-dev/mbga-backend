@@ -56,3 +56,15 @@ class UserListResponse(BaseModel):
 class EffectivePermissionsResponse(BaseModel):
     user_id: str
     permissions: list[str]
+
+
+class MerchantAccessInput(BaseModel):
+    merchant_id: str = Field(min_length=1, max_length=36)
+
+
+class MerchantAccessResponse(BaseModel):
+    """Which agency a head-office user may sign in to the Merchant app for."""
+
+    merchant_id: str
+    merchant_name: str
+    status: str
